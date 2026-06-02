@@ -1039,6 +1039,7 @@ def validate_results(
 def generate_harness_print_matrix(
     generated_connections_df: pd.DataFrame,
     input_excel_path: str | Path,
+    harness_code_map: dict[str, set[str]],
 ) -> pd.DataFrame:
     """Generate a harness print matrix showing which Harness PNs apply to each device/connection."""
     
@@ -1061,12 +1062,15 @@ def generate_harness_print_matrix(
                 "connector_pn": str(row.get("Connector PN", "")).strip(),
             }
     
-    # Collect all unique Harness PNs
-    all_harness_pns = set()
-    for pns_str in generated_connections_df["Target Harness PNs"]:
-        if pd.notna(pns_str):
-            all_harness_pns.update(p.strip() for p in str(pns_str).split(","))
-    all_harness_pns = sorted(all_harness_pns)
+    # Use all Harness PNs from the complexity matrix map (preserve order, deduplicate display keys)
+    all_harness_pns = []
+    seen_display_pns: set[str] = set()
+    for harness_key in harness_code_map.keys():
+        display_pn = _display_pn(harness_key)
+        if display_pn in seen_display_pns:
+            continue
+        seen_display_pns.add(display_pn)
+        all_harness_pns.append(display_pn)
     
     # Determine which circuit column to use (prefer Generated Circuit for suffixes)
     cols = generated_connections_df.columns.tolist()
@@ -1075,11 +1079,17 @@ def generate_harness_print_matrix(
     # Build matrix rows
     matrix_rows = []
     for _, conn_row in generated_connections_df.iterrows():
-        # Extract applicable Harness PNs for this connection
-        target_pns_str = conn_row["Target Harness PNs"] if "Target Harness PNs" in cols else ""
+        # Compute applicability directly from this row's sales expression
+        sales_code_val = str(conn_row["Sales Code"]) if pd.notna(conn_row["Sales Code"]) else ""
         applicable_pns = set()
-        if pd.notna(target_pns_str):
-            applicable_pns = {p.strip() for p in str(target_pns_str).split(",")}
+        try:
+            parsed = parse_sales_code_expression("" if sales_code_val == "TRUE" else sales_code_val)
+            for harness_key, active_codes in harness_code_map.items():
+                if evaluate_expression(parsed, active_codes):
+                    applicable_pns.add(_display_pn(harness_key))
+        except Exception:
+            # Keep row visible even if a malformed expression appears; applicability remains blank.
+            applicable_pns = set()
 
         circuit_val = str(conn_row[circuit_col]) if pd.notna(conn_row[circuit_col]) else ""
 
@@ -1094,7 +1104,7 @@ def generate_harness_print_matrix(
             "Device Name": from_device,
             "Pin": from_pin,
             "Circuit": circuit_val,
-            "Sales Code": str(conn_row["Sales Code"]) if pd.notna(conn_row["Sales Code"]) else "",
+            "Sales Code": sales_code_val,
         }
         # Add checkmarks for applicable harnesses
         for harness_pn in all_harness_pns:
@@ -1111,7 +1121,7 @@ def generate_harness_print_matrix(
                 "Device Name": f"Splice_{splice_name}",
                 "Pin": "",
                 "Circuit": circuit_val,
-                "Sales Code": str(conn_row["Sales Code"]) if pd.notna(conn_row["Sales Code"]) else "",
+                "Sales Code": sales_code_val,
             }
             for harness_pn in all_harness_pns:
                 splice_row[harness_pn] = "☑" if harness_pn in applicable_pns else ""
@@ -1128,7 +1138,7 @@ def generate_harness_print_matrix(
             "Device Name": to_device,
             "Pin": to_pin,
             "Circuit": circuit_val,
-            "Sales Code": str(conn_row["Sales Code"]) if pd.notna(conn_row["Sales Code"]) else "",
+            "Sales Code": sales_code_val,
         }
         for harness_pn in all_harness_pns:
             to_row[harness_pn] = "☑" if harness_pn in applicable_pns else ""
@@ -1357,6 +1367,7 @@ def _run_analysis_core(
     harness_print_matrix_df = generate_harness_print_matrix(
         generated_connections_df=generated_connections_df,
         input_excel_path=input_excel_path,
+        harness_code_map=harness_code_map,
     )
 
     excel_bytes = export_excel(
