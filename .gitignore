@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+
+# Streamlit/local
+.streamlit/secrets.toml
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+
+# Build/artifacts
+*.zip
+
+# Generated outputs
+Wiring_Harness_Output.xlsx
+Test_Output*.xlsx
+Final_Test_Output.xlsx
+
+# Office temp lock files
+~$*.xlsx
+~$*.xls
