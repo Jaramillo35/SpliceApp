@@ -1134,7 +1134,10 @@ def generate_harness_print_matrix(
             to_row[harness_pn] = "☑" if harness_pn in applicable_pns else ""
         matrix_rows.append(to_row)
     
-    return pd.DataFrame(matrix_rows)
+    matrix_df = pd.DataFrame(matrix_rows)
+    if "Device Name" in matrix_df.columns:
+        matrix_df = matrix_df[matrix_df["Device Name"].astype(str).str.strip().str.upper() != "UNKNOWN"].copy()
+    return matrix_df
 
 
 def export_excel(
