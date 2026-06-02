@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 
+import pandas as pd
 import streamlit as st
 
 from wiring_harness_processor import (
