@@ -580,6 +580,78 @@ def _evaluate_target_harnesses(expression: str, harness_code_map: dict[str, set[
     )
 
 
+def get_selected_harness_pns(edited_matrix_df: pd.DataFrame) -> dict[int, list[str]]:
+    """Return selected Harness PNs per row index from checkbox grid."""
+    fixed_cols = {"Device ID", "Connector No", "Device Name", "Pin", "Circuit", "Sales Code"}
+    harness_cols = [col for col in edited_matrix_df.columns if col not in fixed_cols]
+
+    selected: dict[int, list[str]] = {}
+    for idx, row in edited_matrix_df.iterrows():
+        selected[idx] = [pn for pn in harness_cols if bool(row.get(pn, False))]
+    return selected
+
+
+def evaluate_expression_against_all_pns(
+    expression: str,
+    harness_code_map: dict[str, set[str]],
+) -> list[str]:
+    """Return display Harness PNs that match an expression."""
+    parsed = parse_sales_code_expression("" if expression == "TRUE" else expression)
+    matched_display_pns: set[str] = set()
+
+    for harness_key, active_codes in harness_code_map.items():
+        if evaluate_expression(parsed, active_codes):
+            matched_display_pns.add(_display_pn(harness_key))
+
+    return sorted(matched_display_pns)
+
+
+def generate_expression_for_selected_pns(
+    selected_pns: list[str],
+    harness_code_map: dict[str, set[str]],
+) -> str:
+    """Generate a sales code expression that exactly targets selected display Harness PNs."""
+    selected_set = {pn.strip() for pn in selected_pns if str(pn).strip()}
+    if not selected_set:
+        return ""
+
+    target_harness_keys = [
+        harness_key for harness_key in harness_code_map.keys() if _display_pn(harness_key) in selected_set
+    ]
+    if not target_harness_keys:
+        return ""
+
+    candidate_codes = set().union(*harness_code_map.values()) if harness_code_map else set()
+    expression = generate_sales_code_expression(
+        target_harnesses=target_harness_keys,
+        harness_code_map=harness_code_map,
+        candidate_codes=candidate_codes,
+    )
+
+    if expression in {"", "FALSE"}:
+        return ""
+    return expression
+
+
+def validate_generated_expression(
+    expression: str,
+    selected_pns: list[str],
+    harness_code_map: dict[str, set[str]],
+) -> bool:
+    """Confirm expression matches exactly the user-selected display Harness PN set."""
+    if not expression:
+        return False
+
+    selected_set = {pn.strip() for pn in selected_pns if str(pn).strip()}
+    matched_set = set(evaluate_expression_against_all_pns(expression, harness_code_map))
+    return matched_set == selected_set
+
+
+def simplify_expression_for_display(expression: str) -> str:
+    """Convert strict expression into engineering-friendly form using / where possible."""
+    return _simplify_sales_code_for_display(expression)
+
+
 def _choose_anchor_endpoint(endpoints: list[Endpoint]) -> Endpoint:
     """Choose the anchor (destination) endpoint - prefer always-present or least restrictive."""
     always_present = [e for e in endpoints if e.sales_code == ""]
@@ -1139,9 +1211,12 @@ def export_excel(
     return output.getvalue()
 
 
-def run_analysis(input_excel_path: str | Path) -> dict[str, Any]:
-    harness_code_map, harness_code_map_df = load_complexity_matrix(input_excel_path)
-    option_df = load_option_per_circuit(input_excel_path)
+def _run_analysis_core(
+    input_excel_path: str | Path,
+    harness_code_map: dict[str, set[str]],
+    harness_code_map_df: pd.DataFrame,
+    option_df: pd.DataFrame,
+) -> dict[str, Any]:
 
     device_eval_df, presence_matrix = build_harness_presence_matrix(harness_code_map, option_df)
 
@@ -1267,6 +1342,7 @@ def run_analysis(input_excel_path: str | Path) -> dict[str, Any]:
     )
 
     return {
+        "harness_code_map": harness_code_map,
         "harness_code_map_df": harness_code_map_df,
         "option_df": option_df,
         "device_evaluation_df": device_eval_df,
@@ -1276,3 +1352,19 @@ def run_analysis(input_excel_path: str | Path) -> dict[str, Any]:
         "validation_report_df": validation_report_df,
         "output_excel_bytes": excel_bytes,
     }
+
+
+def run_analysis(input_excel_path: str | Path) -> dict[str, Any]:
+    harness_code_map, harness_code_map_df = load_complexity_matrix(input_excel_path)
+    option_df = load_option_per_circuit(input_excel_path)
+    return _run_analysis_core(input_excel_path, harness_code_map, harness_code_map_df, option_df)
+
+
+def run_analysis_from_option_df(
+    input_excel_path: str | Path,
+    option_df_override: pd.DataFrame,
+) -> dict[str, Any]:
+    """Run full analysis using an in-memory OptionPerCircuit dataframe override."""
+    harness_code_map, harness_code_map_df = load_complexity_matrix(input_excel_path)
+    option_df = option_df_override.copy()
+    return _run_analysis_core(input_excel_path, harness_code_map, harness_code_map_df, option_df)
