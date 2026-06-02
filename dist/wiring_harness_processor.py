@@ -652,6 +652,24 @@ def simplify_expression_for_display(expression: str) -> str:
     return _simplify_sales_code_for_display(expression)
 
 
+def get_candidate_codes_from_option_df(
+    option_df: pd.DataFrame,
+    circuit_name: str | None = None,
+) -> set[str]:
+    """Return candidate sales codes from OptionPerCkt, optionally limited to one circuit."""
+    if option_df.empty:
+        return set()
+
+    df = option_df.copy()
+    if circuit_name:
+        df = df[df["Circuit"].astype(str).str.strip() == str(circuit_name).strip()]
+
+    codes: set[str] = set()
+    for _, row in df.iterrows():
+        codes.update(_extract_codes_from_expression(row.get("Sales Code", "")))
+    return {c for c in codes if c}
+
+
 def _choose_anchor_endpoint(endpoints: list[Endpoint]) -> Endpoint:
     """Choose the anchor (destination) endpoint - prefer always-present or least restrictive."""
     always_present = [e for e in endpoints if e.sales_code == ""]

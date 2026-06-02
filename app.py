@@ -6,7 +6,9 @@ import tempfile
 import streamlit as st
 
 from wiring_harness_processor import (
+    generate_sales_code_expression,
     generate_expression_for_selected_pns,
+    get_candidate_codes_from_option_df,
     get_selected_harness_pns,
     run_analysis,
     run_analysis_from_option_df,
@@ -144,7 +146,31 @@ else:
         if st.button("Generate Sales Code", key="btn_generate_sales_code"):
             selected_by_row = get_selected_harness_pns(edited_df)
             selected_pns = selected_by_row.get(selected_row_idx, [])
-            expr = generate_expression_for_selected_pns(selected_pns, result["harness_code_map"])
+            selected_circuit = str(row_header["Circuit"]).strip()
+            candidate_codes = get_candidate_codes_from_option_df(
+                result["option_df"],
+                circuit_name=selected_circuit,
+            )
+
+            # Restrict target harnesses to keys whose display PN was selected
+            selected_set = {pn.strip() for pn in selected_pns if str(pn).strip()}
+            target_harness_keys = [
+                hk for hk in result["harness_code_map"].keys()
+                if hk.split("__")[0] in selected_set
+            ]
+
+            expr = generate_expression_for_selected_pns(
+                selected_pns,
+                result["harness_code_map"],
+            )
+
+            # Re-generate with circuit-limited candidate codes from OptionPerCkt
+            if target_harness_keys and candidate_codes:
+                expr = generate_sales_code_expression(
+                    target_harnesses=target_harness_keys,
+                    harness_code_map=result["harness_code_map"],
+                    candidate_codes=candidate_codes,
+                )
 
             if not expr:
                 st.session_state["interactive_generated_expr"] = None
