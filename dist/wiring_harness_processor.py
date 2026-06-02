@@ -1068,60 +1068,67 @@ def generate_harness_print_matrix(
             all_harness_pns.update(p.strip() for p in str(pns_str).split(","))
     all_harness_pns = sorted(all_harness_pns)
     
+    # Determine which circuit column to use (prefer Generated Circuit for suffixes)
+    cols = generated_connections_df.columns.tolist()
+    circuit_col = "Generated Circuit" if "Generated Circuit" in cols else "Circuit Name"
+
     # Build matrix rows
     matrix_rows = []
     for _, conn_row in generated_connections_df.iterrows():
         # Extract applicable Harness PNs for this connection
-        target_pns_str = conn_row.get("Target Harness PNs", "")
+        target_pns_str = conn_row["Target Harness PNs"] if "Target Harness PNs" in cols else ""
         applicable_pns = set()
         if pd.notna(target_pns_str):
             applicable_pns = {p.strip() for p in str(target_pns_str).split(",")}
-        
+
+        circuit_val = str(conn_row[circuit_col]) if pd.notna(conn_row[circuit_col]) else ""
+
         # From device row
-        from_cnum = conn_row.get("From CNUM", "")
-        from_pin = conn_row.get("From Pin", "")
+        from_cnum = str(conn_row["From CNUM"]) if pd.notna(conn_row["From CNUM"]) else ""
+        from_pin = str(conn_row["From Pin"]) if pd.notna(conn_row["From Pin"]) else ""
         from_device = cnum_to_device.get(from_cnum, "Unknown")
-        
+
         from_row = {
             "Device ID": cnum_to_pin_info.get(from_cnum, {}).get("device_control_num", ""),
             "Connector No": from_cnum,
             "Device Name": from_device,
             "Pin": from_pin,
-            "Circuit": conn_row.get("Generated Circuit", conn_row.get("Circuit Name", "")),
-            "Sales Code": conn_row.get("Sales Code", ""),
+            "Circuit": circuit_val,
+            "Sales Code": str(conn_row["Sales Code"]) if pd.notna(conn_row["Sales Code"]) else "",
         }
         # Add checkmarks for applicable harnesses
         for harness_pn in all_harness_pns:
             from_row[harness_pn] = "☑" if harness_pn in applicable_pns else ""
         matrix_rows.append(from_row)
-        
+
         # Splice row (if applicable)
-        splice_name = conn_row.get("Splice Name", "")
-        if pd.notna(splice_name) and splice_name and conn_row.get("Connection Type", "").startswith("Splice"):
+        splice_name = str(conn_row["Splice Name"]) if pd.notna(conn_row["Splice Name"]) else ""
+        connection_type = str(conn_row["Connection Type"]) if pd.notna(conn_row["Connection Type"]) else ""
+        if splice_name and connection_type.startswith("Splice"):
             splice_row = {
                 "Device ID": "",
                 "Connector No": splice_name,
                 "Device Name": f"Splice_{splice_name}",
                 "Pin": "",
-                "Circuit": conn_row.get("Generated Circuit", conn_row.get("Circuit Name", "")),
-                "Sales Code": conn_row.get("Sales Code", ""),
+                "Circuit": circuit_val,
+                "Sales Code": str(conn_row["Sales Code"]) if pd.notna(conn_row["Sales Code"]) else "",
             }
             for harness_pn in all_harness_pns:
                 splice_row[harness_pn] = "☑" if harness_pn in applicable_pns else ""
             matrix_rows.append(splice_row)
-        
+
         # To device row
-        to_cnum = conn_row.get("To CNUM", "")
-        to_pin = conn_row.get("To Pin", "")
+        to_cnum = str(conn_row["To CNUM"]) if pd.notna(conn_row["To CNUM"]) else ""
+        to_pin = str(conn_row["To Pin"]) if pd.notna(conn_row["To Pin"]) else ""
         to_device = cnum_to_device.get(to_cnum, "Unknown")
-        
+
         to_row = {
             "Device ID": cnum_to_pin_info.get(to_cnum, {}).get("device_control_num", ""),
             "Connector No": to_cnum,
             "Device Name": to_device,
             "Pin": to_pin,
-            "Circuit": conn_row.get("Generated Circuit", conn_row.get("Circuit Name", "")),
-            "Sales Code": conn_row.get("Sales Code", ""),
+            "Circuit": circuit_val,
+            "Sales Code": str(conn_row["Sales Code"]) if pd.notna(conn_row["Sales Code"]) else "",
         }
         for harness_pn in all_harness_pns:
             to_row[harness_pn] = "☑" if harness_pn in applicable_pns else ""
