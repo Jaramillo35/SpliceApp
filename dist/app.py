@@ -6,6 +6,7 @@ import tempfile
 import streamlit as st
 
 from wiring_harness_processor import (
+    evaluate_expression_against_all_pns,
     generate_sales_code_expression,
     generate_expression_for_selected_pns,
     get_candidate_codes_from_option_df,
@@ -106,71 +107,92 @@ st.markdown("Engineering applicability matrix showing which connections apply to
 st.dataframe(result["harness_print_matrix_df"], use_container_width=True)
 
 st.subheader("🧩 Interactive Sales Code Generator")
-st.markdown("Select a matrix row, toggle Harness PN checkboxes, then generate a valid sales code expression.")
+st.markdown("Select circuit/row from the second sheet, edit Sales Code text, and visualize PN applicability from first-sheet rules.")
 
-matrix_df = result["harness_print_matrix_df"].copy()
-fixed_cols = ["Device ID", "Connector No", "Device Name", "Pin", "Circuit", "Sales Code"]
-harness_cols = [col for col in matrix_df.columns if col not in fixed_cols]
+option_df = result["option_df"].copy()
+circuits = sorted(option_df["Circuit"].dropna().astype(str).str.strip().unique().tolist())
 
-if matrix_df.empty or not harness_cols:
-    st.info("No harness matrix rows available for interactive selection.")
+if not circuits:
+    st.info("No circuits available in the second sheet (OptionPerCkt).")
 else:
-    selectable_rows = [
-        f"{idx}: {row['Connector No']} | {row['Device Name']} | Pin {row['Pin']} | {row['Circuit']}"
-        for idx, row in matrix_df.iterrows()
-    ]
-    selected_row_label = st.selectbox("Select Row", selectable_rows, key="interactive_row_selector")
-    selected_row_idx = int(selected_row_label.split(":", 1)[0])
+    selected_circuit = st.selectbox("Circuit (from second sheet)", circuits, key="interactive_circuit_selector")
+    circuit_rows = option_df[option_df["Circuit"].astype(str).str.strip() == selected_circuit].copy()
 
-    selected_row = matrix_df.loc[[selected_row_idx], fixed_cols + harness_cols].copy()
-    row_header = selected_row.iloc[0]
-    st.markdown(
-        f"**Selected:** Connector {row_header['Connector No']} | Device {row_header['Device Name']} | "
-        f"Pin {row_header['Pin']} | Circuit {row_header['Circuit']}"
+    row_labels = [
+        f"{idx}: {row['CNUM']} | Pin {row['Pin']} | SalesCode={row['Sales Code']}"
+        for idx, row in circuit_rows.iterrows()
+    ]
+    selected_row_label = st.selectbox("Row", row_labels, key="interactive_row_selector")
+    selected_row_idx = int(selected_row_label.split(":", 1)[0])
+    selected_row = option_df.loc[selected_row_idx]
+
+    sales_code_input = st.text_input(
+        "Sales Code (editable)",
+        value=str(selected_row["Sales Code"]),
+        key=f"interactive_sales_code_input_{selected_row_idx}",
     )
 
-    edit_df = selected_row.copy()
-    for pn in harness_cols:
-        edit_df[pn] = edit_df[pn].astype(str).eq("☑")
+    harness_cols = sorted({k.split("__")[0] for k in result["harness_code_map"].keys()})
+    fixed_cols = ["Device ID", "Connector No", "Device Name", "Pin", "Circuit", "Sales Code"]
 
+    matched_pns: list[str] = []
+    expression_valid = True
+    validation_message = ""
+    if sales_code_input.strip():
+        try:
+            matched_pns = evaluate_expression_against_all_pns(sales_code_input.strip(), result["harness_code_map"])
+        except Exception:
+            expression_valid = False
+            validation_message = "Combination not valid with available salescodes"
+
+    visualize_row = {
+        "Device ID": "",
+        "Connector No": str(selected_row["CNUM"]),
+        "Device Name": "Interactive_Row",
+        "Pin": str(selected_row["Pin"]),
+        "Circuit": selected_circuit,
+        "Sales Code": sales_code_input.strip(),
+    }
+    for pn in harness_cols:
+        visualize_row[pn] = pn in matched_pns
+
+    st.markdown("**PN Applicability Grid**")
     edited_df = st.data_editor(
-        edit_df,
+        pd.DataFrame([visualize_row]),
         column_config={pn: st.column_config.CheckboxColumn(pn) for pn in harness_cols},
         use_container_width=True,
         num_rows="fixed",
         key=f"interactive_editor_{selected_row_idx}",
     )
 
+    if not expression_valid:
+        st.error(validation_message)
+
     col_gen, col_apply = st.columns(2)
     with col_gen:
         if st.button("Generate Sales Code", key="btn_generate_sales_code"):
             selected_by_row = get_selected_harness_pns(edited_df)
-            selected_pns = selected_by_row.get(selected_row_idx, [])
-            selected_circuit = str(row_header["Circuit"]).strip()
+            selected_pns = selected_by_row.get(0, [])
             candidate_codes = get_candidate_codes_from_option_df(
                 result["option_df"],
                 circuit_name=selected_circuit,
             )
 
-            # Restrict target harnesses to keys whose display PN was selected
             selected_set = {pn.strip() for pn in selected_pns if str(pn).strip()}
             target_harness_keys = [
                 hk for hk in result["harness_code_map"].keys()
                 if hk.split("__")[0] in selected_set
             ]
 
-            expr = generate_expression_for_selected_pns(
-                selected_pns,
-                result["harness_code_map"],
-            )
-
-            # Re-generate with circuit-limited candidate codes from OptionPerCkt
+            expr = ""
             if target_harness_keys and candidate_codes:
                 expr = generate_sales_code_expression(
                     target_harnesses=target_harness_keys,
                     harness_code_map=result["harness_code_map"],
                     candidate_codes=candidate_codes,
                 )
+            else:
+                expr = generate_expression_for_selected_pns(selected_pns, result["harness_code_map"])
 
             if not expr:
                 st.session_state["interactive_generated_expr"] = None
@@ -199,26 +221,12 @@ else:
             if not generated_expr:
                 st.error("No valid generated sales code to apply.")
             else:
-                target_row = matrix_df.loc[selected_row_idx]
-                target_cnum = str(target_row["Connector No"]).strip()
-                target_pin = str(target_row["Pin"]).strip()
-                target_circuit = str(target_row["Circuit"]).strip()
-
                 updated_option_df = result["option_df"].copy()
-                match_mask = (
-                    updated_option_df["CNUM"].astype(str).str.strip().eq(target_cnum)
-                    & updated_option_df["Pin"].astype(str).str.strip().eq(target_pin)
-                    & updated_option_df["Circuit"].astype(str).str.strip().eq(target_circuit)
-                )
-
-                if not match_mask.any():
-                    st.error("Could not map selected row back to OptionPerCircuit row.")
-                else:
-                    updated_option_df.loc[match_mask, "Sales Code"] = generated_expr
-                    refreshed = run_analysis_from_option_df(temp_path, updated_option_df)
-                    st.session_state["analysis_result"] = refreshed
-                    st.success("Sales code applied. Configurations and validation refreshed.")
-                    st.rerun()
+                updated_option_df.loc[selected_row_idx, "Sales Code"] = generated_expr
+                refreshed = run_analysis_from_option_df(temp_path, updated_option_df)
+                st.session_state["analysis_result"] = refreshed
+                st.success("Sales code applied. Configurations and validation refreshed.")
+                st.rerun()
 
 st.subheader("✅ Validation Report")
 st.dataframe(result["validation_report_df"], use_container_width=True)
