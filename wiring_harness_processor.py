@@ -1087,7 +1087,7 @@ def generate_harness_print_matrix(
             "Connector No": from_cnum,
             "Device Name": from_device,
             "Pin": from_pin,
-            "Circuit": conn_row.get("Circuit Name", ""),
+            "Circuit": conn_row.get("Generated Circuit", conn_row.get("Circuit Name", "")),
             "Sales Code": conn_row.get("Sales Code", ""),
         }
         # Add checkmarks for applicable harnesses
@@ -1103,7 +1103,7 @@ def generate_harness_print_matrix(
                 "Connector No": splice_name,
                 "Device Name": f"Splice_{splice_name}",
                 "Pin": "",
-                "Circuit": conn_row.get("Circuit Name", ""),
+                "Circuit": conn_row.get("Generated Circuit", conn_row.get("Circuit Name", "")),
                 "Sales Code": conn_row.get("Sales Code", ""),
             }
             for harness_pn in all_harness_pns:
@@ -1120,7 +1120,7 @@ def generate_harness_print_matrix(
             "Connector No": to_cnum,
             "Device Name": to_device,
             "Pin": to_pin,
-            "Circuit": conn_row.get("Circuit Name", ""),
+            "Circuit": conn_row.get("Generated Circuit", conn_row.get("Circuit Name", "")),
             "Sales Code": conn_row.get("Sales Code", ""),
         }
         for harness_pn in all_harness_pns:

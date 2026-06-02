@@ -116,7 +116,7 @@ circuits = sorted(option_df["Circuit"].dropna().astype(str).str.strip().unique()
 if not circuits:
     st.info("No circuits available in the second sheet (OptionPerCkt).")
 else:
-    selected_circuit = st.selectbox("Circuit (from second sheet)", circuits, key="interactive_circuit_selector")
+    selected_circuit = st.selectbox("Circuit", circuits, key="interactive_circuit_selector")
     circuit_rows = option_df[option_df["Circuit"].astype(str).str.strip() == selected_circuit].copy()
 
     row_labels = [
@@ -128,7 +128,7 @@ else:
     selected_row = option_df.loc[selected_row_idx]
 
     sales_code_input = st.text_input(
-        "Sales Code (editable)",
+        "Sales Code",
         value=str(selected_row["Sales Code"]),
         key=f"interactive_sales_code_input_{selected_row_idx}",
     )
@@ -228,9 +228,6 @@ else:
                 st.session_state["analysis_result"] = refreshed
                 st.success("Sales code applied. Configurations and validation refreshed.")
                 st.rerun()
-
-st.subheader("✅ Validation Report")
-st.dataframe(result["validation_report_df"], use_container_width=True)
 
 st.download_button(
     label="📥 Download Output Excel",
