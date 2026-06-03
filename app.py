@@ -176,7 +176,7 @@ if mode == "Home":
         st.markdown(
             """
             <div class="tool-card">
-                <div class="tool-title">DTCR / DTx Compare (Windows)</div>
+                <div class="tool-title">DTCR (Windows)</div>
                 <div class="tool-desc">
                     Download the full Windows package with build script, install guide, and required files.
                 </div>
@@ -187,18 +187,21 @@ if mode == "Home":
             unsafe_allow_html=True,
         )
 
-        dtx_pkg = Path(__file__).resolve().parents[1] / "DTx" / "DTx_Compare_Distribution_Windows_v1.0.zip"
+        project_root = Path(__file__).resolve().parent
+        dtx_pkg = project_root / "assets" / "downloads" / "DTCR_Distribution_Windows_v1.0.zip"
+        if not dtx_pkg.exists():
+            dtx_pkg = Path(__file__).resolve().parents[1] / "DTx" / "DTx_Compare_Distribution_Windows_v1.0.zip"
         if dtx_pkg.exists():
             st.download_button(
-                label="Download DTCR / DTx Windows Package",
+                label="Download DTCR Windows Package",
                 data=dtx_pkg.read_bytes(),
-                file_name="DTx_Compare_Distribution_Windows_v1.0.zip",
+                file_name="DTCR_Distribution_Windows_v1.0.zip",
                 mime="application/zip",
                 key="dl_dtx_windows_pkg",
                 use_container_width=True,
             )
         else:
-            st.warning("DTCR / DTx package not found. Expected: DTx/DTx_Compare_Distribution_Windows_v1.0.zip")
+            st.warning("DTCR package not found. Expected: assets/downloads/DTCR_Distribution_Windows_v1.0.zip")
 
     with dcol2:
         st.markdown(
@@ -215,7 +218,9 @@ if mode == "Home":
             unsafe_allow_html=True,
         )
 
-        vbom_pkg = Path(__file__).resolve().parents[1] / "VBOMxRISKMATRIX" / "VBOM_Generator_Distribution_Windows_v1.0.zip"
+        vbom_pkg = project_root / "assets" / "downloads" / "VBOM_Generator_Distribution_Windows_v1.0.zip"
+        if not vbom_pkg.exists():
+            vbom_pkg = Path(__file__).resolve().parents[1] / "VBOMxRISKMATRIX" / "VBOM_Generator_Distribution_Windows_v1.0.zip"
         if vbom_pkg.exists():
             st.download_button(
                 label="Download VBOM Windows Package",
@@ -226,7 +231,7 @@ if mode == "Home":
                 use_container_width=True,
             )
         else:
-            st.warning("VBOM package not found. Expected: VBOMxRISKMATRIX/VBOM_Generator_Distribution_Windows_v1.0.zip")
+            st.warning("VBOM package not found. Expected: assets/downloads/VBOM_Generator_Distribution_Windows_v1.0.zip")
 
 if mode != "Home":
     st.session_state["selected_tool"] = mode
