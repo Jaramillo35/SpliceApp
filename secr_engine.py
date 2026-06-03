@@ -89,9 +89,6 @@ def _process_def_def_summary(wb_secr, ws_summary) -> None:
         return
     ws = wb_secr[DEF_DEF_SUMMARY_SHEET]
 
-    ws.insert_cols(1)
-    ws.cell(row=3, column=1, value="Content")
-
     action_col = _find_action_col(ws, header_row=3)
     # The value column was originally 3 positions after Action (col D when Action=col A)
     value_col = action_col + 3
@@ -118,9 +115,6 @@ def _process_connector_sheet(wb_secr, ws_summary) -> None:
     if CONNECTOR_SHEET not in wb_secr.sheetnames:
         return
     ws = wb_secr[CONNECTOR_SHEET]
-
-    ws.insert_cols(1)
-    ws.cell(row=3, column=1, value="Comments")
 
     action_col = _find_action_col(ws, header_row=3)
     connector_col = action_col + 1
@@ -154,9 +148,6 @@ def _process_circuit_sheet(wb_secr, ws_summary) -> None:
     if CIRCUIT_SHEET not in wb_secr.sheetnames:
         return
     ws = wb_secr[CIRCUIT_SHEET]
-
-    ws.insert_cols(1)
-    ws.cell(row=3, column=1, value="Comments")
 
     action_col = _find_action_col(ws, header_row=3)
     val_b_col = action_col + 1
