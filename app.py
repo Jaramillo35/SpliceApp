@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import tempfile
 from pathlib import Path
 
@@ -566,6 +567,24 @@ elif selected_tool == "Create SECR":
             )
 
         if dtcr_file is not None and dtx_file is not None:
+            # --- Download DTCR-Harness Family mapping table immediately after upload ---
+            try:
+                _dtcr_prev = load_dtcr_report(dtcr_file.getvalue())
+                _dtx_prev = load_dtx_circuits_report(dtx_file.getvalue())
+                _mapping_prev = match_dtcr_to_harness_family(_dtcr_prev, _dtx_prev)
+                _map_buf = io.BytesIO()
+                _mapping_prev.to_excel(_map_buf, index=False, engine="openpyxl")
+                _map_buf.seek(0)
+                st.download_button(
+                    label="Download DTCR → Harness Family Table",
+                    data=_map_buf.getvalue(),
+                    file_name="DTCR_Harness_Family_Mapping.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_dtcr_mapping_quick",
+                )
+            except Exception as _map_err:
+                st.warning(f"Could not generate DTCR mapping table: {_map_err}")
+
             with st.form("secr_enrichment_form"):
                 st.markdown("**Enrichment Settings**")
                 enable_enrichment = st.checkbox(
@@ -657,6 +676,40 @@ elif selected_tool == "Create SECR":
             if enriched_result is not None:
                 st.success("SECR enrichment complete.")
 
+                # Prominent download buttons
+                dl_col1, dl_col2 = st.columns(2)
+                with dl_col1:
+                    st.download_button(
+                        label="Download Updated SECR with DTCRs",
+                        data=enriched_result,
+                        file_name=st.session_state.get(
+                            "enriched_secr_filename", "SECR_Enriched.xlsx"
+                        ),
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="enrich_dl_secr_top",
+                        use_container_width=True,
+                    )
+                with dl_col2:
+                    try:
+                        _dtcr_dl = load_dtcr_report(dtcr_file.getvalue())
+                        _dtx_dl = load_dtx_circuits_report(dtx_file.getvalue())
+                        if status_filter:
+                            _dtcr_dl = _dtcr_dl[_dtcr_dl["Status"].astype(str).str.strip().isin(status_filter)]
+                        _map_dl = match_dtcr_to_harness_family(_dtcr_dl, _dtx_dl)
+                        _dl_buf = io.BytesIO()
+                        _map_dl.to_excel(_dl_buf, index=False, engine="openpyxl")
+                        _dl_buf.seek(0)
+                        st.download_button(
+                            label="Download DTCR → Harness Family Table",
+                            data=_dl_buf.getvalue(),
+                            file_name="DTCR_Harness_Family_Mapping.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_dtcr_mapping_post",
+                            use_container_width=True,
+                        )
+                    except Exception:
+                        pass
+
                 # Show preview tables
                 try:
                     dtcr_df = load_dtcr_report(dtcr_file.getvalue())
@@ -701,15 +754,6 @@ elif selected_tool == "Create SECR":
                                 use_container_width=True,
                             )
 
-                    st.markdown("---")
-                    st.download_button(
-                        label="Download Enriched SECR Excel",
-                        data=enriched_result,
-                        file_name=st.session_state.get(
-                            "enriched_secr_filename", "SECR_Enriched.xlsx"
-                        ),
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="enrich_dl_btn",
-                    )
+
                 except Exception as exc:
                     st.error(f"Failed to display preview: {exc}")
