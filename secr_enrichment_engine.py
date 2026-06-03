@@ -382,7 +382,7 @@ def build_dtcr_numbers_for_secr(
     secr_harness_family: str,
     dtcr_mapping_df: pd.DataFrame,
 ) -> str:
-    """Build newline-separated DTCR numbers matching the SECR Harness Family."""
+    """Build comma-separated DTCR numbers matching the SECR Harness Family."""
     matching = dtcr_mapping_df[dtcr_mapping_df["Harness Family"] == secr_harness_family].copy()
     if matching.empty:
         return ""
@@ -467,44 +467,19 @@ def export_secr_enriched_output(
     summary_df: pd.DataFrame,
     output_filename: Optional[str] = None,
 ) -> Tuple[bytes, Dict[str, Any]]:
-    """Export the enriched SECR as Excel bytes with additional sheets.
-    
-    Adds sheets: DTCR_Extracted, DTCR_Harness_Mapping, SECR_Enrichment_Summary, Updated_SECR.
+    """Export the enriched SECR as Excel bytes.
+
+    The workbook keeps only the original SECR sheets plus the in-place Summary
+    updates; diagnostic extraction/mapping sheets are not included.
     Returns (excel_bytes, metadata_dict).
     """
     # Create a new workbook starting from the updated SECR
     wb_out = secr_workbook
 
-    # Add DTCR_Extracted sheet
-    if "DTCR_Extracted" in wb_out.sheetnames:
-        del wb_out["DTCR_Extracted"]
-    ws_dtcr = wb_out.create_sheet("DTCR_Extracted")
-    for r_idx, row in enumerate(
-        [dtcr_extracted_df.columns] + dtcr_extracted_df.values.tolist(), 1
-    ):
-        for c_idx, val in enumerate(row, 1):
-            ws_dtcr.cell(row=r_idx, column=c_idx, value=val)
-
-    # Add DTCR_Harness_Mapping sheet
-    if "DTCR_Harness_Mapping" in wb_out.sheetnames:
-        del wb_out["DTCR_Harness_Mapping"]
-    ws_mapping = wb_out.create_sheet("DTCR_Harness_Mapping")
-    for r_idx, row in enumerate(
-        [dtcr_mapping_df.columns] + dtcr_mapping_df.values.tolist(), 1
-    ):
-        for c_idx, val in enumerate(row, 1):
-            ws_mapping.cell(row=r_idx, column=c_idx, value=val)
-    _style_dtcr_mapping_sheet(ws_mapping)
-
-    # Add SECR_Enrichment_Summary sheet
-    if "SECR_Enrichment_Summary" in wb_out.sheetnames:
-        del wb_out["SECR_Enrichment_Summary"]
-    ws_summary = wb_out.create_sheet("SECR_Enrichment_Summary")
-    for r_idx, row in enumerate(
-        [summary_df.columns] + summary_df.values.tolist(), 1
-    ):
-        for c_idx, val in enumerate(row, 1):
-            ws_summary.cell(row=r_idx, column=c_idx, value=val)
+    # Remove previously generated diagnostic sheets if they exist from an earlier run.
+    for sheet_name in ("DTCR_Extracted", "DTCR_Harness_Mapping", "SECR_Enrichment_Summary"):
+        if sheet_name in wb_out.sheetnames:
+            del wb_out[sheet_name]
 
     # Rename the "Updated_SECR" sheet pointer (Note: we modify the output workbook in place,
     # so the original summary sheet is already updated)
@@ -517,7 +492,7 @@ def export_secr_enriched_output(
 
     return buf.read(), {
         "filename": output_filename or "SECR_Enriched.xlsx",
-        "sheets_added": ["DTCR_Extracted", "DTCR_Harness_Mapping", "SECR_Enrichment_Summary"],
+        "sheets_added": [],
     }
 
 
