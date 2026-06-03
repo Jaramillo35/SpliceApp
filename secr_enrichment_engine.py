@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Tuple
 import openpyxl
 import pandas as pd
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
 
@@ -277,6 +278,46 @@ def find_reason_for_change_cell(secr_workbook: openpyxl.Workbook) -> Optional[Tu
     return None
 
 
+def find_dtcr_number_label_cell(secr_workbook: openpyxl.Workbook) -> Optional[Tuple[str, str]]:
+    """Find the cell containing DTCR # label in Summary sheet."""
+    try:
+        ws = secr_workbook["Summary"]
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value and "DTCR #" in str(cell.value):
+                    return ("Summary", cell.coordinate)
+    except Exception:
+        pass
+    return None
+
+
+def _autosize_cell_for_text(
+    ws: openpyxl.worksheet.worksheet.Worksheet,
+    row_idx: int,
+    col_idx: int,
+    text: str,
+) -> None:
+    """Autosize a cell's row/column for multiline text readability."""
+    safe_text = text or ""
+    lines = safe_text.split("\n") if safe_text else [""]
+    longest_line = max((len(line) for line in lines), default=0)
+    line_count = max(1, len(lines))
+
+    # Width/height bounds keep layout usable while showing full content.
+    target_width = min(max(longest_line + 2, 18), 120)
+    target_height = min(max(line_count * 15, 18), 409)
+
+    col_letter = get_column_letter(col_idx)
+    ws.column_dimensions[col_letter].width = max(
+        ws.column_dimensions[col_letter].width or 0,
+        target_width,
+    )
+    ws.row_dimensions[row_idx].height = max(
+        ws.row_dimensions[row_idx].height or 0,
+        target_height,
+    )
+
+
 def update_secr_reason_for_change(
     secr_workbook: openpyxl.Workbook,
     cell_ref: str,
@@ -291,8 +332,28 @@ def update_secr_reason_for_change(
         target_cell = ws.cell(row=target_row, column=target_col)
         target_cell.value = reason_for_change_text
         target_cell.alignment = Alignment(wrap_text=True, vertical="top")
+        _autosize_cell_for_text(ws, target_row, target_col, reason_for_change_text)
     except Exception as e:
         raise RuntimeError(f"Failed to update SECR cell {cell_ref}: {e}")
+
+
+def update_secr_dtcr_numbers(
+    secr_workbook: openpyxl.Workbook,
+    dtcr_label_cell_ref: str,
+    dtcr_numbers_text: str,
+) -> None:
+    """Write DTCR numbers in the cell to the right of DTCR # label."""
+    try:
+        ws = secr_workbook["Summary"]
+        label_cell = ws[dtcr_label_cell_ref]
+        target_row = label_cell.row
+        target_col = label_cell.column + 1
+        target_cell = ws.cell(row=target_row, column=target_col)
+        target_cell.value = dtcr_numbers_text
+        target_cell.alignment = Alignment(wrap_text=True, vertical="top")
+        _autosize_cell_for_text(ws, target_row, target_col, dtcr_numbers_text)
+    except Exception as e:
+        raise RuntimeError(f"Failed to update DTCR numbers near {dtcr_label_cell_ref}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +384,37 @@ def build_reason_for_change_for_secr(
         entries.append(f"{dtcr_num}: {reason}")
 
     return "\n".join(entries)
+
+
+def build_dtcr_numbers_for_secr(
+    secr_harness_family: str,
+    dtcr_mapping_df: pd.DataFrame,
+) -> str:
+    """Build newline-separated DTCR numbers matching the SECR Harness Family."""
+    matching = dtcr_mapping_df[dtcr_mapping_df["Harness Family"] == secr_harness_family].copy()
+    if matching.empty:
+        return ""
+    dtcr_values = (
+        matching["DTCR#"].astype(str).str.strip().dropna().drop_duplicates().tolist()
+    )
+    return "\n".join(dtcr_values)
+
+
+def _apply_table_style(ws: openpyxl.worksheet.worksheet.Worksheet) -> None:
+    """Apply an Excel table style with row stripes to the used range."""
+    if ws.max_row < 1 or ws.max_column < 1:
+        return
+    table_ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
+    table = Table(displayName=f"Table_{ws.title[:18]}", ref=table_ref)
+    style = TableStyleInfo(
+        name="TableStyleMedium9",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=False,
+    )
+    table.tableStyleInfo = style
+    ws.add_table(table)
 
 
 def _style_dtcr_mapping_sheet(ws: openpyxl.worksheet.worksheet.Worksheet) -> None:
@@ -361,7 +453,39 @@ def _style_dtcr_mapping_sheet(ws: openpyxl.worksheet.worksheet.Worksheet) -> Non
             if val is None:
                 continue
             max_len = max(max_len, len(str(val)))
-        ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 55)
+        ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 120)
+
+    # Give multiline cells enough height
+    for row_idx in range(2, ws.max_row + 1):
+        max_lines = 1
+        for col_idx in range(1, ws.max_column + 1):
+            val = ws.cell(row=row_idx, column=col_idx).value
+            if val is None:
+                continue
+            max_lines = max(max_lines, str(val).count("\n") + 1)
+        ws.row_dimensions[row_idx].height = min(max(max_lines * 15, 18), 120)
+
+    _apply_table_style(ws)
+
+
+def export_dtcr_mapping_styled(dtcr_mapping_df: pd.DataFrame) -> bytes:
+    """Export DTCR mapping as a styled standalone workbook (table + autofit)."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "DTCR_Harness_Family_Mapping"
+
+    for r_idx, row in enumerate(
+        [dtcr_mapping_df.columns] + dtcr_mapping_df.values.tolist(), 1
+    ):
+        for c_idx, val in enumerate(row, 1):
+            ws.cell(row=r_idx, column=c_idx, value=val)
+
+    _style_dtcr_mapping_sheet(ws)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.read()
 
 
 def export_secr_enriched_output(

@@ -16,10 +16,14 @@ from secr_enrichment_engine import (
     match_dtcr_to_harness_family,
     get_secr_harness_family_from_c12,
     find_reason_for_change_cell,
+    find_dtcr_number_label_cell,
     update_secr_reason_for_change,
+    update_secr_dtcr_numbers,
     build_reason_for_change_for_secr,
+    build_dtcr_numbers_for_secr,
     build_enrichment_summary,
     validate_enrichment_inputs,
+    export_dtcr_mapping_styled,
     export_secr_enriched_output,
 )
 from wiring_harness_processor import (
@@ -572,12 +576,10 @@ elif selected_tool == "Create SECR":
                 _dtcr_prev = load_dtcr_report(dtcr_file.getvalue())
                 _dtx_prev = load_dtx_circuits_report(dtx_file.getvalue())
                 _mapping_prev = match_dtcr_to_harness_family(_dtcr_prev, _dtx_prev)
-                _map_buf = io.BytesIO()
-                _mapping_prev.to_excel(_map_buf, index=False, engine="openpyxl")
-                _map_buf.seek(0)
+                _map_bytes = export_dtcr_mapping_styled(_mapping_prev)
                 st.download_button(
                     label="Download DTCR → Harness Family Table",
-                    data=_map_buf.getvalue(),
+                    data=_map_bytes,
                     file_name="DTCR_Harness_Family_Mapping.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="dl_dtcr_mapping_quick",
@@ -652,6 +654,22 @@ elif selected_tool == "Create SECR":
                                 "Skipping update."
                             )
 
+                        # Populate DTCR # field (cell right of DTCR # label)
+                        dtcr_label_info = find_dtcr_number_label_cell(secr_wb)
+                        if dtcr_label_info:
+                            _, dtcr_label_ref = dtcr_label_info
+                            dtcr_numbers_text = build_dtcr_numbers_for_secr(
+                                secr_harness_family, dtcr_mapping_df
+                            )
+                            update_secr_dtcr_numbers(
+                                secr_wb, dtcr_label_ref, dtcr_numbers_text
+                            )
+                        else:
+                            st.warning(
+                                "Could not find DTCR # field in SECR. "
+                                "Skipping DTCR # update."
+                            )
+
                         # Export enriched output
                         base_secr_filename = st.session_state.get(
                             "secr_result_filename", "SECR_output.xlsx"
@@ -700,12 +718,10 @@ elif selected_tool == "Create SECR":
                         if status_filter:
                             _dtcr_dl = _dtcr_dl[_dtcr_dl["Status"].astype(str).str.strip().isin(status_filter)]
                         _map_dl = match_dtcr_to_harness_family(_dtcr_dl, _dtx_dl)
-                        _dl_buf = io.BytesIO()
-                        _map_dl.to_excel(_dl_buf, index=False, engine="openpyxl")
-                        _dl_buf.seek(0)
+                        _map_dl_bytes = export_dtcr_mapping_styled(_map_dl)
                         st.download_button(
                             label="Download DTCR → Harness Family Table",
-                            data=_dl_buf.getvalue(),
+                            data=_map_dl_bytes,
                             file_name="DTCR_Harness_Family_Mapping.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             key="dl_dtcr_mapping_post",
