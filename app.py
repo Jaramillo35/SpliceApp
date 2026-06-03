@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
+import queue
 import tempfile
+import threading
+import time
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
+from dtcr_engine import start_dtcr_session, zip_download_dir
 from dtx_compare_engine import generate_dtx_change_report
 from wiring_harness_processor import (
     evaluate_expression_against_all_pns,
@@ -84,13 +88,13 @@ st.markdown(
 
 mode = st.radio(
     "Choose Tool",
-    ["Home", "Splice Generation", "DTx Compare Report"],
+    ["Home", "Splice Generation", "DTx Compare Report", "DTCR Downloader"],
     horizontal=True,
     label_visibility="collapsed",
 )
 
 if mode == "Home":
-    left, right = st.columns(2, gap="large")
+    left, mid, right = st.columns(3, gap="large")
 
     with left:
         st.markdown(
@@ -111,7 +115,7 @@ if mode == "Home":
             st.session_state["selected_tool"] = "Splice Generation"
             st.rerun()
 
-    with right:
+    with mid:
         st.markdown(
             """
             <div class="tool-card">
@@ -128,6 +132,25 @@ if mode == "Home":
         )
         if st.button("Open DTx Compare", key="go_dtx", use_container_width=True):
             st.session_state["selected_tool"] = "DTx Compare Report"
+            st.rerun()
+
+    with right:
+        st.markdown(
+            """
+            <div class="tool-card">
+                <div class="tool-title">DTCR Downloader</div>
+                <div class="tool-desc">
+                    Automate DTCR attachment downloads from Chrysler iSPEED. Extracts Reason for Change data and exports an Excel report.
+                </div>
+                <span class="tool-badge">Local Only</span>
+                <span class="tool-badge">Playwright</span>
+                <span class="tool-badge">Attachments</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("Open DTCR Downloader", key="go_dtcr", use_container_width=True):
+            st.session_state["selected_tool"] = "DTCR Downloader"
             st.rerun()
 
 if mode != "Home":
@@ -407,3 +430,126 @@ elif selected_tool == "DTx Compare Report":
         file_name=dtx_result["output_file_name"],
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+elif selected_tool == "DTCR Downloader":
+    st.title("DTCR Downloader")
+    st.warning(
+        "This tool opens a real Chromium browser window. "
+        "It must be run **locally** — it will not function on Streamlit Cloud."
+    )
+    st.markdown(
+        """
+        **Workflow:**
+        1. Enter your iSPEED credentials below and click **Launch DTCR Browser**.
+        2. A Chromium window will open. The tool will attempt to log you in automatically.
+        3. Navigate to the **Change Requests** tab, enter **Program** and **Phase**, then click **Search**.
+        4. When results load, click the orange **Download DTCRs** button in the browser overlay panel.
+        5. The scraper downloads all DTCR attachments and extracts Reason for Change data.
+        6. Return here to download a ZIP of all files and the Reason-for-Change Excel report.
+        """
+    )
+
+    # Initialise session-state keys on first visit.
+    _dtcr_defaults = {
+        "dtcr_running": False,
+        "dtcr_completed": False,
+        "dtcr_logs": [],
+        "dtcr_done_event": None,
+        "dtcr_log_queue": None,
+        "dtcr_result_holder": {},
+        "dtcr_download_dir": "",
+    }
+    for _k, _v in _dtcr_defaults.items():
+        if _k not in st.session_state:
+            st.session_state[_k] = _v
+
+    # ── Launch form (shown when idle and no completed session) ─────────────
+    if not st.session_state["dtcr_running"] and not st.session_state["dtcr_completed"]:
+        with st.form("dtcr_launch_form"):
+            username_val = st.text_input(
+                "iSPEED Username (optional — speeds up login)",
+                key="dtcr_uname",
+            )
+            password_val = st.text_input(
+                "iSPEED Password (optional)",
+                type="password",
+                key="dtcr_pwd",
+            )
+            launched = st.form_submit_button("Launch DTCR Browser", type="primary")
+
+        if launched:
+            dl_dir = tempfile.mkdtemp(prefix="dtcr_downloads_")
+            lq: queue.Queue = queue.Queue()
+            ev = threading.Event()
+            rh: dict = {}
+            st.session_state["dtcr_running"] = True
+            st.session_state["dtcr_log_queue"] = lq
+            st.session_state["dtcr_done_event"] = ev
+            st.session_state["dtcr_result_holder"] = rh
+            st.session_state["dtcr_download_dir"] = dl_dir
+            st.session_state["dtcr_logs"] = []
+            start_dtcr_session(username_val, password_val, dl_dir, lq, ev, rh)
+            st.rerun()
+
+    # ── Polling loop while the background thread is running ────────────────
+    if st.session_state["dtcr_running"]:
+        lq = st.session_state["dtcr_log_queue"]
+        ev = st.session_state["dtcr_done_event"]
+
+        # Drain any new log messages into session state.
+        if lq is not None:
+            while not lq.empty():
+                try:
+                    st.session_state["dtcr_logs"].append(lq.get_nowait())
+                except Exception:
+                    break
+
+        logs_text = "\n".join(st.session_state["dtcr_logs"])
+        if logs_text:
+            st.text_area("Session Log", value=logs_text, height=260, key="dtcr_log_running")
+
+        if ev is not None and ev.is_set():
+            # Thread finished — transition to completed state.
+            st.session_state["dtcr_running"] = False
+            st.session_state["dtcr_completed"] = True
+            st.rerun()
+        else:
+            st.info("Browser session running — complete the steps in the Chromium window...")
+            time.sleep(1.5)
+            st.rerun()
+
+    # ── Results panel shown after session completes ────────────────────────
+    if st.session_state["dtcr_completed"]:
+        logs_text = "\n".join(st.session_state.get("dtcr_logs", []))
+        if logs_text:
+            st.text_area("Session Log", value=logs_text, height=260, key="dtcr_log_done")
+
+        rh = st.session_state.get("dtcr_result_holder", {})
+        dl_dir = st.session_state.get("dtcr_download_dir", "")
+
+        if rh.get("results"):
+            res = rh["results"]
+            st.success(
+                f"Download complete — {res.get('processed', 0)} DTCRs processed, "
+                f"{res.get('failed', 0)} failed."
+            )
+            if dl_dir:
+                zip_bytes = zip_download_dir(dl_dir)
+                st.download_button(
+                    label="Download All Files (ZIP)",
+                    data=zip_bytes,
+                    file_name="dtcr_downloads.zip",
+                    mime="application/zip",
+                    key="dtcr_zip_dl",
+                )
+        elif rh.get("error"):
+            st.error(f"Session failed: {rh['error']}")
+        else:
+            st.warning("Session ended with no results.")
+
+        st.markdown("---")
+        if st.button("Start New Session", key="dtcr_new_session"):
+            for _k in list(_dtcr_defaults.keys()):
+                if _k in st.session_state:
+                    del st.session_state[_k]
+            st.rerun()
