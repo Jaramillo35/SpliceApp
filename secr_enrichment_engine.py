@@ -37,11 +37,23 @@ def _map_columns(df: pd.DataFrame, mappings: dict) -> pd.DataFrame:
     """Rename df columns to canonical names using case-insensitive substring matching.
 
     `mappings` maps canonical_name -> list of lowercase substrings to look for.
-    Returns a DataFrame with only the canonical columns present (missing ones left out).
+    Exact-name columns take precedence over keyword-matched ones.
+    Only ONE column is mapped per canonical name.
+    Returns a DataFrame with columns renamed where matches were found.
     """
     col_map = {}
     for canonical, keywords in mappings.items():
+        # First pass: exact case-insensitive match
         for col in df.columns:
+            if str(col).strip().lower() == canonical.lower():
+                col_map[col] = canonical
+                break
+        if canonical in col_map.values():
+            continue
+        # Second pass: substring keyword match
+        for col in df.columns:
+            if col in col_map:          # already mapped to something
+                continue
             col_lower = str(col).strip().lower()
             for kw in keywords:
                 if kw in col_lower:
@@ -63,19 +75,28 @@ def load_dtcr_report(file_bytes: bytes) -> pd.DataFrame:
         "DTCR#":               ["dtcr#", "dtcr #", "dtcr number", "dtcr no", "dtcr"],
         "Device Transmittal":  ["device transmittal", "transmittal", "device trans"],
         "Reason for change":   ["reason for change", "reason for", "reason"],
-        "Status":              ["status"],
+        "Status":              ["status", "request action", "action"],
     }
     df = _map_columns(df, mappings)
 
-    required = ["DTCR#", "Device Transmittal", "Reason for change", "Status"]
+    required = ["DTCR#", "Device Transmittal", "Reason for change"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(
             f"DTCR Report missing columns: {missing}. "
             f"Detected columns: {list(df.columns[:20])}"
         )
-    # Drop fully-empty rows and keep only canonical columns
-    df = df[required].dropna(how="all").reset_index(drop=True)
+    # Status is optional — fall back to empty string if not present
+    if "Status" not in df.columns:
+        df["Status"] = ""
+    # Deduplicate: if there are multiple "Status" columns, keep the first
+    if isinstance(df.columns, pd.Index) and df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated()]
+    keep_cols = required + ["Status"]
+    df = df[keep_cols].copy()
+    # Drop rows where DTCR# is blank (wrapped/continuation rows from Excel)
+    df = df.dropna(subset=["DTCR#"]).reset_index(drop=True)
+    df["DTCR#"] = df["DTCR#"].astype(str).str.strip()
     return df
 
 
