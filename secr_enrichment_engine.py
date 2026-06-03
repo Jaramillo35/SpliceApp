@@ -173,7 +173,12 @@ def extract_device_control_number(device_transmittal: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) -> pd.DataFrame:
-    """Match each DTCR to a Harness Family using multi-step logic.
+    """Match each DTCR to a Harness Family using strict priority logic.
+
+    Priority:
+    1) Device Control Number
+    2) Device Name
+    No suffix matching is performed.
     
     Returns a DataFrame with columns:
     - DTCR#
@@ -206,7 +211,7 @@ def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) ->
                 matched_dtx_value = extracted_dcn
                 match_method = "Device Control Number"
 
-        # Step 2: Match by Device Name or Suffix (if no DCN match)
+        # Step 2: Match by Device Name (if no DCN match)
         if match_method == "No Match" and device_transmittal:
             normalized_transmittal = normalize_text(device_transmittal)
 
@@ -220,18 +225,6 @@ def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) ->
                         matched_dtx_value = device_name
                         match_method = "Device Name"
                         break
-
-            # Try Suffix matching (only if Device Name didn't match)
-            if match_method == "No Match":
-                for _, dtx_row in dtx_df.iterrows():
-                    suffix = dtx_row.get("Suffix")
-                    if suffix:
-                        normalized_suffix = normalize_text(suffix)
-                        if normalized_suffix and normalized_suffix in normalized_transmittal:
-                            harness_family = dtx_row["Harness Family"]
-                            matched_dtx_value = suffix
-                            match_method = "Suffix"
-                            break
 
         results.append({
             "DTCR#": dtcr_num,
