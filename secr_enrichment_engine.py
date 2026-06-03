@@ -13,30 +13,99 @@ import pandas as pd
 # File Loaders
 # ---------------------------------------------------------------------------
 
-def load_dtcr_report(file_bytes: bytes) -> pd.DataFrame:
-    """Load DTCR Report from Excel bytes.
-    
-    Required columns: DTCR#, Device Transmittal, Reason for change, Status
+def _find_header_row(file_bytes: bytes, keyword_sets: list, max_scan: int = 30) -> int:
+    """Scan the first `max_scan` rows of an Excel file to find the header row.
+
+    `keyword_sets` is a list of lists; each inner list contains lowercase
+    substrings that are expected to appear in column headers.  The first row
+    that matches the most keywords wins.  Returns the 0-based row index.
     """
-    df = pd.read_excel(io.BytesIO(file_bytes))
-    required_cols = ["DTCR#", "Device Transmittal", "Reason for change", "Status"]
-    missing = [c for c in required_cols if c not in df.columns]
+    raw = pd.read_excel(io.BytesIO(file_bytes), header=None, nrows=max_scan, dtype=str)
+    best_row = 0
+    best_score = -1
+    all_keywords = [kw for group in keyword_sets for kw in group]
+    for row_idx in range(len(raw)):
+        row_vals = " ".join(str(v).lower() for v in raw.iloc[row_idx] if pd.notna(v))
+        score = sum(1 for kw in all_keywords if kw in row_vals)
+        if score > best_score:
+            best_score = score
+            best_row = row_idx
+    return best_row
+
+
+def _map_columns(df: pd.DataFrame, mappings: dict) -> pd.DataFrame:
+    """Rename df columns to canonical names using case-insensitive substring matching.
+
+    `mappings` maps canonical_name -> list of lowercase substrings to look for.
+    Returns a DataFrame with only the canonical columns present (missing ones left out).
+    """
+    col_map = {}
+    for canonical, keywords in mappings.items():
+        for col in df.columns:
+            col_lower = str(col).strip().lower()
+            for kw in keywords:
+                if kw in col_lower:
+                    col_map[col] = canonical
+                    break
+            if canonical in col_map.values():
+                break
+    return df.rename(columns=col_map)
+
+
+def load_dtcr_report(file_bytes: bytes) -> pd.DataFrame:
+    """Load DTCR Report from Excel bytes with auto header-row detection."""
+    keyword_sets = [["dtcr"], ["transmittal"], ["reason"], ["status"]]
+    header_row = _find_header_row(file_bytes, keyword_sets)
+    df = pd.read_excel(io.BytesIO(file_bytes), header=header_row, dtype=str)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    mappings = {
+        "DTCR#":               ["dtcr#", "dtcr #", "dtcr number", "dtcr no", "dtcr"],
+        "Device Transmittal":  ["device transmittal", "transmittal", "device trans"],
+        "Reason for change":   ["reason for change", "reason for", "reason"],
+        "Status":              ["status"],
+    }
+    df = _map_columns(df, mappings)
+
+    required = ["DTCR#", "Device Transmittal", "Reason for change", "Status"]
+    missing = [c for c in required if c not in df.columns]
     if missing:
-        raise ValueError(f"DTCR Report missing columns: {missing}")
-    return df[required_cols].copy()
+        raise ValueError(
+            f"DTCR Report missing columns: {missing}. "
+            f"Detected columns: {list(df.columns[:20])}"
+        )
+    # Drop fully-empty rows and keep only canonical columns
+    df = df[required].dropna(how="all").reset_index(drop=True)
+    return df
 
 
 def load_dtx_circuits_report(file_bytes: bytes) -> pd.DataFrame:
-    """Load DTx Circuits Report from Excel bytes.
-    
-    Required columns: Device Control Number, Device Name, Suffix, Harness Family
-    """
-    df = pd.read_excel(io.BytesIO(file_bytes))
-    required_cols = ["Device Control Number", "Device Name", "Suffix", "Harness Family"]
-    missing = [c for c in required_cols if c not in df.columns]
+    """Load DTx Circuits Report from Excel bytes with auto header-row detection."""
+    keyword_sets = [["control number", "device control", "dcn"],
+                    ["device name", "name"],
+                    ["suffix"],
+                    ["harness family", "harness", "family"]]
+    header_row = _find_header_row(file_bytes, keyword_sets)
+    df = pd.read_excel(io.BytesIO(file_bytes), header=header_row, dtype=str)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    mappings = {
+        "Device Control Number": ["device control number", "control number", "dcn", "device control"],
+        "Device Name":           ["device name", "device nm"],
+        "Suffix":                ["suffix"],
+        "Harness Family":        ["harness family", "harnfamily", "harness fam", "family"],
+    }
+    df = _map_columns(df, mappings)
+
+    required = ["Device Control Number", "Device Name", "Suffix", "Harness Family"]
+    missing = [c for c in required if c not in df.columns]
     if missing:
-        raise ValueError(f"DTx Circuits Report missing columns: {missing}")
-    return df[required_cols].copy()
+        raise ValueError(
+            f"DTx Circuits Report missing columns: {missing}. "
+            f"Detected columns: {list(df.columns[:20])}"
+        )
+    df = df[required].dropna(how="all").reset_index(drop=True)
+    return df
 
 
 def load_generated_secr_workbook(file_bytes: bytes) -> openpyxl.Workbook:
