@@ -170,68 +170,36 @@ if mode == "Home":
 
     st.markdown("---")
     st.subheader("Windows App Downloads")
-    dcol1, dcol2 = st.columns(2, gap="large")
 
-    with dcol1:
-        st.markdown(
-            """
-            <div class="tool-card">
-                <div class="tool-title">DTCR (Windows)</div>
-                <div class="tool-desc">
-                    Download the DTCR app installer bundle with Windows setup files and .txt instructions.
-                </div>
-                <span class="tool-badge">Windows Package</span>
-                <span class="tool-badge">.txt Install Guide Included</span>
+    st.markdown(
+        """
+        <div class="tool-card">
+            <div class="tool-title">VBOM Risk Matrix (Windows)</div>
+            <div class="tool-desc">
+                Download the full Windows package with executable, install steps, and all runtime files.
             </div>
-            """,
-            unsafe_allow_html=True,
+            <span class="tool-badge">Windows Package</span>
+            <span class="tool-badge">Install Guide Included</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    project_root = Path(__file__).resolve().parent
+    vbom_pkg = project_root / "assets" / "downloads" / "VBOM_Generator_Distribution_Windows_v1.0.zip"
+    if not vbom_pkg.exists():
+        vbom_pkg = Path(__file__).resolve().parents[1] / "VBOMxRISKMATRIX" / "VBOM_Generator_Distribution_Windows_v1.0.zip"
+    if vbom_pkg.exists():
+        st.download_button(
+            label="Download VBOM Windows Package",
+            data=vbom_pkg.read_bytes(),
+            file_name="VBOM_Generator_Distribution_Windows_v1.0.zip",
+            mime="application/zip",
+            key="dl_vbom_windows_pkg",
+            use_container_width=True,
         )
-
-        project_root = Path(__file__).resolve().parent
-        dtx_pkg = project_root / "assets" / "downloads" / "DTCR_Distribution_Windows_v1.0.zip"
-        if not dtx_pkg.exists():
-            dtx_pkg = Path(__file__).resolve().parents[1] / "DTx" / "DTx_Compare_Distribution_Windows_v1.0.zip"
-        if dtx_pkg.exists():
-            st.download_button(
-                label="Download DTCR Windows Package",
-                data=dtx_pkg.read_bytes(),
-                file_name="DTCR_Distribution_Windows_v1.0.zip",
-                mime="application/zip",
-                key="dl_dtx_windows_pkg",
-                use_container_width=True,
-            )
-        else:
-            st.warning("DTCR package not found. Expected: assets/downloads/DTCR_Distribution_Windows_v1.0.zip")
-
-    with dcol2:
-        st.markdown(
-            """
-            <div class="tool-card">
-                <div class="tool-title">VBOM Risk Matrix (Windows)</div>
-                <div class="tool-desc">
-                    Download the full Windows package with executable, install steps, and all runtime files.
-                </div>
-                <span class="tool-badge">Windows Package</span>
-                <span class="tool-badge">Install Guide Included</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        vbom_pkg = project_root / "assets" / "downloads" / "VBOM_Generator_Distribution_Windows_v1.0.zip"
-        if not vbom_pkg.exists():
-            vbom_pkg = Path(__file__).resolve().parents[1] / "VBOMxRISKMATRIX" / "VBOM_Generator_Distribution_Windows_v1.0.zip"
-        if vbom_pkg.exists():
-            st.download_button(
-                label="Download VBOM Windows Package",
-                data=vbom_pkg.read_bytes(),
-                file_name="VBOM_Generator_Distribution_Windows_v1.0.zip",
-                mime="application/zip",
-                key="dl_vbom_windows_pkg",
-                use_container_width=True,
-            )
-        else:
-            st.warning("VBOM package not found. Expected: assets/downloads/VBOM_Generator_Distribution_Windows_v1.0.zip")
+    else:
+        st.warning("VBOM package not found. Expected: assets/downloads/VBOM_Generator_Distribution_Windows_v1.0.zip")
 
 if mode != "Home":
     st.session_state["selected_tool"] = mode
