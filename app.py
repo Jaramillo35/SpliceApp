@@ -573,11 +573,11 @@ elif selected_tool == "Create SECR":
                     value=True,
                     key="enrich_enable",
                 )
-                status_options = ["All Statuses", "Open", "Approved", "Cancelled"]
+                status_options = ["Complete", "Draft", "Rejected", "Deleted"]
                 status_filter = st.multiselect(
                     "Filter DTCRs by Status",
                     options=status_options,
-                    default=["All Statuses"],
+                    default=["Complete", "Draft"],
                     key="enrich_status_filter",
                 )
                 enrich_clicked = st.form_submit_button(
@@ -593,10 +593,7 @@ elif selected_tool == "Create SECR":
                         secr_wb = load_generated_secr_workbook(secr_result)
 
                         # Apply status filter
-                        if (
-                            status_filter
-                            and "All Statuses" not in status_filter
-                        ):
+                        if status_filter:
                             dtcr_df = dtcr_df[dtcr_df["Status"].astype(str).str.strip().isin(status_filter)]
 
                         # Validate inputs
@@ -667,10 +664,7 @@ elif selected_tool == "Create SECR":
                     secr_wb = load_generated_secr_workbook(secr_result)
 
                     # Apply status filter
-                    if (
-                        status_filter
-                        and "All Statuses" not in status_filter
-                    ):
+                    if status_filter:
                         dtcr_df = dtcr_df[
                             dtcr_df["Status"].astype(str).str.strip().isin(status_filter)
                         ]
