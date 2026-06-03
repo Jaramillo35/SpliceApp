@@ -945,7 +945,7 @@ def generate_d454_connections(d454_configs: list[Configuration]) -> list[dict[st
                     "Sales Code": sales,
                     "Target Harness PNs": _display_pn_list(cfg.target_harness_pns),
                 })
-    return _merge_sd454_splice_trunk_rows(rows)
+    return _normalize_sd454_splice_trunk_rows(rows)
 
 
 def _is_sd454_variant(value: str) -> bool:
@@ -956,100 +956,24 @@ def _canonical_sd454_name(value: str) -> str:
     return "SD454" if _is_sd454_variant(value) else str(value)
 
 
-def _merge_sales_conditions(expressions: list[str]) -> str:
-    seen: set[str] = set()
-    unique: list[str] = []
-    for expr in expressions:
-        cleaned = str(expr).strip()
-        if not cleaned or cleaned in seen:
-            continue
-        seen.add(cleaned)
-        unique.append(cleaned)
+def _normalize_sd454_splice_trunk_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Normalize SD454 variant trunk names without merging configurations.
 
-    if not unique:
-        return ""
-    if len(unique) == 1:
-        return unique[0]
-
-    wrapped: list[str] = []
-    for expr in unique:
-        # Keep each condition grouped before OR'ing alternatives.
-        if expr.startswith("(") and expr.endswith(")"):
-            wrapped.append(expr)
-        else:
-            wrapped.append(f"({expr})")
-    return "/".join(wrapped)
-
-
-def _merge_target_harness_lists(values: list[str]) -> str:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for val in values:
-        for token in str(val).split(","):
-            pn = token.strip()
-            if pn and pn not in seen:
-                seen.add(pn)
-                ordered.append(pn)
-    return ", ".join(ordered)
-
-
-def _merge_sd454_splice_trunk_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Merge SD454A/B/C trunk rows to same endpoint into one logical connection.
-
-    External tooling treats SD454 variants as the same splice, so we collapse
-    duplicate trunk connections and union their sales conditions.
+    Keep one trunk row per configuration, but canonicalize SD454A/B/C names to
+    SD454 so external tools treat them as the same splice entity.
     """
-    grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-    passthrough: list[dict[str, str]] = []
-
+    normalized_rows: list[dict[str, str]] = []
     for row in rows:
+        updated = row.copy()
         if (
-            row.get("Circuit Name") == "D454"
-            and row.get("Connection Type") == "Splice Trunk"
-            and _is_sd454_variant(row.get("From CNUM", ""))
+            updated.get("Circuit Name") == "D454"
+            and updated.get("Connection Type") == "Splice Trunk"
+            and _is_sd454_variant(updated.get("From CNUM", ""))
         ):
-            key = (
-                "D454",
-                _canonical_sd454_name(row.get("From CNUM", "")),
-                str(row.get("To CNUM", "")).strip(),
-                str(row.get("To Pin", "")).strip(),
-            )
-            bucket = grouped.setdefault(
-                key,
-                {
-                    "base": row.copy(),
-                    "sales": [],
-                    "target_harness": [],
-                    "configs": [],
-                },
-            )
-            bucket["sales"].append(str(row.get("Sales Code", "")))
-            bucket["target_harness"].append(str(row.get("Target Harness PNs", "")))
-            bucket["configs"].append(str(row.get("Configuration", "")))
-            continue
-
-        passthrough.append(row)
-
-    merged_rows: list[dict[str, str]] = []
-    for (_, canonical_from, _, _), payload in grouped.items():
-        merged = payload["base"]
-        merged["From CNUM"] = canonical_from
-        merged["Splice Name"] = canonical_from
-        merged["Sales Code"] = _merge_sales_conditions(payload["sales"])
-        merged["Target Harness PNs"] = _merge_target_harness_lists(payload["target_harness"])
-
-        config_seen: set[str] = set()
-        config_ordered: list[str] = []
-        for cfg in payload["configs"]:
-            if cfg and cfg not in config_seen:
-                config_seen.add(cfg)
-                config_ordered.append(cfg)
-        if config_ordered:
-            merged["Configuration"] = "/".join(config_ordered)
-
-        merged_rows.append(merged)
-
-    return passthrough + merged_rows
+            updated["From CNUM"] = _canonical_sd454_name(updated.get("From CNUM", ""))
+            updated["Splice Name"] = _canonical_sd454_name(updated.get("Splice Name", ""))
+        normalized_rows.append(updated)
+    return normalized_rows
 
 
 def _validate_sales_expression_targets(
