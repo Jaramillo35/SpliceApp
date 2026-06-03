@@ -20,7 +20,11 @@ from wiring_harness_processor import (
 )
 
 
-st.set_page_config(page_title="Engineering Tools Hub", layout="wide")
+st.set_page_config(page_title="Wiring System Engineer Tools", layout="wide")
+
+LOGO_PATH = Path(__file__).resolve().parent / "assets" / "versigent_logo_horizontal.jpg"
+if LOGO_PATH.exists():
+    st.image(str(LOGO_PATH), width=300)
 
 st.markdown(
     """
@@ -69,7 +73,7 @@ st.markdown(
 st.markdown(
     """
     <div class="hero">
-        <h1 style="margin-bottom: 0.35rem; color: #10273a;">Engineering Data Tools</h1>
+        <h1 style="margin-bottom: 0.35rem; color: #10273a;">Wiring System Engineer Tools</h1>
         <p style="margin: 0; color: #2f4b62;">
             Select a workflow below to launch either wiring splice generation or DTx report comparison.
         </p>
