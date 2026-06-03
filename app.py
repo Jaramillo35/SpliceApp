@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import queue
 import tempfile
-import threading
-import time
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from dtcr_engine import start_dtcr_session, zip_download_dir
 from dtx_compare_engine import generate_dtx_change_report
+from secr_engine import create_secr_bytes
 from wiring_harness_processor import (
     evaluate_expression_against_all_pns,
     generate_sales_code_expression,
@@ -79,7 +76,7 @@ st.markdown(
     <div class="hero">
         <h1 style="margin-bottom: 0.35rem; color: #10273a;">Wiring System Engineer Tools</h1>
         <p style="margin: 0; color: #2f4b62;">
-            Select a workflow below to launch either wiring splice generation or DTx report comparison.
+            Select a workflow below to launch wiring splice generation, DTx report comparison, or SECR creation.
         </p>
     </div>
     """,
@@ -88,7 +85,7 @@ st.markdown(
 
 mode = st.radio(
     "Choose Tool",
-    ["Home", "Splice Generation", "DTx Compare Report", "DTCR Downloader"],
+    ["Home", "Splice Generation", "DTx Compare Report", "Create SECR"],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -138,19 +135,19 @@ if mode == "Home":
         st.markdown(
             """
             <div class="tool-card">
-                <div class="tool-title">DTCR Downloader</div>
+                <div class="tool-title">Create SECR</div>
                 <div class="tool-desc">
-                    Automate DTCR attachment downloads from Chrysler iSPEED. Extracts Reason for Change data and exports an Excel report.
+                    Generate a SECR workbook from a DEF-to-DEF compare file. Auto-fills connector, circuit, and DEF summary changes into the SECR template.
                 </div>
-                <span class="tool-badge">Local Only</span>
-                <span class="tool-badge">Playwright</span>
-                <span class="tool-badge">Attachments</span>
+                <span class="tool-badge">DEF Compare</span>
+                <span class="tool-badge">SECR Template</span>
+                <span class="tool-badge">Output Excel</span>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        if st.button("Open DTCR Downloader", key="go_dtcr", use_container_width=True):
-            st.session_state["selected_tool"] = "DTCR Downloader"
+        if st.button("Open Create SECR", key="go_secr", use_container_width=True):
+            st.session_state["selected_tool"] = "Create SECR"
             st.rerun()
 
 if mode != "Home":
@@ -432,124 +429,102 @@ elif selected_tool == "DTx Compare Report":
     )
 
 elif selected_tool == "DTCR Downloader":
-    st.title("DTCR Downloader")
-    st.warning(
-        "This tool opens a real Chromium browser window. "
-        "It must be run **locally** — it will not function on Streamlit Cloud."
-    )
-    st.markdown(
-        """
-        **Workflow:**
-        1. Enter your iSPEED credentials below and click **Launch DTCR Browser**.
-        2. A Chromium window will open. The tool will attempt to log you in automatically.
-        3. Navigate to the **Change Requests** tab, enter **Program** and **Phase**, then click **Search**.
-        4. When results load, click the orange **Download DTCRs** button in the browser overlay panel.
-        5. The scraper downloads all DTCR attachments and extracts Reason for Change data.
-        6. Return here to download a ZIP of all files and the Reason-for-Change Excel report.
-        """
+elif selected_tool == "Create SECR":
+    st.title("Create SECR")
+    st.caption(
+        "Upload a DEF-to-DEF compare Excel file, fill in the SECR details, "
+        "and download a completed SECR workbook."
     )
 
-    # Initialise session-state keys on first visit.
-    _dtcr_defaults = {
-        "dtcr_running": False,
-        "dtcr_completed": False,
-        "dtcr_logs": [],
-        "dtcr_done_event": None,
-        "dtcr_log_queue": None,
-        "dtcr_result_holder": {},
-        "dtcr_download_dir": "",
-    }
-    for _k, _v in _dtcr_defaults.items():
-        if _k not in st.session_state:
-            st.session_state[_k] = _v
+    def_file = st.file_uploader(
+        "DEF-to-DEF Compare file",
+        type=["xlsx", "xls", "xlsm"],
+        key="secr_def_file",
+    )
 
-    # ── Launch form (shown when idle and no completed session) ─────────────
-    if not st.session_state["dtcr_running"] and not st.session_state["dtcr_completed"]:
-        with st.form("dtcr_launch_form"):
-            username_val = st.text_input(
-                "iSPEED Username (optional — speeds up login)",
-                key="dtcr_uname",
+    if def_file is None:
+        st.info(
+            "Upload the DEF-to-DEF compare file to continue.  \n"
+            "Expected filename pattern: `2027_RU_X2_A_vs_2026_RU_X2_A_IP_DEF_DEF_Compare_...xlsx`"
+        )
+        st.stop()
+
+    with st.form("secr_details_form"):
+        st.subheader("SECR Details")
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            reason_for_change = st.text_area(
+                "Reason for Change", height=100, key="secr_reason"
             )
-            password_val = st.text_input(
-                "iSPEED Password (optional)",
-                type="password",
-                key="dtcr_pwd",
+            secr_author = st.text_input("SECR Author", key="secr_author")
+            design_release_engineer = st.text_input(
+                "Design Release Engineer", key="secr_dre"
             )
-            launched = st.form_submit_button("Launch DTCR Browser", type="primary")
-
-        if launched:
-            dl_dir = tempfile.mkdtemp(prefix="dtcr_downloads_")
-            lq: queue.Queue = queue.Queue()
-            ev = threading.Event()
-            rh: dict = {}
-            st.session_state["dtcr_running"] = True
-            st.session_state["dtcr_log_queue"] = lq
-            st.session_state["dtcr_done_event"] = ev
-            st.session_state["dtcr_result_holder"] = rh
-            st.session_state["dtcr_download_dir"] = dl_dir
-            st.session_state["dtcr_logs"] = []
-            start_dtcr_session(username_val, password_val, dl_dir, lq, ev, rh)
-            st.rerun()
-
-    # ── Polling loop while the background thread is running ────────────────
-    if st.session_state["dtcr_running"]:
-        lq = st.session_state["dtcr_log_queue"]
-        ev = st.session_state["dtcr_done_event"]
-
-        # Drain any new log messages into session state.
-        if lq is not None:
-            while not lq.empty():
-                try:
-                    st.session_state["dtcr_logs"].append(lq.get_nowait())
-                except Exception:
-                    break
-
-        logs_text = "\n".join(st.session_state["dtcr_logs"])
-        if logs_text:
-            st.text_area("Session Log", value=logs_text, height=260, key="dtcr_log_running")
-
-        if ev is not None and ev.is_set():
-            # Thread finished — transition to completed state.
-            st.session_state["dtcr_running"] = False
-            st.session_state["dtcr_completed"] = True
-            st.rerun()
-        else:
-            st.info("Browser session running — complete the steps in the Chromium window...")
-            time.sleep(1.5)
-            st.rerun()
-
-    # ── Results panel shown after session completes ────────────────────────
-    if st.session_state["dtcr_completed"]:
-        logs_text = "\n".join(st.session_state.get("dtcr_logs", []))
-        if logs_text:
-            st.text_area("Session Log", value=logs_text, height=260, key="dtcr_log_done")
-
-        rh = st.session_state.get("dtcr_result_holder", {})
-        dl_dir = st.session_state.get("dtcr_download_dir", "")
-
-        if rh.get("results"):
-            res = rh["results"]
-            st.success(
-                f"Download complete — {res.get('processed', 0)} DTCRs processed, "
-                f"{res.get('failed', 0)} failed."
+            change_requested_by = st.text_input(
+                "Change Requested By", key="secr_crb"
             )
-            if dl_dir:
-                zip_bytes = zip_download_dir(dl_dir)
-                st.download_button(
-                    label="Download All Files (ZIP)",
-                    data=zip_bytes,
-                    file_name="dtcr_downloads.zip",
-                    mime="application/zip",
-                    key="dtcr_zip_dl",
+        with col_b:
+            version = st.text_input("Version", value="A", key="secr_version")
+            phase_implemented = st.text_input(
+                "Phase Implemented", key="secr_phase_impl"
+            )
+            pull_ahead = st.selectbox(
+                "Pull Ahead (Y/N)", options=["", "N", "Y"], key="secr_pull_ahead"
+            )
+            original_issue_date = st.text_input(
+                "Original Issue Date (MM/DD/YYYY)", key="secr_orig_date"
+            )
+            reissue_date = st.text_input(
+                "ReIssue Date (MM/DD/YYYY — leave blank if N/A)",
+                key="secr_reissue_date",
+            )
+            m_code_suffix = st.number_input(
+                "SECR Number (3-digit suffix, e.g. 1 → M27001)",
+                min_value=1,
+                max_value=999,
+                value=1,
+                step=1,
+                key="secr_m_suffix",
+            )
+
+        generate_clicked = st.form_submit_button("Generate SECR", type="primary")
+
+    if generate_clicked:
+        try:
+            with st.spinner("Building SECR workbook..."):
+                secr_bytes, meta = create_secr_bytes(
+                    def_bytes=def_file.getvalue(),
+                    def_filename=def_file.name,
+                    reason_for_change=reason_for_change,
+                    secr_author=secr_author,
+                    design_release_engineer=design_release_engineer,
+                    change_requested_by=change_requested_by,
+                    original_issue_date=original_issue_date,
+                    reissue_date=reissue_date,
+                    version=version,
+                    phase_implemented=phase_implemented,
+                    pull_ahead=pull_ahead,
+                    m_code_suffix=int(m_code_suffix),
                 )
-        elif rh.get("error"):
-            st.error(f"Session failed: {rh['error']}")
-        else:
-            st.warning("Session ended with no results.")
+            st.session_state["secr_result_bytes"] = secr_bytes
+            st.session_state["secr_result_filename"] = meta["filename"]
+            st.session_state["secr_result_meta"] = meta
+        except Exception as exc:
+            st.error(f"SECR creation failed: {exc}")
 
-        st.markdown("---")
-        if st.button("Start New Session", key="dtcr_new_session"):
-            for _k in list(_dtcr_defaults.keys()):
-                if _k in st.session_state:
-                    del st.session_state[_k]
-            st.rerun()
+    secr_result = st.session_state.get("secr_result_bytes")
+    if secr_result is not None:
+        meta = st.session_state.get("secr_result_meta", {})
+        st.success("SECR workbook created successfully.")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("M Code", meta.get("I2", ""))
+        col2.metric("Vehicle Line", meta.get("C11", ""))
+        col3.metric("Phase", meta.get("F10", ""))
+        st.download_button(
+            label="Download SECR Excel",
+            data=secr_result,
+            file_name=st.session_state.get("secr_result_filename", "SECR_output.xlsx"),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="secr_dl_btn",
+        )
