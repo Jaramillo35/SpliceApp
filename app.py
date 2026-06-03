@@ -168,6 +168,66 @@ if mode == "Home":
             st.session_state["selected_tool"] = "Create SECR"
             st.rerun()
 
+    st.markdown("---")
+    st.subheader("Windows App Downloads")
+    dcol1, dcol2 = st.columns(2, gap="large")
+
+    with dcol1:
+        st.markdown(
+            """
+            <div class="tool-card">
+                <div class="tool-title">DTCR / DTx Compare (Windows)</div>
+                <div class="tool-desc">
+                    Download the full Windows package with build script, install guide, and required files.
+                </div>
+                <span class="tool-badge">Windows Package</span>
+                <span class="tool-badge">Install Guide Included</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        dtx_pkg = Path(__file__).resolve().parents[1] / "DTx" / "DTx_Compare_Distribution_Windows_v1.0.zip"
+        if dtx_pkg.exists():
+            st.download_button(
+                label="Download DTCR / DTx Windows Package",
+                data=dtx_pkg.read_bytes(),
+                file_name="DTx_Compare_Distribution_Windows_v1.0.zip",
+                mime="application/zip",
+                key="dl_dtx_windows_pkg",
+                use_container_width=True,
+            )
+        else:
+            st.warning("DTCR / DTx package not found. Expected: DTx/DTx_Compare_Distribution_Windows_v1.0.zip")
+
+    with dcol2:
+        st.markdown(
+            """
+            <div class="tool-card">
+                <div class="tool-title">VBOM Risk Matrix (Windows)</div>
+                <div class="tool-desc">
+                    Download the full Windows package with executable, install steps, and all runtime files.
+                </div>
+                <span class="tool-badge">Windows Package</span>
+                <span class="tool-badge">Install Guide Included</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        vbom_pkg = Path(__file__).resolve().parents[1] / "VBOMxRISKMATRIX" / "VBOM_Generator_Distribution_Windows_v1.0.zip"
+        if vbom_pkg.exists():
+            st.download_button(
+                label="Download VBOM Windows Package",
+                data=vbom_pkg.read_bytes(),
+                file_name="VBOM_Generator_Distribution_Windows_v1.0.zip",
+                mime="application/zip",
+                key="dl_vbom_windows_pkg",
+                use_container_width=True,
+            )
+        else:
+            st.warning("VBOM package not found. Expected: VBOMxRISKMATRIX/VBOM_Generator_Distribution_Windows_v1.0.zip")
+
 if mode != "Home":
     st.session_state["selected_tool"] = mode
 
