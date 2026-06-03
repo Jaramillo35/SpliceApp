@@ -78,7 +78,11 @@ with left:
         """,
         unsafe_allow_html=True,
     )
-    st.page_link("pages/1_Splice_Generation.py", label="Open Splice Generation", icon="⚡")
+    if st.button("Open Splice Generation", key="go_splice", use_container_width=True):
+        try:
+            st.switch_page("pages/1_Splice_Generation.py")
+        except Exception:
+            st.info("Open Splice Generation from the left sidebar navigation.")
 
 with right:
     st.markdown(
@@ -95,4 +99,8 @@ with right:
         """,
         unsafe_allow_html=True,
     )
-    st.page_link("pages/2_DTx_Compare_Report.py", label="Open DTx Compare", icon="📊")
+    if st.button("Open DTx Compare", key="go_dtx", use_container_width=True):
+        try:
+            st.switch_page("pages/2_DTx_Compare_Report.py")
+        except Exception:
+            st.info("Open DTx Compare Report from the left sidebar navigation.")
