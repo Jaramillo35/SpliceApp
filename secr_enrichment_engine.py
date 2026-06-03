@@ -8,7 +8,6 @@ from typing import Any, Dict, Optional, Tuple
 import openpyxl
 import pandas as pd
 from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
 
@@ -397,24 +396,7 @@ def build_dtcr_numbers_for_secr(
     dtcr_values = (
         matching["DTCR#"].astype(str).str.strip().dropna().drop_duplicates().tolist()
     )
-    return "\n".join(dtcr_values)
-
-
-def _apply_table_style(ws: openpyxl.worksheet.worksheet.Worksheet) -> None:
-    """Apply an Excel table style with row stripes to the used range."""
-    if ws.max_row < 1 or ws.max_column < 1:
-        return
-    table_ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
-    table = Table(displayName=f"Table_{ws.title[:18]}", ref=table_ref)
-    style = TableStyleInfo(
-        name="TableStyleMedium9",
-        showFirstColumn=False,
-        showLastColumn=False,
-        showRowStripes=True,
-        showColumnStripes=False,
-    )
-    table.tableStyleInfo = style
-    ws.add_table(table)
+    return ", ".join(dtcr_values)
 
 
 def _style_dtcr_mapping_sheet(ws: openpyxl.worksheet.worksheet.Worksheet) -> None:
@@ -464,9 +446,6 @@ def _style_dtcr_mapping_sheet(ws: openpyxl.worksheet.worksheet.Worksheet) -> Non
                 continue
             max_lines = max(max_lines, str(val).count("\n") + 1)
         ws.row_dimensions[row_idx].height = min(max(max_lines * 15, 18), 120)
-
-    _apply_table_style(ws)
-
 
 def export_dtcr_mapping_styled(dtcr_mapping_df: pd.DataFrame) -> bytes:
     """Export DTCR mapping as a styled standalone workbook (table + autofit)."""
