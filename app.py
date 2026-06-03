@@ -428,7 +428,6 @@ elif selected_tool == "DTx Compare Report":
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-elif selected_tool == "DTCR Downloader":
 elif selected_tool == "Create SECR":
     st.title("Create SECR")
     st.caption(
