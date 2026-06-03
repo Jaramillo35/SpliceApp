@@ -89,6 +89,24 @@ def _display_pn_list(harness_keys: list[str]) -> str:
     return ", ".join(ordered)
 
 
+def _safe_excel_sheet_name(raw_name: str, used_names: set[str]) -> str:
+    """Return an Excel-safe, unique sheet name (max 31 chars)."""
+    cleaned = re.sub(r"[\[\]:*?/\\]", "_", str(raw_name))
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        cleaned = "Sheet"
+
+    base = cleaned[:31]
+    candidate = base
+    idx = 1
+    while candidate in used_names:
+        suffix = f"_{idx}"
+        candidate = f"{base[:31-len(suffix)]}{suffix}"
+        idx += 1
+    used_names.add(candidate)
+    return candidate
+
+
 def load_complexity_matrix(input_excel_path: str | Path) -> tuple[dict[str, set[str]], pd.DataFrame]:
     xls = pd.ExcelFile(input_excel_path)
     sheet_name = _find_sheet_name(xls, ["Complexity", "Complexity Matrix"])
@@ -1345,9 +1363,10 @@ def export_excel(
         
         # Add per-configuration connection sheets
         if not generated_connections_df.empty and "Configuration" in generated_connections_df.columns:
+            used_sheet_names = set(writer.sheets.keys())
             for (circuit, cfg_id), group in generated_connections_df.groupby(["Circuit Name", "Configuration"], sort=False):
                 # Create sheet name: CIRCUIT_CONFIGID (max 31 chars for Excel)
-                sheet_name = f"{circuit}_{cfg_id}"[:31]
+                sheet_name = _safe_excel_sheet_name(f"{circuit}_{cfg_id}", used_sheet_names)
                 group.to_excel(writer, sheet_name=sheet_name, index=False)
     
     output.seek(0)
