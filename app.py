@@ -186,20 +186,18 @@ if mode == "Home":
     )
 
     project_root = Path(__file__).resolve().parent
-    vbom_pkg = project_root / "assets" / "downloads" / "VBOM_Generator_Distribution_Windows_v1.0.zip"
-    if not vbom_pkg.exists():
-        vbom_pkg = Path(__file__).resolve().parents[1] / "VBOMxRISKMATRIX" / "VBOM_Generator_Distribution_Windows_v1.0.zip"
+    vbom_pkg = project_root / "assets" / "downloads" / "VBOM_Generator.exe"
     if vbom_pkg.exists():
         st.download_button(
-            label="Download VBOM Windows Package",
+            label="Download VBOM Windows Executable",
             data=vbom_pkg.read_bytes(),
-            file_name="VBOM_Generator_Distribution_Windows_v1.0.zip",
-            mime="application/zip",
+            file_name="VBOM_Generator.exe",
+            mime="application/octet-stream",
             key="dl_vbom_windows_pkg",
             use_container_width=True,
         )
     else:
-        st.warning("VBOM package not found. Expected: assets/downloads/VBOM_Generator_Distribution_Windows_v1.0.zip")
+        st.warning("VBOM package not found. Expected: assets/downloads/VBOM_Generator.exe")
 
 if mode != "Home":
     st.session_state["selected_tool"] = mode
