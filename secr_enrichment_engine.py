@@ -1,0 +1,350 @@
+"""SECR Reason for Change Enrichment — match DTCRs to harness families and update SECR."""
+from __future__ import annotations
+
+import io
+import re
+from typing import Any, Dict, Optional, Tuple
+
+import openpyxl
+import pandas as pd
+
+
+# ---------------------------------------------------------------------------
+# File Loaders
+# ---------------------------------------------------------------------------
+
+def load_dtcr_report(file_bytes: bytes) -> pd.DataFrame:
+    """Load DTCR Report from Excel bytes.
+    
+    Required columns: DTCR#, Device Transmittal, Reason for change, Status
+    """
+    df = pd.read_excel(io.BytesIO(file_bytes))
+    required_cols = ["DTCR#", "Device Transmittal", "Reason for change", "Status"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"DTCR Report missing columns: {missing}")
+    return df[required_cols].copy()
+
+
+def load_dtx_circuits_report(file_bytes: bytes) -> pd.DataFrame:
+    """Load DTx Circuits Report from Excel bytes.
+    
+    Required columns: Device Control Number, Device Name, Suffix, Harness Family
+    """
+    df = pd.read_excel(io.BytesIO(file_bytes))
+    required_cols = ["Device Control Number", "Device Name", "Suffix", "Harness Family"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"DTx Circuits Report missing columns: {missing}")
+    return df[required_cols].copy()
+
+
+def load_generated_secr_workbook(file_bytes: bytes) -> openpyxl.Workbook:
+    """Load the generated SECR workbook from bytes."""
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
+        return wb
+    except Exception as e:
+        raise ValueError(f"Failed to load SECR workbook: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Text Processing
+# ---------------------------------------------------------------------------
+
+def normalize_text(value: Optional[str]) -> str:
+    """Normalize text: uppercase, remove special chars, collapse spaces."""
+    if not value:
+        return ""
+    s = str(value).upper().strip()
+    s = re.sub(r"[^\w\s]", " ", s)  # Replace special chars with space
+    s = re.sub(r"\s+", " ", s)  # Collapse multiple spaces
+    return s
+
+
+def extract_device_control_number(device_transmittal: str) -> Optional[str]:
+    """Extract Device Control Number from Device Transmittal string.
+    
+    Example: "123456 - SWITCH BANK LEFT" -> "123456"
+    """
+    if not device_transmittal:
+        return None
+    # Look for leading digits before dash or space
+    match = re.match(r"^(\d+)", str(device_transmittal).strip())
+    if match:
+        return match.group(1)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Matching Logic
+# ---------------------------------------------------------------------------
+
+def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) -> pd.DataFrame:
+    """Match each DTCR to a Harness Family using multi-step logic.
+    
+    Returns a DataFrame with columns:
+    - DTCR#
+    - Device Transmittal
+    - Extracted Device Control Number
+    - Reason for change
+    - Status
+    - Match Method
+    - Matched DTx Value
+    - Harness Family
+    """
+    results = []
+
+    for _, row in dtcr_df.iterrows():
+        dtcr_num = row["DTCR#"]
+        device_transmittal = row["Device Transmittal"]
+        reason = row["Reason for change"]
+        status = row["Status"]
+
+        extracted_dcn = extract_device_control_number(device_transmittal)
+        match_method = "No Match"
+        matched_dtx_value = None
+        harness_family = None
+
+        # Step 1: Match by Device Control Number
+        if extracted_dcn:
+            matching_rows = dtx_df[dtx_df["Device Control Number"].astype(str).str.strip() == extracted_dcn.strip()]
+            if not matching_rows.empty:
+                harness_family = matching_rows.iloc[0]["Harness Family"]
+                matched_dtx_value = extracted_dcn
+                match_method = "Device Control Number"
+
+        # Step 2: Match by Device Name or Suffix (if no DCN match)
+        if match_method == "No Match" and device_transmittal:
+            normalized_transmittal = normalize_text(device_transmittal)
+
+            # Try Device Name matching
+            for _, dtx_row in dtx_df.iterrows():
+                device_name = dtx_row.get("Device Name")
+                if device_name:
+                    normalized_name = normalize_text(device_name)
+                    if normalized_name and normalized_name in normalized_transmittal:
+                        harness_family = dtx_row["Harness Family"]
+                        matched_dtx_value = device_name
+                        match_method = "Device Name"
+                        break
+
+            # Try Suffix matching (only if Device Name didn't match)
+            if match_method == "No Match":
+                for _, dtx_row in dtx_df.iterrows():
+                    suffix = dtx_row.get("Suffix")
+                    if suffix:
+                        normalized_suffix = normalize_text(suffix)
+                        if normalized_suffix and normalized_suffix in normalized_transmittal:
+                            harness_family = dtx_row["Harness Family"]
+                            matched_dtx_value = suffix
+                            match_method = "Suffix"
+                            break
+
+        results.append({
+            "DTCR#": dtcr_num,
+            "Device Transmittal": device_transmittal,
+            "Extracted Device Control Number": extracted_dcn or "",
+            "Reason for change": reason,
+            "Status": status,
+            "Match Method": match_method,
+            "Matched DTx Value": matched_dtx_value or "",
+            "Harness Family": harness_family or "",
+        })
+
+    return pd.DataFrame(results)
+
+
+# ---------------------------------------------------------------------------
+# SECR Reading & Writing
+# ---------------------------------------------------------------------------
+
+def get_secr_harness_family_from_c12(secr_workbook: openpyxl.Workbook) -> Optional[str]:
+    """Read the SECR Harness Family from cell C12 of the Summary sheet."""
+    try:
+        ws = secr_workbook["Summary"]
+        value = ws["C12"].value
+        return str(value).strip() if value else None
+    except Exception:
+        return None
+
+
+def find_reason_for_change_cell(secr_workbook: openpyxl.Workbook) -> Optional[Tuple[str, str]]:
+    """Find the Reason for Change field in the SECR workbook.
+    
+    Returns tuple of (sheet_name, cell_reference) or None if not found.
+    """
+    try:
+        ws = secr_workbook["Summary"]
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value and "Reason for Change" in str(cell.value):
+                    return ("Summary", cell.coordinate)
+    except Exception:
+        pass
+    return None
+
+
+def update_secr_reason_for_change(
+    secr_workbook: openpyxl.Workbook,
+    cell_ref: str,
+    reason_for_change_text: str,
+) -> None:
+    """Update the SECR Reason for Change cell with new text.
+    
+    If the cell already has content, append the new text.
+    """
+    try:
+        ws = secr_workbook["Summary"]
+        cell = ws[cell_ref]
+        existing = str(cell.value).strip() if cell.value else ""
+        if existing:
+            # Append with semicolon separator
+            cell.value = f"{existing}; {reason_for_change_text}"
+        else:
+            cell.value = reason_for_change_text
+    except Exception as e:
+        raise RuntimeError(f"Failed to update SECR cell {cell_ref}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# SECR Enrichment Logic
+# ---------------------------------------------------------------------------
+
+def build_reason_for_change_for_secr(
+    secr_harness_family: str,
+    dtcr_mapping_df: pd.DataFrame,
+) -> str:
+    """Build the Reason for Change text for a specific SECR Harness Family.
+    
+    Returns string in format: "DTCR#":"reason"; "DTCR#":"reason"; ...
+    """
+    # Filter DTCRs matching the SECR Harness Family
+    matching = dtcr_mapping_df[dtcr_mapping_df["Harness Family"] == secr_harness_family].copy()
+
+    if matching.empty:
+        return ""
+
+    # Build text
+    entries = []
+    for _, row in matching.iterrows():
+        dtcr_num = row["DTCR#"]
+        reason = row["Reason for change"]
+        entries.append(f'"{dtcr_num}":"{reason}"')
+
+    return "; ".join(entries)
+
+
+def export_secr_enriched_output(
+    secr_workbook: openpyxl.Workbook,
+    dtcr_extracted_df: pd.DataFrame,
+    dtcr_mapping_df: pd.DataFrame,
+    summary_df: pd.DataFrame,
+) -> Tuple[bytes, Dict[str, Any]]:
+    """Export the enriched SECR as Excel bytes with additional sheets.
+    
+    Adds sheets: DTCR_Extracted, DTCR_Harness_Mapping, SECR_Enrichment_Summary, Updated_SECR.
+    Returns (excel_bytes, metadata_dict).
+    """
+    # Create a new workbook starting from the updated SECR
+    wb_out = secr_workbook
+
+    # Add DTCR_Extracted sheet
+    if "DTCR_Extracted" in wb_out.sheetnames:
+        del wb_out["DTCR_Extracted"]
+    ws_dtcr = wb_out.create_sheet("DTCR_Extracted")
+    for r_idx, row in enumerate(
+        [dtcr_extracted_df.columns] + dtcr_extracted_df.values.tolist(), 1
+    ):
+        for c_idx, val in enumerate(row, 1):
+            ws_dtcr.cell(row=r_idx, column=c_idx, value=val)
+
+    # Add DTCR_Harness_Mapping sheet
+    if "DTCR_Harness_Mapping" in wb_out.sheetnames:
+        del wb_out["DTCR_Harness_Mapping"]
+    ws_mapping = wb_out.create_sheet("DTCR_Harness_Mapping")
+    for r_idx, row in enumerate(
+        [dtcr_mapping_df.columns] + dtcr_mapping_df.values.tolist(), 1
+    ):
+        for c_idx, val in enumerate(row, 1):
+            ws_mapping.cell(row=r_idx, column=c_idx, value=val)
+
+    # Add SECR_Enrichment_Summary sheet
+    if "SECR_Enrichment_Summary" in wb_out.sheetnames:
+        del wb_out["SECR_Enrichment_Summary"]
+    ws_summary = wb_out.create_sheet("SECR_Enrichment_Summary")
+    for r_idx, row in enumerate(
+        [summary_df.columns] + summary_df.values.tolist(), 1
+    ):
+        for c_idx, val in enumerate(row, 1):
+            ws_summary.cell(row=r_idx, column=c_idx, value=val)
+
+    # Rename the "Updated_SECR" sheet pointer (Note: we modify the output workbook in place,
+    # so the original summary sheet is already updated)
+    # If needed, create a copy of summary as Updated_SECR for clarity
+    # Actually, leave the existing Summary sheet as-is; the enrichment updates it in place.
+
+    buf = io.BytesIO()
+    wb_out.save(buf)
+    buf.seek(0)
+
+    return buf.read(), {
+        "filename": "SECR_Enriched.xlsx",
+        "sheets_added": ["DTCR_Extracted", "DTCR_Harness_Mapping", "SECR_Enrichment_Summary"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Validation & Summary
+# ---------------------------------------------------------------------------
+
+def build_enrichment_summary(
+    dtcr_mapping_df: pd.DataFrame,
+    secr_harness_family: str,
+    reason_for_change_applied: str,
+) -> pd.DataFrame:
+    """Build a summary DataFrame of the enrichment process."""
+    total_processed = len(dtcr_mapping_df)
+    total_matched = len(dtcr_mapping_df[dtcr_mapping_df["Match Method"] != "No Match"])
+    matched_to_secr = len(dtcr_mapping_df[dtcr_mapping_df["Harness Family"] == secr_harness_family])
+    matched_by_dcn = len(dtcr_mapping_df[dtcr_mapping_df["Match Method"] == "Device Control Number"])
+    matched_by_name = len(dtcr_mapping_df[dtcr_mapping_df["Match Method"] == "Device Name"])
+    matched_by_suffix = len(dtcr_mapping_df[dtcr_mapping_df["Match Method"] == "Suffix"])
+    not_matched = len(dtcr_mapping_df[dtcr_mapping_df["Match Method"] == "No Match"])
+
+    summary = pd.DataFrame(
+        [
+            {"Metric": "SECR Harness Family (from C12)", "Value": secr_harness_family},
+            {"Metric": "Total DTCRs Processed", "Value": total_processed},
+            {"Metric": "Total DTCRs Matched to Any Harness", "Value": total_matched},
+            {"Metric": "DTCRs Matched by Device Control Number", "Value": matched_by_dcn},
+            {"Metric": "DTCRs Matched by Device Name", "Value": matched_by_name},
+            {"Metric": "DTCRs Matched by Suffix", "Value": matched_by_suffix},
+            {"Metric": "DTCRs Not Matched", "Value": not_matched},
+            {"Metric": "DTCRs Matching This SECR", "Value": matched_to_secr},
+            {"Metric": "Reason for Change Applied", "Value": "Yes" if reason_for_change_applied else "No"},
+        ]
+    )
+    return summary
+
+
+def validate_enrichment_inputs(
+    dtcr_df: pd.DataFrame,
+    dtx_df: pd.DataFrame,
+    secr_harness_family: Optional[str],
+) -> Tuple[bool, list]:
+    """Validate all inputs for SECR enrichment.
+    
+    Returns (is_valid, list_of_warnings).
+    """
+    warnings = []
+
+    if dtcr_df.empty:
+        warnings.append("DTCR Report is empty.")
+    if dtx_df.empty:
+        warnings.append("DTx Circuits Report is empty.")
+    if not secr_harness_family:
+        warnings.append("SECR cell C12 is empty or invalid.")
+
+    is_valid = len(warnings) == 0
+    return is_valid, warnings

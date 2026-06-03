@@ -8,6 +8,19 @@ import streamlit as st
 
 from dtx_compare_engine import generate_dtx_change_report
 from secr_engine import create_secr_bytes
+from secr_enrichment_engine import (
+    load_dtcr_report,
+    load_dtx_circuits_report,
+    load_generated_secr_workbook,
+    match_dtcr_to_harness_family,
+    get_secr_harness_family_from_c12,
+    find_reason_for_change_cell,
+    update_secr_reason_for_change,
+    build_reason_for_change_for_secr,
+    build_enrichment_summary,
+    validate_enrichment_inputs,
+    export_secr_enriched_output,
+)
 from wiring_harness_processor import (
     evaluate_expression_against_all_pns,
     generate_sales_code_expression,
@@ -527,3 +540,182 @@ elif selected_tool == "Create SECR":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="secr_dl_btn",
         )
+
+        # ──────────────────────────────────────────────────────────────────
+        # Optional: SECR Reason for Change Enrichment
+        # ──────────────────────────────────────────────────────────────────
+        st.markdown("---")
+        st.subheader("SECR Optional Enrichment")
+        st.markdown(
+            "Optionally enrich the SECR Reason for Change field with DTCR data. "
+            "Upload DTCR Report and DTx Circuits Report files to proceed."
+        )
+
+        enrich_col1, enrich_col2 = st.columns(2)
+        with enrich_col1:
+            dtcr_file = st.file_uploader(
+                "DTCR Report (Excel)",
+                type=["xlsx", "xls", "xlsm"],
+                key="enrich_dtcr_file",
+            )
+        with enrich_col2:
+            dtx_file = st.file_uploader(
+                "DTx Circuits Report (Excel)",
+                type=["xlsx", "xls", "xlsm"],
+                key="enrich_dtx_file",
+            )
+
+        if dtcr_file is not None and dtx_file is not None:
+            with st.form("secr_enrichment_form"):
+                st.markdown("**Enrichment Settings**")
+                enable_enrichment = st.checkbox(
+                    "Enable SECR Reason for Change Enrichment",
+                    value=True,
+                    key="enrich_enable",
+                )
+                status_options = ["All Statuses", "Open", "Approved", "Cancelled"]
+                status_filter = st.multiselect(
+                    "Filter DTCRs by Status",
+                    options=status_options,
+                    default=["All Statuses"],
+                    key="enrich_status_filter",
+                )
+                enrich_clicked = st.form_submit_button(
+                    "Run SECR Enrichment", type="primary"
+                )
+
+            if enrich_clicked and enable_enrichment:
+                try:
+                    with st.spinner("Processing SECR enrichment..."):
+                        # Load files
+                        dtcr_df = load_dtcr_report(dtcr_file.getvalue())
+                        dtx_df = load_dtx_circuits_report(dtx_file.getvalue())
+                        secr_wb = load_generated_secr_workbook(secr_result)
+
+                        # Apply status filter
+                        if (
+                            status_filter
+                            and "All Statuses" not in status_filter
+                        ):
+                            dtcr_df = dtcr_df[dtcr_df["Status"].astype(str).str.strip().isin(status_filter)]
+
+                        # Validate inputs
+                        is_valid, validation_warnings = validate_enrichment_inputs(
+                            dtcr_df,
+                            dtx_df,
+                            get_secr_harness_family_from_c12(secr_wb),
+                        )
+                        if not is_valid:
+                            for warning in validation_warnings:
+                                st.warning(warning)
+                            st.error("Enrichment cannot proceed with validation errors.")
+                            st.stop()
+
+                        # Extract and match
+                        dtcr_mapping_df = match_dtcr_to_harness_family(dtcr_df, dtx_df)
+                        secr_harness_family = get_secr_harness_family_from_c12(secr_wb)
+
+                        # Build enrichment summary
+                        reason_text = build_reason_for_change_for_secr(
+                            secr_harness_family, dtcr_mapping_df
+                        )
+                        summary_df = build_enrichment_summary(
+                            dtcr_mapping_df, secr_harness_family, reason_text
+                        )
+
+                        # Update SECR
+                        reason_cell_info = find_reason_for_change_cell(secr_wb)
+                        if reason_cell_info:
+                            _, cell_ref = reason_cell_info
+                            update_secr_reason_for_change(
+                                secr_wb, cell_ref, reason_text
+                            )
+                        else:
+                            st.warning(
+                                "Could not find Reason for Change field in SECR. "
+                                "Skipping update."
+                            )
+
+                        # Export enriched output
+                        enriched_bytes, export_meta = export_secr_enriched_output(
+                            secr_wb,
+                            dtcr_df,
+                            dtcr_mapping_df,
+                            summary_df,
+                        )
+
+                        # Store in session
+                        st.session_state["enriched_secr_bytes"] = enriched_bytes
+                        st.session_state["enriched_secr_filename"] = (
+                            export_meta["filename"]
+                        )
+
+                except ValueError as ve:
+                    st.error(f"Validation error: {ve}")
+                except Exception as exc:
+                    st.error(f"Enrichment failed: {exc}")
+
+            # Show preview if enrichment has been run
+            enriched_result = st.session_state.get("enriched_secr_bytes")
+            if enriched_result is not None:
+                st.success("SECR enrichment complete.")
+
+                # Show preview tables
+                try:
+                    dtcr_df = load_dtcr_report(dtcr_file.getvalue())
+                    dtx_df = load_dtx_circuits_report(dtx_file.getvalue())
+                    secr_wb = load_generated_secr_workbook(secr_result)
+
+                    # Apply status filter
+                    if (
+                        status_filter
+                        and "All Statuses" not in status_filter
+                    ):
+                        dtcr_df = dtcr_df[
+                            dtcr_df["Status"].astype(str).str.strip().isin(status_filter)
+                        ]
+
+                    dtcr_mapping_df = match_dtcr_to_harness_family(dtcr_df, dtx_df)
+                    secr_harness_family = get_secr_harness_family_from_c12(secr_wb)
+                    reason_text = build_reason_for_change_for_secr(
+                        secr_harness_family, dtcr_mapping_df
+                    )
+                    summary_df = build_enrichment_summary(
+                        dtcr_mapping_df, secr_harness_family, reason_text
+                    )
+
+                    with st.expander("Preview: Extracted DTCR Data"):
+                        st.dataframe(dtcr_df, use_container_width=True)
+
+                    with st.expander("Preview: DTCR-to-Harness Family Mapping"):
+                        st.dataframe(dtcr_mapping_df, use_container_width=True)
+
+                    with st.expander("Preview: Enrichment Summary"):
+                        st.dataframe(summary_df, use_container_width=True)
+
+                    with st.expander("Preview: Matching DTCRs for This SECR"):
+                        matching_for_secr = dtcr_mapping_df[
+                            dtcr_mapping_df["Harness Family"] == secr_harness_family
+                        ]
+                        if matching_for_secr.empty:
+                            st.info("No DTCRs match the SECR Harness Family.")
+                        else:
+                            st.dataframe(
+                                matching_for_secr[
+                                    ["DTCR#", "Device Transmittal", "Reason for change", "Harness Family"]
+                                ],
+                                use_container_width=True,
+                            )
+
+                    st.markdown("---")
+                    st.download_button(
+                        label="Download Enriched SECR Excel",
+                        data=enriched_result,
+                        file_name=st.session_state.get(
+                            "enriched_secr_filename", "SECR_Enriched.xlsx"
+                        ),
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="enrich_dl_btn",
+                    )
+                except Exception as exc:
+                    st.error(f"Failed to display preview: {exc}")
