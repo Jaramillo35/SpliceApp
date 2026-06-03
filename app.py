@@ -178,10 +178,10 @@ if mode == "Home":
             <div class="tool-card">
                 <div class="tool-title">DTCR (Windows)</div>
                 <div class="tool-desc">
-                    Download the full Windows package with build script, install guide, and required files.
+                    Download the DTCR app installer bundle with Windows setup files and .txt instructions.
                 </div>
                 <span class="tool-badge">Windows Package</span>
-                <span class="tool-badge">Install Guide Included</span>
+                <span class="tool-badge">.txt Install Guide Included</span>
             </div>
             """,
             unsafe_allow_html=True,
