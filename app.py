@@ -653,11 +653,15 @@ elif selected_tool == "Create SECR":
                             )
 
                         # Export enriched output
+                        base_secr_filename = st.session_state.get(
+                            "secr_result_filename", "SECR_output.xlsx"
+                        )
                         enriched_bytes, export_meta = export_secr_enriched_output(
                             secr_wb,
                             dtcr_df,
                             dtcr_mapping_df,
                             summary_df,
+                            output_filename=base_secr_filename,
                         )
 
                         # Store in session

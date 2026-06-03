@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional, Tuple
 
 import openpyxl
 import pandas as pd
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 
 # ---------------------------------------------------------------------------
@@ -280,19 +282,15 @@ def update_secr_reason_for_change(
     cell_ref: str,
     reason_for_change_text: str,
 ) -> None:
-    """Update the SECR Reason for Change cell with new text.
-    
-    If the cell already has content, append the new text.
-    """
+    """Write Reason for Change text in the cell directly below the label cell."""
     try:
         ws = secr_workbook["Summary"]
-        cell = ws[cell_ref]
-        existing = str(cell.value).strip() if cell.value else ""
-        if existing:
-            # Append with semicolon separator
-            cell.value = f"{existing}; {reason_for_change_text}"
-        else:
-            cell.value = reason_for_change_text
+        label_cell = ws[cell_ref]
+        target_row = label_cell.row + 1
+        target_col = label_cell.column
+        target_cell = ws.cell(row=target_row, column=target_col)
+        target_cell.value = reason_for_change_text
+        target_cell.alignment = Alignment(wrap_text=True, vertical="top")
     except Exception as e:
         raise RuntimeError(f"Failed to update SECR cell {cell_ref}: {e}")
 
@@ -307,7 +305,9 @@ def build_reason_for_change_for_secr(
 ) -> str:
     """Build the Reason for Change text for a specific SECR Harness Family.
     
-    Returns string in format: "DTCR#":"reason"; "DTCR#":"reason"; ...
+    Returns string in format:
+    DTCR#: reason
+    DTCR#: reason
     """
     # Filter DTCRs matching the SECR Harness Family
     matching = dtcr_mapping_df[dtcr_mapping_df["Harness Family"] == secr_harness_family].copy()
@@ -318,11 +318,50 @@ def build_reason_for_change_for_secr(
     # Build text
     entries = []
     for _, row in matching.iterrows():
-        dtcr_num = row["DTCR#"]
-        reason = row["Reason for change"]
-        entries.append(f'"{dtcr_num}":"{reason}"')
+        dtcr_num = str(row["DTCR#"]).strip()
+        reason = str(row["Reason for change"]).strip()
+        entries.append(f"{dtcr_num}: {reason}")
 
-    return "; ".join(entries)
+    return "\n".join(entries)
+
+
+def _style_dtcr_mapping_sheet(ws: openpyxl.worksheet.worksheet.Worksheet) -> None:
+    """Apply readable formatting to the DTCR_Harness_Mapping sheet."""
+    if ws.max_row < 1 or ws.max_column < 1:
+        return
+
+    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+
+    # Header styling
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    # Data alignment and zebra striping
+    stripe_fill = PatternFill(start_color="EAF2FA", end_color="EAF2FA", fill_type="solid")
+    for row in range(2, ws.max_row + 1):
+        for col in range(1, ws.max_column + 1):
+            cell = ws.cell(row=row, column=col)
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            if row % 2 == 0:
+                cell.fill = stripe_fill
+
+    # Auto filter + freeze header
+    ws.auto_filter.ref = ws.dimensions
+    ws.freeze_panes = "A2"
+
+    # Column widths based on content (bounded for readability)
+    for col_idx in range(1, ws.max_column + 1):
+        col_letter = get_column_letter(col_idx)
+        max_len = 0
+        for row in range(1, ws.max_row + 1):
+            val = ws.cell(row=row, column=col_idx).value
+            if val is None:
+                continue
+            max_len = max(max_len, len(str(val)))
+        ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 55)
 
 
 def export_secr_enriched_output(
@@ -330,6 +369,7 @@ def export_secr_enriched_output(
     dtcr_extracted_df: pd.DataFrame,
     dtcr_mapping_df: pd.DataFrame,
     summary_df: pd.DataFrame,
+    output_filename: Optional[str] = None,
 ) -> Tuple[bytes, Dict[str, Any]]:
     """Export the enriched SECR as Excel bytes with additional sheets.
     
@@ -358,6 +398,7 @@ def export_secr_enriched_output(
     ):
         for c_idx, val in enumerate(row, 1):
             ws_mapping.cell(row=r_idx, column=c_idx, value=val)
+    _style_dtcr_mapping_sheet(ws_mapping)
 
     # Add SECR_Enrichment_Summary sheet
     if "SECR_Enrichment_Summary" in wb_out.sheetnames:
@@ -379,7 +420,7 @@ def export_secr_enriched_output(
     buf.seek(0)
 
     return buf.read(), {
-        "filename": "SECR_Enriched.xlsx",
+        "filename": output_filename or "SECR_Enriched.xlsx",
         "sheets_added": ["DTCR_Extracted", "DTCR_Harness_Mapping", "SECR_Enrichment_Summary"],
     }
 
