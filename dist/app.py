@@ -209,19 +209,25 @@ if selected_tool == "Splice Generation":
     st.title("Wiring Harness Splice Generator")
     st.caption("Generate harness print-ready direct connections, splices, configuration groups, and validation reports.")
 
+    # CAN Mode Configuration (must be selected before uploading)
+    st.markdown("---")
+    st.subheader("Splice Configuration Options")
+    can_mode = st.checkbox("Apply CAN splice rules: maximum 3 ends per splice", value=False)
+    if can_mode:
+        st.info("CAN mode enabled: Each splice will be limited to a maximum of 3 endpoints. Additional splices and splice-to-splice connections will be created as needed for configurations with more than 3 endpoints.")
+
+    prev_ui_can_mode = st.session_state.get("ui_can_mode")
+    if prev_ui_can_mode is not None and prev_ui_can_mode != can_mode:
+        st.session_state.pop("analysis_result", None)
+        st.session_state.pop("uploaded_file_name", None)
+    st.session_state["ui_can_mode"] = can_mode
+
     uploaded_file = st.file_uploader("Upload Excel file (Complexity + OptionPerCkt)", type=["xlsx", "xls"])
 
     if uploaded_file is None:
         st.info("Upload Input.xlsx (or equivalent) to begin analysis.")
         st.stop()
 
-    # CAN Mode Configuration
-    st.markdown("---")
-    st.subheader("Splice Configuration Options")
-    can_mode = st.checkbox("Apply CAN splice rules: maximum 3 ends per splice", value=False)
-    if can_mode:
-        st.info("CAN mode enabled: Each splice will be limited to a maximum of 3 endpoints. Additional splices and splice-to-splice connections will be created as needed for configurations with more than 3 endpoints.")
-    
     st.session_state["can_mode"] = can_mode
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as temp_file:
