@@ -975,94 +975,81 @@ def generate_can_splice_connections(
         )
         return rows
     
-    # Multiple splices for >3 endpoints
+    # Multiple splices for >3 endpoints.
+    # Build a binary aggregation tree so every splice has <=3 ends:
+    # two inputs (endpoint or child splice) and one output (parent splice or anchor).
     allocator = splice_allocator.setdefault(configuration.circuit_name, NameAllocator(f"S{configuration.circuit_name}"))
     anchor = _choose_anchor_endpoint(endpoints)
-    
-    # Separate endpoints into sources and anchor
-    sources = [e for e in endpoints if e != anchor]
     rows: list[dict[str, str]] = []
-    
-    # Build chain of splices (2 sources + 1 intermediate per splice until last)
-    # Last splice has remaining sources + anchor
-    splice_chain: list[tuple[str, list[Endpoint]]] = []
-    
-    while len(sources) > 0:
-        current_splice = allocator.next_name()
-        
-        if len(sources) <= 2:
-            # Last splice: connect remaining sources + anchor
-            splice_chain.append((current_splice, sources + [anchor]))
-            break
-        else:
-            # Intermediate splice: take 2 sources + point to nested splice
-            splice_chain.append((current_splice, sources[:2]))
-            sources = sources[2:]
-    
-    # Generate connections for each splice in the chain
-    for idx, (splice_name, splice_endpoints) in enumerate(splice_chain):
-        is_last_splice = (idx == len(splice_chain) - 1)
-        
-        # Add leg connections for each endpoint except the last
-        for endpoint in splice_endpoints[:-1]:
+
+    # Worklist contains either endpoints or previously created splice nodes.
+    nodes: list[Endpoint | str] = [e for e in endpoints if e != anchor]
+
+    def _connect_node_to_splice(node: Endpoint | str, target_splice: str) -> None:
+        if isinstance(node, Endpoint):
             rows.append(
                 _connection_row(
                     configuration=configuration.configuration_id,
                     circuit_name=configuration.circuit_name,
                     generated_circuit=circuit_allocator.next_name(configuration.circuit_name),
                     connection_type="Splice Leg",
-                    splice_name=splice_name,
-                    from_cnum=endpoint.cnum,
-                    from_pin=endpoint.pin,
-                    to_cnum=splice_name,
+                    splice_name=target_splice,
+                    from_cnum=node.cnum,
+                    from_pin=node.pin,
+                    to_cnum=target_splice,
                     to_pin="",
-                    sales_code=endpoint.sales_code or "TRUE",
-                    target_harness_pns=configuration.target_harness_pns,
-                    can_mode=True,
-                )
-            )
-        
-        # Add trunk/bridge connection for the last endpoint
-        last_endpoint = splice_endpoints[-1]
-        
-        if is_last_splice:
-            # Last splice: connect to anchor device
-            rows.append(
-                _connection_row(
-                    configuration=configuration.configuration_id,
-                    circuit_name=configuration.circuit_name,
-                    generated_circuit=circuit_allocator.next_name(configuration.circuit_name),
-                    connection_type="Splice Trunk",
-                    splice_name=splice_name,
-                    from_cnum=splice_name,
-                    from_pin="",
-                    to_cnum=last_endpoint.cnum,
-                    to_pin=last_endpoint.pin,
-                    sales_code=configuration.generated_sales_code,
+                    sales_code=node.sales_code or "TRUE",
                     target_harness_pns=configuration.target_harness_pns,
                     can_mode=True,
                 )
             )
         else:
-            # Intermediate splice: connect to next splice
-            next_splice_name = splice_chain[idx + 1][0]
             rows.append(
                 _connection_row(
                     configuration=configuration.configuration_id,
                     circuit_name=configuration.circuit_name,
                     generated_circuit=circuit_allocator.next_name(configuration.circuit_name),
                     connection_type="Splice-to-Splice",
-                    splice_name=splice_name,
-                    from_cnum=splice_name,
+                    splice_name=node,
+                    from_cnum=node,
                     from_pin="",
-                    to_cnum=next_splice_name,
+                    to_cnum=target_splice,
                     to_pin="",
                     sales_code=configuration.generated_sales_code,
                     target_harness_pns=configuration.target_harness_pns,
                     can_mode=True,
                 )
             )
-    
+
+    while len(nodes) > 2:
+        left = nodes.pop(0)
+        right = nodes.pop(0)
+        parent_splice = allocator.next_name()
+        _connect_node_to_splice(left, parent_splice)
+        _connect_node_to_splice(right, parent_splice)
+        nodes.append(parent_splice)
+
+    final_splice = allocator.next_name()
+    _connect_node_to_splice(nodes[0], final_splice)
+    _connect_node_to_splice(nodes[1], final_splice)
+
+    rows.append(
+        _connection_row(
+            configuration=configuration.configuration_id,
+            circuit_name=configuration.circuit_name,
+            generated_circuit=circuit_allocator.next_name(configuration.circuit_name),
+            connection_type="Splice Trunk",
+            splice_name=final_splice,
+            from_cnum=final_splice,
+            from_pin="",
+            to_cnum=anchor.cnum,
+            to_pin=anchor.pin,
+            sales_code=configuration.generated_sales_code,
+            target_harness_pns=configuration.target_harness_pns,
+            can_mode=True,
+        )
+    )
+
     return rows
 
 
@@ -1073,23 +1060,25 @@ def validate_can_splices(connection_rows: list[dict[str, str]]) -> tuple[bool, s
     Returns: (is_valid, validation_message)
     """
     splice_ends: dict[str, int] = {}
-    
+
     for row in connection_rows:
-        if row.get("Connection Type") in ["Splice Leg", "Splice Trunk", "Splice-to-Splice"]:
-            splice_name = row.get("Splice Name", "")
-            to_cnum = row.get("To CNUM", "")
-            
-            if splice_name and to_cnum == splice_name:
-                # This is a leg going TO the splice
-                splice_ends[splice_name] = splice_ends.get(splice_name, 0) + 1
-            elif splice_name and row.get("From CNUM") == splice_name:
-                # This is a connection FROM the splice
-                splice_ends[splice_name] = splice_ends.get(splice_name, 0) + 1
-    
+        ctype = row.get("Connection Type")
+        if ctype not in ["Splice Leg", "Splice Trunk", "Splice-to-Splice"]:
+            continue
+
+        from_cnum = str(row.get("From CNUM", "")).strip()
+        to_cnum = str(row.get("To CNUM", "")).strip()
+
+        # Any connection touching a splice contributes one end on that splice.
+        if from_cnum.startswith("S"):
+            splice_ends[from_cnum] = splice_ends.get(from_cnum, 0) + 1
+        if to_cnum.startswith("S"):
+            splice_ends[to_cnum] = splice_ends.get(to_cnum, 0) + 1
+
     violations = [s for s, count in splice_ends.items() if count > 3]
     if violations:
-        return False, f"CAN splice validation failed: Splices {violations} exceed 3 ends"
-    
+        return False, "CAN splice rule violated: splice has more than 3 ends."
+
     return True, "CAN validation passed: No splice exceeds 3 ends"
 
 
