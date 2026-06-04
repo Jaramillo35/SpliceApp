@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import inspect
 import tempfile
 from pathlib import Path
 
@@ -228,7 +229,13 @@ if selected_tool == "Splice Generation":
         temp_path = temp_file.name
 
     try:
-        result = run_analysis(temp_path, can_mode=can_mode)
+        run_analysis_sig = inspect.signature(run_analysis)
+        if "can_mode" in run_analysis_sig.parameters:
+            result = run_analysis(temp_path, can_mode=can_mode)
+        else:
+            result = run_analysis(temp_path)
+            if can_mode:
+                st.warning("CAN mode is not available in the loaded backend yet. Please reboot/redeploy the app.")
     except Exception as exc:
         st.error(f"Analysis failed: {exc}")
         st.stop()
@@ -417,7 +424,17 @@ if selected_tool == "Splice Generation":
                     updated_option_df = result["option_df"].copy()
                     updated_option_df.loc[selected_row_idx, "Sales Code"] = generated_expr
                     can_mode_for_refresh = st.session_state.get("can_mode", False)
-                    refreshed = run_analysis_from_option_df(temp_path, updated_option_df, can_mode=can_mode_for_refresh)
+                    refresh_sig = inspect.signature(run_analysis_from_option_df)
+                    if "can_mode" in refresh_sig.parameters:
+                        refreshed = run_analysis_from_option_df(
+                            temp_path,
+                            updated_option_df,
+                            can_mode=can_mode_for_refresh,
+                        )
+                    else:
+                        refreshed = run_analysis_from_option_df(temp_path, updated_option_df)
+                        if can_mode_for_refresh:
+                            st.warning("CAN mode is not available in the loaded backend yet. Please reboot/redeploy the app.")
                     st.session_state["analysis_result"] = refreshed
                     st.success("Sales code applied. Configurations and validation refreshed.")
                     st.rerun()
