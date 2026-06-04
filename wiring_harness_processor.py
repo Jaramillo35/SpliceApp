@@ -502,8 +502,9 @@ def _connection_row(
     to_pin: str,
     sales_code: str,
     target_harness_pns: list[str],
+    can_mode: bool = False,
 ) -> dict[str, str]:
-    return {
+    row = {
         "Configuration": configuration,
         "Circuit Name": circuit_name,
         "Generated Circuit": generated_circuit,
@@ -515,7 +516,9 @@ def _connection_row(
         "To Pin": to_pin,
         "Sales Code": sales_code,
         "Target Harness PNs": ", ".join(target_harness_pns),
+        "CAN Mode": "True" if can_mode else "False",
     }
+    return row
 
 
 def _simplify_sales_code_for_display(internal_expr: str) -> str:
@@ -829,6 +832,7 @@ def generate_direct_connections(
             to_pin=anchor.pin,
             sales_code=configuration.generated_sales_code,
             target_harness_pns=configuration.target_harness_pns,
+            can_mode=False,
         )
     ]
 
@@ -864,6 +868,7 @@ def generate_splices(
                 to_pin="",
                 sales_code=endpoint.sales_code or "TRUE",
                 target_harness_pns=configuration.target_harness_pns,
+                can_mode=False,
             )
         )
 
@@ -880,10 +885,212 @@ def generate_splices(
             to_pin=anchor.pin,
             sales_code=configuration.generated_sales_code,
             target_harness_pns=configuration.target_harness_pns,
+            can_mode=False,
         )
     )
 
     return rows
+
+
+def generate_can_splice_connections(
+    configuration: Configuration,
+    splice_allocator: dict[str, NameAllocator],
+    circuit_allocator: CircuitNameAllocator,
+) -> list[dict[str, str]]:
+    """
+    Generate CAN-compliant splice connections (max 3 ends per splice).
+    
+    For CAN circuits:
+    - 2 endpoints: direct connection
+    - 3 endpoints: single splice with 3 ends
+    - >3 endpoints: multiple splices with splice-to-splice connections
+    """
+    endpoints = sorted(configuration.endpoints, key=lambda e: (e.cnum, e.pin))
+    
+    if len(endpoints) <= 2:
+        # Direct connection for 2 endpoints
+        if len(endpoints) == 2:
+            anchor = _choose_anchor_endpoint(endpoints)
+            source = endpoints[0] if endpoints[1] == anchor else endpoints[1]
+            return [
+                _connection_row(
+                    configuration=configuration.configuration_id,
+                    circuit_name=configuration.circuit_name,
+                    generated_circuit=circuit_allocator.next_name(configuration.circuit_name),
+                    connection_type="Direct",
+                    splice_name="",
+                    from_cnum=source.cnum,
+                    from_pin=source.pin,
+                    to_cnum=anchor.cnum,
+                    to_pin=anchor.pin,
+                    sales_code=configuration.generated_sales_code,
+                    target_harness_pns=configuration.target_harness_pns,
+                    can_mode=True,
+                )
+            ]
+        return []
+    
+    if len(endpoints) == 3:
+        # Single splice for exactly 3 endpoints
+        allocator = splice_allocator.setdefault(configuration.circuit_name, NameAllocator(f"S{configuration.circuit_name}"))
+        splice_name = allocator.next_name()
+        anchor = _choose_anchor_endpoint(endpoints)
+        rows: list[dict[str, str]] = []
+        
+        for endpoint in endpoints:
+            if endpoint == anchor:
+                continue
+            rows.append(
+                _connection_row(
+                    configuration=configuration.configuration_id,
+                    circuit_name=configuration.circuit_name,
+                    generated_circuit=circuit_allocator.next_name(configuration.circuit_name),
+                    connection_type="Splice Leg",
+                    splice_name=splice_name,
+                    from_cnum=endpoint.cnum,
+                    from_pin=endpoint.pin,
+                    to_cnum=splice_name,
+                    to_pin="",
+                    sales_code=endpoint.sales_code or "TRUE",
+                    target_harness_pns=configuration.target_harness_pns,
+                    can_mode=True,
+                )
+            )
+        
+        rows.append(
+            _connection_row(
+                configuration=configuration.configuration_id,
+                circuit_name=configuration.circuit_name,
+                generated_circuit=circuit_allocator.next_name(configuration.circuit_name),
+                connection_type="Splice Trunk",
+                splice_name=splice_name,
+                from_cnum=splice_name,
+                from_pin="",
+                to_cnum=anchor.cnum,
+                to_pin=anchor.pin,
+                sales_code=configuration.generated_sales_code,
+                target_harness_pns=configuration.target_harness_pns,
+                can_mode=True,
+            )
+        )
+        return rows
+    
+    # Multiple splices for >3 endpoints
+    allocator = splice_allocator.setdefault(configuration.circuit_name, NameAllocator(f"S{configuration.circuit_name}"))
+    anchor = _choose_anchor_endpoint(endpoints)
+    
+    # Separate endpoints into sources and anchor
+    sources = [e for e in endpoints if e != anchor]
+    rows: list[dict[str, str]] = []
+    
+    # Build chain of splices (2 sources + 1 intermediate per splice until last)
+    # Last splice has remaining sources + anchor
+    splice_chain: list[tuple[str, list[Endpoint]]] = []
+    
+    while len(sources) > 0:
+        current_splice = allocator.next_name()
+        
+        if len(sources) <= 2:
+            # Last splice: connect remaining sources + anchor
+            splice_chain.append((current_splice, sources + [anchor]))
+            break
+        else:
+            # Intermediate splice: take 2 sources + point to nested splice
+            splice_chain.append((current_splice, sources[:2]))
+            sources = sources[2:]
+    
+    # Generate connections for each splice in the chain
+    for idx, (splice_name, splice_endpoints) in enumerate(splice_chain):
+        is_last_splice = (idx == len(splice_chain) - 1)
+        
+        # Add leg connections for each endpoint except the last
+        for endpoint in splice_endpoints[:-1]:
+            rows.append(
+                _connection_row(
+                    configuration=configuration.configuration_id,
+                    circuit_name=configuration.circuit_name,
+                    generated_circuit=circuit_allocator.next_name(configuration.circuit_name),
+                    connection_type="Splice Leg",
+                    splice_name=splice_name,
+                    from_cnum=endpoint.cnum,
+                    from_pin=endpoint.pin,
+                    to_cnum=splice_name,
+                    to_pin="",
+                    sales_code=endpoint.sales_code or "TRUE",
+                    target_harness_pns=configuration.target_harness_pns,
+                    can_mode=True,
+                )
+            )
+        
+        # Add trunk/bridge connection for the last endpoint
+        last_endpoint = splice_endpoints[-1]
+        
+        if is_last_splice:
+            # Last splice: connect to anchor device
+            rows.append(
+                _connection_row(
+                    configuration=configuration.configuration_id,
+                    circuit_name=configuration.circuit_name,
+                    generated_circuit=circuit_allocator.next_name(configuration.circuit_name),
+                    connection_type="Splice Trunk",
+                    splice_name=splice_name,
+                    from_cnum=splice_name,
+                    from_pin="",
+                    to_cnum=last_endpoint.cnum,
+                    to_pin=last_endpoint.pin,
+                    sales_code=configuration.generated_sales_code,
+                    target_harness_pns=configuration.target_harness_pns,
+                    can_mode=True,
+                )
+            )
+        else:
+            # Intermediate splice: connect to next splice
+            next_splice_name = splice_chain[idx + 1][0]
+            rows.append(
+                _connection_row(
+                    configuration=configuration.configuration_id,
+                    circuit_name=configuration.circuit_name,
+                    generated_circuit=circuit_allocator.next_name(configuration.circuit_name),
+                    connection_type="Splice-to-Splice",
+                    splice_name=splice_name,
+                    from_cnum=splice_name,
+                    from_pin="",
+                    to_cnum=next_splice_name,
+                    to_pin="",
+                    sales_code=configuration.generated_sales_code,
+                    target_harness_pns=configuration.target_harness_pns,
+                    can_mode=True,
+                )
+            )
+    
+    return rows
+
+
+def validate_can_splices(connection_rows: list[dict[str, str]]) -> tuple[bool, str]:
+    """
+    Validate that all CAN splices have max 3 ends.
+    
+    Returns: (is_valid, validation_message)
+    """
+    splice_ends: dict[str, int] = {}
+    
+    for row in connection_rows:
+        if row.get("Connection Type") in ["Splice Leg", "Splice Trunk", "Splice-to-Splice"]:
+            splice_name = row.get("Splice Name", "")
+            to_cnum = row.get("To CNUM", "")
+            
+            if splice_name and to_cnum == splice_name:
+                # This is a leg going TO the splice
+                splice_ends[splice_name] = splice_ends.get(splice_name, 0) + 1
+            elif splice_name and row.get("From CNUM") == splice_name:
+                # This is a connection FROM the splice
+                splice_ends[splice_name] = splice_ends.get(splice_name, 0) + 1
+    
+    violations = [s for s, count in splice_ends.items() if count > 3]
+    if violations:
+        return False, f"CAN splice validation failed: Splices {violations} exceed 3 ends"
+    
+    return True, "CAN validation passed: No splice exceeds 3 ends"
 
 
 def generate_d454_connections(d454_configs: list[Configuration]) -> list[dict[str, str]]:
@@ -1302,6 +1509,7 @@ def _run_analysis_core(
     harness_code_map: dict[str, set[str]],
     harness_code_map_df: pd.DataFrame,
     option_df: pd.DataFrame,
+    can_mode: bool = False,
 ) -> dict[str, Any]:
 
     device_eval_df, presence_matrix = build_harness_presence_matrix(harness_code_map, option_df)
@@ -1348,7 +1556,10 @@ def _run_analysis_core(
                 connection_rows.extend(generate_direct_connections(cfg, circuit_allocator))
             elif len(cfg.endpoints) >= 3:
                 cfg.topology_type = "Splice"
-                connection_rows.extend(generate_splices(cfg, splice_allocators, circuit_allocator))
+                if can_mode:
+                    connection_rows.extend(generate_can_splice_connections(cfg, splice_allocators, circuit_allocator))
+                else:
+                    connection_rows.extend(generate_splices(cfg, splice_allocators, circuit_allocator))
 
         configurations.extend(generic_configs)
 
@@ -1370,9 +1581,18 @@ def _run_analysis_core(
                 connection_rows.extend(generate_direct_connections(cfg, circuit_allocator))
             elif len(cfg.endpoints) >= 3:
                 cfg.topology_type = "Splice"
-                connection_rows.extend(generate_splices(cfg, splice_allocators, circuit_allocator))
+                if can_mode:
+                    connection_rows.extend(generate_can_splice_connections(cfg, splice_allocators, circuit_allocator))
+                else:
+                    connection_rows.extend(generate_splices(cfg, splice_allocators, circuit_allocator))
 
     generated_connections_df = pd.DataFrame(connection_rows)
+
+    # Validate CAN mode if enabled
+    can_validation_passed = True
+    can_validation_message = "CAN validation not applicable (CAN mode disabled)"
+    if can_mode:
+        can_validation_passed, can_validation_message = validate_can_splices(connection_rows)
 
     # Set topology types for D454 configs
     for cfg in configurations:
@@ -1438,20 +1658,24 @@ def _run_analysis_core(
         "harness_print_matrix_df": harness_print_matrix_df,
         "validation_report_df": validation_report_df,
         "output_excel_bytes": excel_bytes,
+        "can_mode": can_mode,
+        "can_validation_passed": can_validation_passed,
+        "can_validation_message": can_validation_message,
     }
 
 
-def run_analysis(input_excel_path: str | Path) -> dict[str, Any]:
+def run_analysis(input_excel_path: str | Path, can_mode: bool = False) -> dict[str, Any]:
     harness_code_map, harness_code_map_df = load_complexity_matrix(input_excel_path)
     option_df = load_option_per_circuit(input_excel_path)
-    return _run_analysis_core(input_excel_path, harness_code_map, harness_code_map_df, option_df)
+    return _run_analysis_core(input_excel_path, harness_code_map, harness_code_map_df, option_df, can_mode=can_mode)
 
 
 def run_analysis_from_option_df(
     input_excel_path: str | Path,
     option_df_override: pd.DataFrame,
+    can_mode: bool = False,
 ) -> dict[str, Any]:
     """Run full analysis using an in-memory OptionPerCircuit dataframe override."""
     harness_code_map, harness_code_map_df = load_complexity_matrix(input_excel_path)
     option_df = option_df_override.copy()
-    return _run_analysis_core(input_excel_path, harness_code_map, harness_code_map_df, option_df)
+    return _run_analysis_core(input_excel_path, harness_code_map, harness_code_map_df, option_df, can_mode=can_mode)

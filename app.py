@@ -214,12 +214,21 @@ if selected_tool == "Splice Generation":
         st.info("Upload Input.xlsx (or equivalent) to begin analysis.")
         st.stop()
 
+    # CAN Mode Configuration
+    st.markdown("---")
+    st.subheader("Splice Configuration Options")
+    can_mode = st.checkbox("Apply CAN splice rules: maximum 3 ends per splice", value=False)
+    if can_mode:
+        st.info("CAN mode enabled: Each splice will be limited to a maximum of 3 endpoints. Additional splices and splice-to-splice connections will be created as needed for configurations with more than 3 endpoints.")
+    
+    st.session_state["can_mode"] = can_mode
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as temp_file:
         temp_file.write(uploaded_file.getbuffer())
         temp_path = temp_file.name
 
     try:
-        result = run_analysis(temp_path)
+        result = run_analysis(temp_path, can_mode=can_mode)
     except Exception as exc:
         st.error(f"Analysis failed: {exc}")
         st.stop()
@@ -245,6 +254,14 @@ if selected_tool == "Splice Generation":
 
     st.subheader("Generated Configurations")
     st.dataframe(result["configurations_df"], use_container_width=True)
+
+    # Display CAN validation results if CAN mode is enabled
+    if result.get("can_mode", False):
+        st.markdown("---")
+        if result.get("can_validation_passed", True):
+            st.success(f"✓ {result.get('can_validation_message', 'CAN validation passed')}")
+        else:
+            st.error(f"✗ {result.get('can_validation_message', 'CAN validation failed')}")
 
     st.subheader("Generated Connections")
     conns_df = result["generated_connections_df"]
@@ -399,7 +416,8 @@ if selected_tool == "Splice Generation":
                 else:
                     updated_option_df = result["option_df"].copy()
                     updated_option_df.loc[selected_row_idx, "Sales Code"] = generated_expr
-                    refreshed = run_analysis_from_option_df(temp_path, updated_option_df)
+                    can_mode_for_refresh = st.session_state.get("can_mode", False)
+                    refreshed = run_analysis_from_option_df(temp_path, updated_option_df, can_mode=can_mode_for_refresh)
                     st.session_state["analysis_result"] = refreshed
                     st.success("Sales code applied. Configurations and validation refreshed.")
                     st.rerun()
