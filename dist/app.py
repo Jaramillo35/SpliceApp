@@ -244,10 +244,12 @@ if selected_tool == "Splice Generation":
         st.session_state["analysis_result"] = result
     else:
         prev_name = st.session_state.get("uploaded_file_name")
-        if prev_name != uploaded_file.name:
+        prev_can_mode = st.session_state.get("analysis_can_mode")
+        if prev_name != uploaded_file.name or prev_can_mode != can_mode:
             st.session_state["analysis_result"] = result
 
     st.session_state["uploaded_file_name"] = uploaded_file.name
+    st.session_state["analysis_can_mode"] = can_mode
     result = st.session_state["analysis_result"]
 
     st.subheader("Input Previews")
