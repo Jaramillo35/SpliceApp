@@ -30,7 +30,7 @@ if old_file is None or new_file is None:
     st.stop()
 
 st.subheader("PreOrder Generation List")
-st.caption("Launch the bundled PreOrder Generation utility for the selected DTx reports.")
+st.caption("Generate the PreOrder workbook directly for the selected DTx reports.")
 
 if st.button("Generate PreOrder Generation List", type="secondary"):
     try:
@@ -40,19 +40,25 @@ if st.button("Generate PreOrder Generation List", type="secondary"):
         old_temp_path.write_bytes(old_file.getvalue())
         new_temp_path.write_bytes(new_file.getvalue())
 
-        with st.spinner("Launching PreOrder Generation utility..."):
+        with st.spinner("Generating PreOrder workbook..."):
             preorder_result = launch_preorder_generation_tool(
                 old_file_path=old_temp_path,
                 new_file_path=new_temp_path,
             )
         st.session_state["preorder_generation_result"] = preorder_result
-        st.success("PreOrder Generation utility launched.")
+        st.success("PreOrder workbook generated.")
     except Exception as exc:
-        st.error(f"Unable to launch PreOrder Generation utility: {exc}")
+        st.error(f"Unable to generate the PreOrder workbook: {exc}")
 
 preorder_result = st.session_state.get("preorder_generation_result")
 if preorder_result is not None:
-    st.info(f"Launched command: {' '.join(preorder_result['command'])}")
+    st.dataframe(preorder_result["summary_df"], use_container_width=True)
+    st.download_button(
+        label="Download PreOrder Workbook",
+        data=preorder_result["output_excel_bytes"],
+        file_name=preorder_result["output_file_name"],
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 if st.button("Generate Compare Report", type="primary"):
     try:

@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-import subprocess
 import sys
 from typing import Iterable
 
@@ -145,34 +144,295 @@ def load_dtx_report(file_bytes: bytes, file_name: str) -> tuple[pd.DataFrame, Wo
     return data_frame, layout
 
 
-def build_preorder_generation_command(
-    executable_path: Path | str = PREORDER_GENERATION_EXE_PATH,
-    old_file_path: Path | str | None = None,
-    new_file_path: Path | str | None = None,
-) -> list[str]:
-    exe_path = Path(executable_path)
-    if not exe_path.exists():
-        raise FileNotFoundError(f"PreOrder generation executable was not found: {exe_path}")
+def _collapse_to_unique_connector_values(values: pd.Series) -> str:
+    unique_values: list[str] = []
+    seen: set[str] = set()
 
-    command = [str(exe_path)]
-    if old_file_path is not None:
-        command.append(str(old_file_path))
-    if new_file_path is not None:
-        command.append(str(new_file_path))
-    return command
+    for value in values.tolist():
+        normalized = normalize_value(value)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique_values.append(normalized)
+
+    return " | ".join(unique_values)
+
+
+def _build_connector_grouped_frame(data_frame: pd.DataFrame) -> pd.DataFrame:
+    connector_columns = [
+        "CNUM",
+        "Suffix",
+        "Connector PN",
+        "Harness Family",
+        "Device Control Number",
+        "Device Name",
+        "Number of Cavities",
+    ]
+    grouped_frame = data_frame[connector_columns].copy()
+    grouped_frame = grouped_frame.map(normalize_cell)
+
+    aggregation = {column: _collapse_to_unique_connector_values for column in connector_columns if column not in {"CNUM", "Suffix"}}
+    grouped_frame = (
+        grouped_frame.groupby(["CNUM", "Suffix"], dropna=False, as_index=False)
+        .agg(aggregation)
+        .sort_values(["CNUM", "Suffix"])
+        .reset_index(drop=True)
+    )
+    return grouped_frame
+
+
+def generate_preorder_generation_workbook(
+    old_file_bytes: bytes,
+    new_file_bytes: bytes,
+    old_file_name: str,
+    new_file_name: str,
+) -> dict[str, object]:
+    old_df, _ = load_dtx_report(old_file_bytes, old_file_name)
+    new_df, _ = load_dtx_report(new_file_bytes, new_file_name)
+
+    old_grouped = _build_connector_grouped_frame(old_df)
+    new_grouped = _build_connector_grouped_frame(new_df)
+
+    deleted_keys = (
+        new_grouped[["CNUM", "Suffix"]]
+        .merge(old_grouped[["CNUM", "Suffix"]], on=["CNUM", "Suffix"], how="left", indicator=True)
+        .query("_merge == 'left_only'")
+    )
+    deleted_df = (
+        deleted_keys[["CNUM", "Suffix"]]
+        .merge(old_grouped, on=["CNUM", "Suffix"], how="left")
+        .rename(
+            columns={
+                "Connector PN": "Connector PN_old",
+                "Harness Family": "Harness Family_old",
+                "Device Control Number": "Device Control Number_old",
+                "Device Name": "Device Name_old",
+                "Number of Cavities": "Number of Cavities_old",
+            }
+        )
+    )
+
+    added_keys = (
+        old_grouped[["CNUM", "Suffix"]]
+        .merge(new_grouped[["CNUM", "Suffix"]], on=["CNUM", "Suffix"], how="left", indicator=True)
+        .query("_merge == 'left_only'")
+    )
+    added_df = (
+        added_keys[["CNUM", "Suffix"]]
+        .merge(new_grouped, on=["CNUM", "Suffix"], how="left")
+        .rename(
+            columns={
+                "Connector PN": "Connector PN_new",
+                "Harness Family": "Harness Family_new",
+                "Device Control Number": "Device Control Number_new",
+                "Device Name": "Device Name_new",
+                "Number of Cavities": "Number of Cavities_new",
+            }
+        )
+    )
+
+    merged = old_grouped.merge(
+        new_grouped,
+        on=["CNUM", "Suffix"],
+        how="inner",
+        suffixes=("_old", "_new"),
+    )
+    connector_pn_mask = (
+        merged["Connector PN_old"].fillna("").astype(str).str.strip()
+        != merged["Connector PN_new"].fillna("").astype(str).str.strip()
+    )
+    changed_connector_pn_df = merged.loc[connector_pn_mask, [
+        "CNUM",
+        "Suffix",
+        "Device Control Number_old",
+        "Device Control Number_new",
+        "Device Name_old",
+        "Device Name_new",
+        "Number of Cavities_old",
+        "Number of Cavities_new",
+        "Harness Family_old",
+        "Harness Family_new",
+        "Connector PN_old",
+        "Connector PN_new",
+    ]].copy()
+    changed_connector_pn_df.insert(0, "Change Type", "Connector PN Change")
+
+    del_view = deleted_df[[
+        "CNUM",
+        "Suffix",
+        "Connector PN_old",
+        "Harness Family_old",
+        "Device Control Number_old",
+        "Device Name_old",
+        "Number of Cavities_old",
+    ]].copy()
+    add_view = added_df[[
+        "CNUM",
+        "Suffix",
+        "Connector PN_new",
+        "Harness Family_new",
+        "Device Control Number_new",
+        "Device Name_new",
+        "Number of Cavities_new",
+    ]].copy()
+
+    candidates = del_view.merge(add_view, on="CNUM", how="inner", suffixes=("_del", "_add"))
+    suffix_mask = (
+        candidates["Connector PN_old"].fillna("").astype(str).str.strip()
+        == candidates["Connector PN_new"].fillna("").astype(str).str.strip()
+    ) & (
+        candidates["Harness Family_old"].fillna("").astype(str).str.strip()
+        == candidates["Harness Family_new"].fillna("").astype(str).str.strip()
+    ) & (
+        candidates["Suffix_del"].fillna("").astype(str).str.strip()
+        != candidates["Suffix_add"].fillna("").astype(str).str.strip()
+    )
+    suffix_pairs = candidates.loc[suffix_mask].copy()
+
+    if not suffix_pairs.empty:
+        suffix_pairs.insert(0, "Change Type", "Suffix Change")
+        suffix_pairs["Connector PN Change"] = "Connector PN Change"
+        suffix_pairs["CNUM_Device Name-Suffix (Device Control Number)"] = (
+            suffix_pairs["CNUM"].astype(str) + "_" + suffix_pairs["Device Name_old"].astype(str) + "-" + suffix_pairs["Suffix_del"].astype(str) + " (" + suffix_pairs["Device Control Number_old"].astype(str) + ")"
+        )
+        suffix_pairs["CNUM_Device Name-Suffix (Device Control Number).1"] = (
+            suffix_pairs["CNUM"].astype(str) + "_" + suffix_pairs["Device Name_new"].astype(str) + "-" + suffix_pairs["Suffix_add"].astype(str) + " (" + suffix_pairs["Device Control Number_new"].astype(str) + ")"
+        )
+        suffix_pairs["CNUM"] = suffix_pairs["CNUM"].astype(str)
+        suffix_pairs["Number of Cavities"] = suffix_pairs["Number of Cavities_old"]
+        suffix_pairs["Connector PN"] = suffix_pairs["Connector PN_old"]
+        suffix_pairs["Harness Family"] = suffix_pairs["Harness Family_old"]
+        suffix_pairs["CNUM.1"] = suffix_pairs["CNUM"]
+        suffix_pairs["Number of Cavities.1"] = suffix_pairs["Number of Cavities_new"]
+        suffix_pairs["Connector PN.1"] = suffix_pairs["Connector PN_new"]
+        suffix_changes_df = suffix_pairs[[
+            "CNUM_Device Name-Suffix (Device Control Number)",
+            "CNUM",
+            "Number of Cavities",
+            "Connector PN",
+            "Connector PN Change",
+            "Harness Family",
+            "Change Type",
+            "CNUM_Device Name-Suffix (Device Control Number).1",
+            "CNUM.1",
+            "Number of Cavities.1",
+            "Connector PN.1",
+        ]].copy()
+    else:
+        suffix_changes_df = pd.DataFrame(columns=[
+            "CNUM_Device Name-Suffix (Device Control Number)",
+            "CNUM",
+            "Number of Cavities",
+            "Connector PN",
+            "Connector PN Change",
+            "Harness Family",
+            "Change Type",
+            "CNUM_Device Name-Suffix (Device Control Number).1",
+            "CNUM.1",
+            "Number of Cavities.1",
+            "Connector PN.1",
+        ])
+
+    deleted_df_pruned = deleted_df.copy()
+    added_df_pruned = added_df.copy()
+    if not suffix_pairs.empty:
+        keys_to_drop = set(zip(suffix_pairs["CNUM"], suffix_pairs["Suffix_del"]))
+        deleted_df_pruned = deleted_df_pruned.loc[
+            ~deleted_df_pruned.apply(lambda row: (row["CNUM"], row["Suffix"]) in keys_to_drop, axis=1)
+        ].reset_index(drop=True)
+        keys_to_drop_add = set(zip(suffix_pairs["CNUM"], suffix_pairs["Suffix_add"]))
+        added_df_pruned = added_df_pruned.loc[
+            ~added_df_pruned.apply(lambda row: (row["CNUM"], row["Suffix"]) in keys_to_drop_add, axis=1)
+        ].reset_index(drop=True)
+
+    deleted_summary_df = deleted_df_pruned[[
+        "CNUM",
+        "Suffix",
+        "Device Control Number_old",
+        "Device Name_old",
+        "Connector PN_old",
+        "Harness Family_old",
+        "Number of Cavities_old",
+    ]].copy()
+    deleted_summary_df.insert(0, "Change Type", "Deleted")
+    deleted_summary_df = deleted_summary_df.rename(
+        columns={
+            "Device Control Number_old": "Device Control Number",
+            "Device Name_old": "Device Name",
+            "Connector PN_old": "Connector PN",
+            "Harness Family_old": "Harness Family",
+            "Number of Cavities_old": "Number of Cavities",
+        }
+    )
+
+    added_summary_df = added_df_pruned[[
+        "CNUM",
+        "Suffix",
+        "Device Control Number_new",
+        "Device Name_new",
+        "Connector PN_new",
+        "Harness Family_new",
+        "Number of Cavities_new",
+    ]].copy()
+    added_summary_df.insert(0, "Change Type", "Added")
+    added_summary_df = added_summary_df.rename(
+        columns={
+            "Device Control Number_new": "Device Control Number",
+            "Device Name_new": "Device Name",
+            "Connector PN_new": "Connector PN",
+            "Harness Family_new": "Harness Family",
+            "Number of Cavities_new": "Number of Cavities",
+        }
+    )
+
+    connector_changes_df = pd.concat([deleted_summary_df, added_summary_df, changed_connector_pn_df], ignore_index=True)
+    connector_changes_df = connector_changes_df.rename(columns={"Connector PN_old": "Connector PN", "Harness Family_old": "Harness Family", "Connector PN_new": "Connector PN"})
+
+    summary_df = pd.concat([deleted_summary_df, added_summary_df], ignore_index=True)
+    summary_df = summary_df[["Change Type", "CNUM", "Suffix", "Device Control Number", "Device Name", "Connector PN", "Harness Family", "Number of Cavities"]]
+
+    summary_df = pd.concat([summary_df, changed_connector_pn_df[["Change Type", "CNUM", "Suffix", "Device Control Number_old", "Device Name_old", "Connector PN_old", "Harness Family_old", "Number of Cavities_old"]].rename(columns={
+        "Device Control Number_old": "Device Control Number",
+        "Device Name_old": "Device Name",
+        "Connector PN_old": "Connector PN",
+        "Harness Family_old": "Harness Family",
+        "Number of Cavities_old": "Number of Cavities",
+    })], ignore_index=True)
+
+    output_buffer = BytesIO()
+    with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+        connector_changes_df.to_excel(writer, sheet_name="Connector Changes", index=False)
+        if not suffix_changes_df.empty:
+            suffix_changes_df.to_excel(writer, sheet_name="Suffix Changes", index=False)
+
+    output_buffer.seek(0)
+    return {
+        "output_excel_bytes": output_buffer.getvalue(),
+        "output_file_name": "PreOrder_Generation_List.xlsx",
+        "summary_df": summary_df,
+        "connector_changes_df": connector_changes_df,
+        "suffix_changes_df": suffix_changes_df,
+        "deleted_df": deleted_df_pruned,
+        "added_df": added_df_pruned,
+        "changed_connector_pn_df": changed_connector_pn_df,
+    }
 
 
 def launch_preorder_generation_tool(
     old_file_path: Path | str | None = None,
     new_file_path: Path | str | None = None,
 ) -> dict[str, object]:
-    command = build_preorder_generation_command(
-        executable_path=PREORDER_GENERATION_EXE_PATH,
-        old_file_path=old_file_path,
-        new_file_path=new_file_path,
+    if old_file_path is None or new_file_path is None:
+        raise ValueError("Both old and new DTx files are required to generate the PreOrder workbook.")
+
+    old_path = Path(old_file_path)
+    new_path = Path(new_file_path)
+    return generate_preorder_generation_workbook(
+        old_file_bytes=old_path.read_bytes(),
+        new_file_bytes=new_path.read_bytes(),
+        old_file_name=old_path.name,
+        new_file_name=new_path.name,
     )
-    subprocess.Popen(command, cwd=str(PREORDER_GENERATION_EXE_PATH.parent))
-    return {"launched": True, "command": command, "executable_path": str(PREORDER_GENERATION_EXE_PATH)}
 
 
 def build_modified_views(
