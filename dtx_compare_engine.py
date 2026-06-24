@@ -384,26 +384,154 @@ def generate_preorder_generation_workbook(
         }
     )
 
-    connector_changes_df = pd.concat([deleted_summary_df, added_summary_df, changed_connector_pn_df], ignore_index=True)
-    connector_changes_df = connector_changes_df.rename(columns={"Connector PN_old": "Connector PN", "Harness Family_old": "Harness Family", "Connector PN_new": "Connector PN"})
+    old_program_name = Path(old_file_name).stem or old_file_name
+    new_program_name = Path(new_file_name).stem or new_file_name
+    old_report_date = datetime.now().strftime("%b-%d-%Y %I:%M %p")
+    new_report_date = datetime.now().strftime("%b-%d-%Y %I:%M %p")
 
-    summary_df = pd.concat([deleted_summary_df, added_summary_df], ignore_index=True)
-    summary_df = summary_df[["Change Type", "CNUM", "Suffix", "Device Control Number", "Device Name", "Connector PN", "Harness Family", "Number of Cavities"]]
+    connector_changes_columns = [
+        "CNUM_Device Name-Suffix (Device Control Number)",
+        "CNUM",
+        "Number of Cavities",
+        "Connector PN",
+        "Connector PN Change",
+        "Harness Family",
+        "Change Type",
+        "CNUM_Device Name-Suffix (Device Control Number)",
+        "CNUM",
+        "Number of Cavities",
+        "Connector PN",
+    ]
+    summary_columns = ["CNUM", "Connector PN Change", "Harness Family", "Change Type"]
 
-    summary_df = pd.concat([summary_df, changed_connector_pn_df[["Change Type", "CNUM", "Suffix", "Device Control Number_old", "Device Name_old", "Connector PN_old", "Harness Family_old", "Number of Cavities_old"]].rename(columns={
-        "Device Control Number_old": "Device Control Number",
-        "Device Name_old": "Device Name",
-        "Connector PN_old": "Connector PN",
-        "Harness Family_old": "Harness Family",
-        "Number of Cavities_old": "Number of Cavities",
-    })], ignore_index=True)
+    connector_changes_rows: list[list[object]] = []
+    summary_rows: list[list[object]] = []
+    for _, row in changed_connector_pn_df.iterrows():
+        old_identifier = (
+            f"{row['CNUM']}_{row['Device Name_old']}-{row['Suffix']} ({row['Device Control Number_old']})"
+        )
+        new_identifier = (
+            f"{row['CNUM']}_{row['Device Name_new']}-{row['Suffix']} ({row['Device Control Number_new']})"
+        )
+        connector_changes_rows.append(
+            [
+                old_identifier,
+                row["CNUM"],
+                row["Number of Cavities_old"],
+                row["Connector PN_old"],
+                f"{row['Connector PN_old']} >> {row['Connector PN_new']}",
+                row["Harness Family_old"],
+                "Connector PN Change",
+                new_identifier,
+                row["CNUM"],
+                row["Number of Cavities_new"],
+                row["Connector PN_new"],
+            ]
+        )
+        summary_rows.append(
+            [
+                row["CNUM"],
+                f"{row['Connector PN_old']} >> {row['Connector PN_new']}",
+                row["Harness Family_old"],
+                "Connector PN Change",
+            ]
+        )
+
+    connector_changes_df = pd.DataFrame(connector_changes_rows, columns=connector_changes_columns)
+    summary_df = pd.DataFrame(summary_rows, columns=summary_columns)
+
+    connector_metadata_rows = [
+        [
+            "Detailed DTx Circuits Report",
+            None,
+            None,
+            None,
+            f"Vehicle Program - {old_program_name} >> Vehicle Program - {new_program_name}",
+            None,
+            None,
+            "Detailed DTx Circuits Report",
+            None,
+            None,
+            None,
+        ],
+        [
+            f"Vehicle Program - {old_program_name}",
+            None,
+            None,
+            None,
+            f"Build Phase - {old_program_name} >> Build Phase - {new_program_name}",
+            None,
+            None,
+            f"Vehicle Program - {new_program_name}",
+            None,
+            None,
+            None,
+        ],
+        [
+            f"Build Phase - {old_program_name}",
+            None,
+            None,
+            None,
+            f"Report Date: {old_report_date} >> Report Date: {new_report_date}",
+            None,
+            None,
+            f"Build Phase - {new_program_name}",
+            None,
+            None,
+            None,
+        ],
+        [
+            f"Report Date: {old_report_date}",
+            None,
+            None,
+            None,
+            "Old >> New",
+            None,
+            None,
+            f"Report Date: {new_report_date}",
+            None,
+            None,
+            None,
+        ],
+        [None, None, None, None, None, None, None, None, None, None, None],
+    ]
+    summary_metadata_rows = [
+        [
+            f"Vehicle Program - {old_program_name} >> Vehicle Program - {new_program_name}",
+            None,
+            None,
+            None,
+        ],
+        [
+            f"Build Phase - {old_program_name} >> Build Phase - {new_program_name}",
+            None,
+            None,
+            None,
+        ],
+        [
+            f"Report Date: {old_report_date} >> Report Date: {new_report_date}",
+            None,
+            None,
+            None,
+        ],
+        ["Old >> New", None, None, None],
+        [None, None, None, None],
+    ]
 
     output_buffer = BytesIO()
     with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
-        summary_df.to_excel(writer, sheet_name="Summary", index=False)
-        connector_changes_df.to_excel(writer, sheet_name="Connector Changes", index=False)
-        if not suffix_changes_df.empty:
-            suffix_changes_df.to_excel(writer, sheet_name="Suffix Changes", index=False)
+        pd.DataFrame(connector_metadata_rows + [connector_changes_columns] + connector_changes_df.values.tolist()).to_excel(
+            writer,
+            sheet_name="Connector Changes",
+            header=False,
+            index=False,
+        )
+        pd.DataFrame(summary_metadata_rows + [summary_columns] + summary_df.values.tolist()).to_excel(
+            writer,
+            sheet_name="Summary",
+            header=False,
+            index=False,
+        )
 
     output_buffer.seek(0)
     return {

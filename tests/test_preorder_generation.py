@@ -124,6 +124,80 @@ def test_generate_preorder_generation_workbook_creates_excel_bytes(tmp_path: Pat
     assert any(result["summary_df"]["Change Type"] == "Connector PN Change")
 
 
+def test_generate_preorder_generation_workbook_matches_sample_layout(tmp_path: Path) -> None:
+    old_path = tmp_path / "old.xlsx"
+    new_path = tmp_path / "new.xlsx"
+    _write_dtx_excel(
+        old_path,
+        [
+            {
+                "Device Control Number": "DCN1",
+                "Device Name": "Device A",
+                "Suffix": "A",
+                "CNUM": "C1",
+                "Number of Cavities": "2",
+                "Connector PN": "PN-OLD",
+                "Harness Family": "HF-1",
+                "Pin Number": "1",
+                "Circuit Name": "CIRCUIT1",
+                "Circuit Suffix": "S1",
+                "Circuit Function": "FUNC",
+                "Color": "RED",
+                "Terminal": "T1",
+                "Connector FCA part number": "FCA1",
+                "Wire Gauge": "18",
+                "Wire Type": "W1",
+                "Sales Code": "S1",
+            }
+        ],
+    )
+    _write_dtx_excel(
+        new_path,
+        [
+            {
+                "Device Control Number": "DCN1",
+                "Device Name": "Device A",
+                "Suffix": "A",
+                "CNUM": "C1",
+                "Number of Cavities": "2",
+                "Connector PN": "PN-NEW",
+                "Harness Family": "HF-1",
+                "Pin Number": "1",
+                "Circuit Name": "CIRCUIT1",
+                "Circuit Suffix": "S1",
+                "Circuit Function": "FUNC",
+                "Color": "RED",
+                "Terminal": "T1",
+                "Connector FCA part number": "FCA1",
+                "Wire Gauge": "18",
+                "Wire Type": "W1",
+                "Sales Code": "S1",
+            }
+        ],
+    )
+
+    result = generate_preorder_generation_workbook(
+        old_file_bytes=old_path.read_bytes(),
+        new_file_bytes=new_path.read_bytes(),
+        old_file_name=old_path.name,
+        new_file_name=new_path.name,
+    )
+
+    workbook = pd.ExcelFile(BytesIO(result["output_excel_bytes"]))
+    assert workbook.sheet_names == ["Connector Changes", "Summary"]
+
+    connector_changes = pd.read_excel(BytesIO(result["output_excel_bytes"]), sheet_name="Connector Changes", header=None)
+    assert connector_changes.iloc[5, 0] == "CNUM_Device Name-Suffix (Device Control Number)"
+    assert connector_changes.iloc[5, 4] == "Connector PN Change"
+    assert connector_changes.iloc[5, 6] == "Change Type"
+
+    summary = pd.read_excel(BytesIO(result["output_excel_bytes"]), sheet_name="Summary", header=None)
+    assert summary.iloc[5, 0] == "CNUM"
+    assert summary.iloc[5, 1] == "Connector PN Change"
+    assert summary.iloc[5, 2] == "Harness Family"
+    assert summary.iloc[5, 3] == "Change Type"
+
+
 def test_generate_preorder_generation_workbook_requires_valid_input_files(tmp_path: Path) -> None:
     old_path = tmp_path / "old.xlsx"
     new_path = tmp_path / "new.xlsx"
