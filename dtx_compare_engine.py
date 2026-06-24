@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+import subprocess
+import sys
 from typing import Iterable
 
 import pandas as pd
@@ -40,6 +42,7 @@ STATUS_COLORS = {
     "Modified": "#FFEB9C",
     "Unchanged": "#D9D9D9",
 }
+PREORDER_GENERATION_EXE_PATH = Path("/Users/martinjaramillo/Downloads/Development/DTx/PreOrderListGen.exe")
 
 
 @dataclass(frozen=True)
@@ -140,6 +143,36 @@ def load_dtx_report(file_bytes: bytes, file_name: str) -> tuple[pd.DataFrame, Wo
     )
 
     return data_frame, layout
+
+
+def build_preorder_generation_command(
+    executable_path: Path | str = PREORDER_GENERATION_EXE_PATH,
+    old_file_path: Path | str | None = None,
+    new_file_path: Path | str | None = None,
+) -> list[str]:
+    exe_path = Path(executable_path)
+    if not exe_path.exists():
+        raise FileNotFoundError(f"PreOrder generation executable was not found: {exe_path}")
+
+    command = [str(exe_path)]
+    if old_file_path is not None:
+        command.append(str(old_file_path))
+    if new_file_path is not None:
+        command.append(str(new_file_path))
+    return command
+
+
+def launch_preorder_generation_tool(
+    old_file_path: Path | str | None = None,
+    new_file_path: Path | str | None = None,
+) -> dict[str, object]:
+    command = build_preorder_generation_command(
+        executable_path=PREORDER_GENERATION_EXE_PATH,
+        old_file_path=old_file_path,
+        new_file_path=new_file_path,
+    )
+    subprocess.Popen(command, cwd=str(PREORDER_GENERATION_EXE_PATH.parent))
+    return {"launched": True, "command": command, "executable_path": str(PREORDER_GENERATION_EXE_PATH)}
 
 
 def build_modified_views(

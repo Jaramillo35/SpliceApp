@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import tempfile
 
 import streamlit as st
 
@@ -10,7 +11,7 @@ APP_DIR = CURRENT_DIR.parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from dtx_compare_engine import generate_dtx_change_report
+from dtx_compare_engine import generate_dtx_change_report, launch_preorder_generation_tool
 
 
 st.set_page_config(page_title="DTx Compare Report", layout="wide")
@@ -27,6 +28,31 @@ with col_new:
 if old_file is None or new_file is None:
     st.info("Upload both OLD and NEW DTx reports to continue.")
     st.stop()
+
+st.subheader("PreOrder Generation List")
+st.caption("Launch the bundled PreOrder Generation utility for the selected DTx reports.")
+
+if st.button("Generate PreOrder Generation List", type="secondary"):
+    try:
+        temp_dir = Path(tempfile.mkdtemp(prefix="dtx_preorder_", dir=tempfile.gettempdir()))
+        old_temp_path = temp_dir / old_file.name
+        new_temp_path = temp_dir / new_file.name
+        old_temp_path.write_bytes(old_file.getvalue())
+        new_temp_path.write_bytes(new_file.getvalue())
+
+        with st.spinner("Launching PreOrder Generation utility..."):
+            preorder_result = launch_preorder_generation_tool(
+                old_file_path=old_temp_path,
+                new_file_path=new_temp_path,
+            )
+        st.session_state["preorder_generation_result"] = preorder_result
+        st.success("PreOrder Generation utility launched.")
+    except Exception as exc:
+        st.error(f"Unable to launch PreOrder Generation utility: {exc}")
+
+preorder_result = st.session_state.get("preorder_generation_result")
+if preorder_result is not None:
+    st.info(f"Launched command: {' '.join(preorder_result['command'])}")
 
 if st.button("Generate Compare Report", type="primary"):
     try:
