@@ -163,7 +163,8 @@ def render_feedback_widget(
     store = store or FeedbackStore()
     tickets = store.load_tickets()
 
-    with st.sidebar.expander("Issue / Feedback Ticket", expanded=False):
+    st.sidebar.markdown("### Report an issue or feedback")
+    with st.sidebar.expander("Open ticket form", expanded=True):
         st.caption("Submit a structured ticket from anywhere in the app.")
         st.caption("Tickets are stored in the repo-backed data file and can be downloaded as JSON or CSV.")
         st.text_input("Workflow", value=workflow, disabled=True, key=f"{key_prefix}_workflow")
