@@ -635,6 +635,68 @@ elif selected_tool == "Create SECR":
         except Exception as exc:
             st.error(f"SECR creation failed: {exc}")
 
+    st.markdown("---")
+    st.markdown(
+        """
+        <div class="tool-card">
+            <div class="tool-title">DTCR Matching Report</div>
+            <div class="tool-desc">
+                Generate a standalone DTCR-to-harness-family matching report using only the DTCR report and the DTx circuits report.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    dtcr_match_col1, dtcr_match_col2 = st.columns(2)
+    with dtcr_match_col1:
+        dtcr_match_file = st.file_uploader(
+            "DTCR Report (Excel)",
+            type=["xlsx", "xls", "xlsm"],
+            key="dtcr_match_file",
+        )
+    with dtcr_match_col2:
+        dtx_match_file = st.file_uploader(
+            "DTx Circuits Report (Excel)",
+            type=["xlsx", "xls", "xlsm"],
+            key="dtx_match_file",
+        )
+
+    if dtcr_match_file is not None and dtx_match_file is not None:
+        if st.button(
+            "Generate DTCR Matching Report",
+            type="secondary",
+            key="generate_dtcr_matching_report",
+        ):
+            try:
+                with st.spinner("Building DTCR matching report..."):
+                    dtcr_match_df = load_dtcr_report(dtcr_match_file.getvalue())
+                    dtx_match_df = load_dtx_circuits_report(dtx_match_file.getvalue())
+                    dtcr_mapping_df = match_dtcr_to_harness_family(dtcr_match_df, dtx_match_df)
+                    dtcr_map_bytes = export_dtcr_mapping_styled(dtcr_mapping_df)
+
+                st.session_state["dtcr_matching_report_bytes"] = dtcr_map_bytes
+                st.session_state["dtcr_matching_report_df"] = dtcr_mapping_df
+                st.session_state["dtcr_matching_report_name"] = "DTCR_Matching_Report.xlsx"
+                st.success("DTCR matching report generated.")
+            except Exception as exc:
+                st.error(f"DTCR matching report failed: {exc}")
+
+        dtcr_matching_report_bytes = st.session_state.get("dtcr_matching_report_bytes")
+        if dtcr_matching_report_bytes is not None:
+            st.download_button(
+                label="Download DTCR Matching Report",
+                data=dtcr_matching_report_bytes,
+                file_name=st.session_state.get("dtcr_matching_report_name", "DTCR_Matching_Report.xlsx"),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_dtcr_matching_report",
+                use_container_width=True,
+            )
+            st.dataframe(
+                st.session_state.get("dtcr_matching_report_df", pd.DataFrame()),
+                use_container_width=True,
+            )
+
     secr_result = st.session_state.get("secr_result_bytes")
     if secr_result is not None:
         meta = st.session_state.get("secr_result_meta", {})
@@ -650,71 +712,6 @@ elif selected_tool == "Create SECR":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="secr_dl_btn",
         )
-
-        # ──────────────────────────────────────────────────────────────────
-        # Standalone DTCR Matching Report
-        # ──────────────────────────────────────────────────────────────────
-        st.markdown("---")
-        st.markdown(
-            """
-            <div class="tool-card">
-                <div class="tool-title">DTCR Matching Report</div>
-                <div class="tool-desc">
-                    Generate a standalone DTCR-to-harness-family matching report using only the DTCR report and the DTx circuits report.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        dtcr_match_col1, dtcr_match_col2 = st.columns(2)
-        with dtcr_match_col1:
-            dtcr_match_file = st.file_uploader(
-                "DTCR Report (Excel)",
-                type=["xlsx", "xls", "xlsm"],
-                key="dtcr_match_file",
-            )
-        with dtcr_match_col2:
-            dtx_match_file = st.file_uploader(
-                "DTx Circuits Report (Excel)",
-                type=["xlsx", "xls", "xlsm"],
-                key="dtx_match_file",
-            )
-
-        if dtcr_match_file is not None and dtx_match_file is not None:
-            if st.button(
-                "Generate DTCR Matching Report",
-                type="secondary",
-                key="generate_dtcr_matching_report",
-            ):
-                try:
-                    with st.spinner("Building DTCR matching report..."):
-                        dtcr_match_df = load_dtcr_report(dtcr_match_file.getvalue())
-                        dtx_match_df = load_dtx_circuits_report(dtx_match_file.getvalue())
-                        dtcr_mapping_df = match_dtcr_to_harness_family(dtcr_match_df, dtx_match_df)
-                        dtcr_map_bytes = export_dtcr_mapping_styled(dtcr_mapping_df)
-
-                    st.session_state["dtcr_matching_report_bytes"] = dtcr_map_bytes
-                    st.session_state["dtcr_matching_report_df"] = dtcr_mapping_df
-                    st.session_state["dtcr_matching_report_name"] = "DTCR_Matching_Report.xlsx"
-                    st.success("DTCR matching report generated.")
-                except Exception as exc:
-                    st.error(f"DTCR matching report failed: {exc}")
-
-            dtcr_matching_report_bytes = st.session_state.get("dtcr_matching_report_bytes")
-            if dtcr_matching_report_bytes is not None:
-                st.download_button(
-                    label="Download DTCR Matching Report",
-                    data=dtcr_matching_report_bytes,
-                    file_name=st.session_state.get("dtcr_matching_report_name", "DTCR_Matching_Report.xlsx"),
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_dtcr_matching_report",
-                    use_container_width=True,
-                )
-                st.dataframe(
-                    st.session_state.get("dtcr_matching_report_df", pd.DataFrame()),
-                    use_container_width=True,
-                )
 
         # ──────────────────────────────────────────────────────────────────
         # Optional: SECR Reason for Change Enrichment
