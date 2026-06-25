@@ -114,7 +114,7 @@ mode = st.radio(
 )
 
 if mode == "Home":
-    row1 = st.columns(2, gap="large")
+    row1 = st.columns(3, gap="large")
 
     with row1[0]:
         st.markdown(
@@ -156,6 +156,25 @@ if mode == "Home":
         )
         if st.button("Open DTx Compare", key="go_dtx", use_container_width=True):
             st.session_state["selected_tool"] = "DTx Compare Report"
+            st.rerun()
+
+    with row1[2]:
+        st.markdown(
+            """
+            <div class="tool-card">
+                <div class="tool-title">DTCR Matching Report</div>
+                <div class="tool-desc">
+                    Match DTCR records against DTx circuits and harness family mappings to produce a styled matching report workbook.
+                </div>
+                <span class="tool-badge">DTCR Mapping</span>
+                <span class="tool-badge">Harness Family</span>
+                <span class="tool-badge">Styled Output</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("Open DTCR Matching", key="go_dtcr", use_container_width=True):
+            st.session_state["selected_tool"] = "DTCR Matching Report"
             st.rerun()
 
     row2 = st.columns(2, gap="large")
