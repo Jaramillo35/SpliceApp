@@ -1,9 +1,17 @@
 import os
 import re
 import pandas as pd
-import tkinter as tk
-from tkinter import Tk, filedialog, messagebox
-from tkinter import ttk
+
+try:
+    import tkinter as tk
+    from tkinter import Tk, filedialog, messagebox
+    from tkinter import ttk
+except Exception:
+    tk = None
+    Tk = None
+    filedialog = None
+    messagebox = None
+    ttk = None
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -12,6 +20,14 @@ except Exception:
     DND_FILES = None
     TkinterDnD = None
     HAS_TK_DND = False
+
+
+def _require_tkinter_runtime():
+    if tk is None or Tk is None or filedialog is None or messagebox is None or ttk is None:
+        raise RuntimeError(
+            "Tkinter GUI support is not available in this environment. "
+            "The Streamlit VBOM workflow does not need the GUI, but the desktop-only UI entry points do."
+        )
 
 # ========================
 # Configurable parameters
@@ -40,13 +56,16 @@ COMPLEXITY_ALLOW_ALPHANUMERIC = True   # regex [A-Z0-9]{3} then filters out 3-di
 # File pickers
 # =========
 def pick_file(title="Select VIN/spec file"):
+    _require_tkinter_runtime()
     root = Tk(); root.withdraw(); root.attributes('-topmost', True)
     filetypes = [("Excel files", "*.xlsx *.xls *.xlsm"), ("CSV files", "*.csv"), ("All files", "*.*")]
     path = filedialog.askopenfilename(title=title, filetypes=filetypes)
     root.destroy()
     return path
 
+
 def pick_multiple_files(title="Select one or more Harness Complexity files"):
+    _require_tkinter_runtime()
     root = Tk(); root.withdraw(); root.attributes('-topmost', True)
     filetypes = [("Excel files", "*.xlsx *.xls *.xlsm"), ("All files", "*.*")]
     paths = filedialog.askopenfilenames(title=title, filetypes=filetypes)
@@ -92,6 +111,7 @@ class RunSetupDialog:
     BRAND_TEXT = "#173552"
 
     def __init__(self):
+        _require_tkinter_runtime()
         self.result = None
         self.dnd_ready = False
         if HAS_TK_DND and TkinterDnD is not None:

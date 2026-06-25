@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import builtins
+import importlib.util
 from pathlib import Path
 
 import pandas as pd
 
+import vbom_streamlit_engine
 from vbom_streamlit_engine import run_vbom_workflow
 
 
@@ -14,6 +17,21 @@ class DummyUpload:
 
     def getvalue(self) -> bytes:
         return self._payload
+
+
+def test_load_vbom_module_succeeds_without_tkinter(monkeypatch):
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "tkinter" or name.startswith("tkinter."):
+            raise ImportError("simulated missing tkinter")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    module = vbom_streamlit_engine._load_vbom_module()
+
+    assert module is not None
+    assert hasattr(module, "build_vin_matrix")
 
 
 def test_run_vbom_workflow_creates_expected_outputs(tmp_path):
