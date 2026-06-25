@@ -113,9 +113,9 @@ mode = st.radio(
 )
 
 if mode == "Home":
-    left, mid, right, fourth = st.columns(4, gap="large")
+    row1 = st.columns(2, gap="large")
 
-    with left:
+    with row1[0]:
         st.markdown(
             """
             <div class="tool-card">
@@ -134,13 +134,17 @@ if mode == "Home":
             st.session_state["selected_tool"] = "Splice Generation"
             st.rerun()
 
-    with mid:
+    with row1[1]:
         st.markdown(
             """
             <div class="tool-card">
                 <div class="tool-title">DTx Compare Report</div>
                 <div class="tool-desc">
-                    Compare OLD vs NEW DTx reports, review added/removed/modified CNUM and circuits, generate the PreOrderGeneration workbook, and download a dashboard workbook.
+                    Compare OLD vs NEW DTx reports, review added/removed/modified CNUM and circuits, and generate the compare workbook.
+                </div>
+                <div style="margin: 0.6rem 0 0.25rem; font-weight: 700; color: #0b5ea8;">PreOrder Generation List</div>
+                <div class="tool-desc" style="margin-top: 0.15rem;">
+                    Run the PreOrder workbook directly from this workflow to create the generation list output.
                 </div>
                 <span class="tool-badge">OLD vs NEW</span>
                 <span class="tool-badge">Change Log</span>
@@ -153,7 +157,9 @@ if mode == "Home":
             st.session_state["selected_tool"] = "DTx Compare Report"
             st.rerun()
 
-    with right:
+    row2 = st.columns(2, gap="large")
+
+    with row2[0]:
         st.markdown(
             """
             <div class="tool-card">
@@ -172,7 +178,7 @@ if mode == "Home":
             st.session_state["selected_tool"] = "Create SECR"
             st.rerun()
 
-    with fourth:
+    with row2[1]:
         st.markdown(
             """
             <div class="tool-card">
