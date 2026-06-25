@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import inspect
+import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -38,6 +40,7 @@ from wiring_harness_processor import (
     simplify_expression_for_display,
     validate_generated_expression,
 )
+from vbom_streamlit_engine import run_vbom_workflow
 
 
 st.set_page_config(page_title="Wiring System Engineer Tools", layout="wide")
@@ -104,7 +107,7 @@ st.markdown(
 
 mode = st.radio(
     "Choose Tool",
-    ["Home", "Splice Generation", "DTx Compare Report", "Create SECR", "DTCR Matching Report"],
+    ["Home", "Splice Generation", "DTx Compare Report", "Create SECR", "DTCR Matching Report", "VBOM Risk Matrix"],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -173,51 +176,20 @@ if mode == "Home":
         st.markdown(
             """
             <div class="tool-card">
-                <div class="tool-title">DTCR Matching Report</div>
+                <div class="tool-title">VBOM Risk Matrix</div>
                 <div class="tool-desc">
-                    Match DTCR entries to harness families using only the DTCR report and the DTx circuits report, then download a standalone matching workbook.
+                    Upload your VBOM input files and generate the same workbook bundle used by the desktop VBOM workflow, including the master complexity workbook, VIN matrix, and harness selection output.
                 </div>
-                <span class="tool-badge">DTCR Match</span>
-                <span class="tool-badge">Harness Family</span>
-                <span class="tool-badge">Workbook</span>
+                <span class="tool-badge">DoAll / BuildSpec</span>
+                <span class="tool-badge">Harness Complexity</span>
+                <span class="tool-badge">Workbook Bundle</span>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        if st.button("Open DTCR Matching", key="go_dtcr_match", use_container_width=True):
-            st.session_state["selected_tool"] = "DTCR Matching Report"
+        if st.button("Open VBOM Risk Matrix", key="go_vbom", use_container_width=True):
+            st.session_state["selected_tool"] = "VBOM Risk Matrix"
             st.rerun()
-
-    st.markdown("---")
-    st.subheader("Windows App Downloads")
-
-    st.markdown(
-        """
-        <div class="tool-card">
-            <div class="tool-title">VBOM Risk Matrix (Windows)</div>
-            <div class="tool-desc">
-                Download the full Windows package with executable, install steps, and all runtime files.
-            </div>
-            <span class="tool-badge">Windows Package</span>
-            <span class="tool-badge">Install Guide Included</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    project_root = Path(__file__).resolve().parent
-    vbom_pkg = project_root / "assets" / "downloads" / "VBOM_Generator.exe"
-    if vbom_pkg.exists():
-        st.download_button(
-            label="Download VBOM Windows Executable",
-            data=vbom_pkg.read_bytes(),
-            file_name="VBOM_Generator.exe",
-            mime="application/octet-stream",
-            key="dl_vbom_windows_pkg",
-            use_container_width=True,
-        )
-    else:
-        st.warning("VBOM package not found. Expected: assets/downloads/VBOM_Generator.exe")
 
 if mode != "Home":
     st.session_state["selected_tool"] = mode
@@ -622,6 +594,76 @@ elif selected_tool == "DTCR Matching Report":
                 st.session_state.get("dtcr_matching_report_df", pd.DataFrame()),
                 use_container_width=True,
             )
+
+elif selected_tool == "VBOM Risk Matrix":
+    st.title("VBOM Risk Matrix")
+    st.caption(
+        "Upload a DoAll or BuildSpec file and one or more harness complexity files to generate the VBOM workbook bundle used by the desktop workflow."
+    )
+
+    with st.form("vbom_streamlit_form"):
+        my = st.text_input("Model Year (MY)", value="27")
+        program = st.text_input("Program", value="RU")
+        source_type = st.radio("Input source", ["DoAll", "BuildSpec"], horizontal=True)
+        input_upload = st.file_uploader(
+            "DoAll / BuildSpec file",
+            type=["xlsx", "xls", "xlsm", "csv"],
+            key="vbom_input_file",
+        )
+        complexity_uploads = st.file_uploader(
+            "Harness Complexity files",
+            type=["xlsx", "xls", "xlsm"],
+            accept_multiple_files=True,
+            key="vbom_complexity_files",
+        )
+        generate_clicked = st.form_submit_button("Generate VBOM Bundle", type="primary")
+
+    if generate_clicked:
+        if input_upload is None or not complexity_uploads:
+            st.error("Please upload an input file and at least one harness complexity file.")
+        else:
+            try:
+                with st.spinner("Generating VBOM outputs..."):
+                    result = run_vbom_workflow(
+                        my=my,
+                        program=program,
+                        source_type=source_type,
+                        input_upload=input_upload,
+                        complexity_uploads=complexity_uploads,
+                        output_dir=Path(tempfile.gettempdir()) / "splice_vbom_outputs",
+                    )
+                st.session_state["vbom_result"] = result
+                st.success("VBOM workbook bundle generated.")
+            except Exception as exc:
+                st.error(f"VBOM workflow failed: {exc}")
+
+    vbom_result = st.session_state.get("vbom_result")
+    if vbom_result is not None:
+        st.subheader("Generated Files")
+        output_paths = [
+            ("Master complexity workbook", vbom_result.get("master_path")),
+            ("VIN / SalesCode matrix", vbom_result.get("vin_matrix_path")),
+            ("Harness selection workbook", vbom_result.get("selections_path")),
+            ("Formatted template", vbom_result.get("formatted_template_path")),
+        ]
+        for label, path in output_paths:
+            if path is not None and Path(path).exists():
+                st.write(f"- {label}: {Path(path).name}")
+
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w", zipfile.ZIP_DEFLATED) as archive:
+            for _, path in output_paths:
+                if path is not None and Path(path).exists():
+                    archive.write(path, arcname=Path(path).name)
+        archive_bytes.seek(0)
+        st.download_button(
+            label="Download VBOM Bundle",
+            data=archive_bytes.getvalue(),
+            file_name="VBOM_Risk_Matrix_Bundle.zip",
+            mime="application/zip",
+            key="dl_vbom_bundle",
+            use_container_width=True,
+        )
 
 elif selected_tool == "Create SECR":
     st.title("Create SECR")
