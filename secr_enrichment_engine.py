@@ -188,6 +188,7 @@ def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) ->
     - Status
     - Match Method
     - Matched DTx Value
+    - CNUM
     - Harness Family
     """
     results = []
@@ -202,13 +203,16 @@ def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) ->
         match_method = "No Match"
         matched_dtx_value = None
         harness_family = None
+        cnum = None
 
         # Step 1: Match by Device Control Number
         if extracted_dcn:
             matching_rows = dtx_df[dtx_df["Device Control Number"].astype(str).str.strip() == extracted_dcn.strip()]
             if not matching_rows.empty:
-                harness_family = matching_rows.iloc[0]["Harness Family"]
+                matched_dtx_row = matching_rows.iloc[0]
+                harness_family = matched_dtx_row["Harness Family"]
                 matched_dtx_value = extracted_dcn
+                cnum = matched_dtx_row.get("CNUM")
                 match_method = "Device Control Number"
 
         # Step 2: Match by Device Name (if no DCN match)
@@ -223,6 +227,7 @@ def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) ->
                     if normalized_name and normalized_name in normalized_transmittal:
                         harness_family = dtx_row["Harness Family"]
                         matched_dtx_value = device_name
+                        cnum = dtx_row.get("CNUM")
                         match_method = "Device Name"
                         break
 
@@ -234,6 +239,7 @@ def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) ->
             "Status": status,
             "Match Method": match_method,
             "Matched DTx Value": matched_dtx_value or "",
+            "CNUM": cnum or "",
             "Harness Family": harness_family or "",
         })
 

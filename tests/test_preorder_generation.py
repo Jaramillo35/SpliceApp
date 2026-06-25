@@ -222,6 +222,10 @@ def test_generate_preorder_generation_workbook_matches_real_dtx_reports() -> Non
 
     assert len(result["summary_df"]) >= 10
     assert result["summary_df"].iloc[0, 0] == "D1606B"
+    assert result["output_file_name"].startswith("PreOrderList_")
+    assert "2028KM" in result["output_file_name"]
+    assert "X2_49" in result["output_file_name"]
+    assert result["output_file_name"].endswith(".xlsx")
 
     workbook = load_workbook(BytesIO(result["output_excel_bytes"]))
     assert workbook["Connector Changes"]["A2"].value == "Vehicle Program - 2027KM"

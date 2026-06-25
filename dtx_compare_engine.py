@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
+import sys
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-import sys
 from typing import Iterable
 
 import pandas as pd
@@ -216,6 +217,23 @@ def _extract_report_metadata(file_bytes: bytes, file_name: str) -> dict[str, str
         metadata["Report Date"] = datetime.now().strftime("%b-%d-%Y %I:%M %p")
 
     return metadata
+
+
+def _build_output_file_name(new_metadata: dict[str, str]) -> str:
+    vehicle_program = new_metadata.get("Vehicle Program", "")
+    build_phase = new_metadata.get("Build Phase", "")
+
+    def _file_component(raw_value: str, prefix: str) -> str:
+        cleaned = normalize_value(raw_value)
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+        cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", cleaned).strip("._-")
+        return cleaned or "Unknown"
+
+    vehicle_component = _file_component(vehicle_program, "Vehicle Program -")
+    build_component = _file_component(build_phase, "Build Phase -")
+    date_component = datetime.now().strftime("%m%d%y")
+    return f"PreOrderList_{vehicle_component}_{build_component}_{date_component}.xlsx"
 
 
 def _build_connector_grouped_frame(data_frame: pd.DataFrame) -> pd.DataFrame:
@@ -590,7 +608,7 @@ def generate_preorder_generation_workbook(
     styled_bytes = _apply_preorder_workbook_styles(output_buffer.getvalue())
     return {
         "output_excel_bytes": styled_bytes,
-        "output_file_name": "PreOrder_Generation_List.xlsx",
+        "output_file_name": _build_output_file_name(new_metadata),
         "summary_df": summary_df,
         "connector_changes_df": connector_changes_df,
         "suffix_changes_df": pd.DataFrame(),
