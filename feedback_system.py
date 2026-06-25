@@ -13,6 +13,34 @@ from urllib import parse, request, error
 import streamlit as st
 
 
+def _get_streamlit_secret(*keys: str) -> str | None:
+    try:
+        # Support both flat secrets and a nested [github] section.
+        github_secrets = st.secrets.get("github", {})
+        for key in keys:
+            if key in st.secrets and st.secrets[key]:
+                return str(st.secrets[key])
+            if isinstance(github_secrets, dict) and key in github_secrets and github_secrets[key]:
+                return str(github_secrets[key])
+            lower_key = key.lower()
+            if isinstance(github_secrets, dict) and lower_key in github_secrets and github_secrets[lower_key]:
+                return str(github_secrets[lower_key])
+    except Exception:
+        return None
+    return None
+
+
+def _get_config_value(env_key: str, *, default: str | None = None, secret_keys: tuple[str, ...] = ()) -> str | None:
+    value = os.getenv(env_key)
+    if value:
+        return value
+    lookup_keys = (env_key, *secret_keys)
+    secret_value = _get_streamlit_secret(*lookup_keys)
+    if secret_value:
+        return secret_value
+    return default
+
+
 class FeedbackStore:
     def __init__(self, storage_path: str | os.PathLike[str] | None = None) -> None:
         if storage_path is None:
@@ -123,13 +151,30 @@ class FeedbackStore:
         branch: str | None = None,
         file_path: str | None = None,
     ) -> dict[str, Any]:
-        repository = repository or os.getenv("GITHUB_REPOSITORY")
-        token = token or os.getenv("GITHUB_TOKEN")
-        branch = branch or os.getenv("GITHUB_BRANCH", "main")
-        file_path = file_path or os.getenv("TICKETS_GITHUB_PATH", "data/tickets.json")
+        repository = repository or _get_config_value(
+            "GITHUB_REPOSITORY",
+            secret_keys=("repository",),
+        )
+        token = token or _get_config_value(
+            "GITHUB_TOKEN",
+            secret_keys=("token",),
+        )
+        branch = branch or _get_config_value(
+            "GITHUB_BRANCH",
+            default="main",
+            secret_keys=("branch",),
+        )
+        file_path = file_path or _get_config_value(
+            "TICKETS_GITHUB_PATH",
+            default="data/tickets.json",
+            secret_keys=("path", "file_path"),
+        )
 
         if not repository or not token:
-            return {"ok": False, "message": "GitHub sync requires GITHUB_REPOSITORY and GITHUB_TOKEN to be configured."}
+            return {
+                "ok": False,
+                "message": "GitHub sync requires GITHUB_REPOSITORY and GITHUB_TOKEN (env vars or Streamlit secrets).",
+            }
 
         payload = {
             "message": "Update Streamlit feedback tickets",

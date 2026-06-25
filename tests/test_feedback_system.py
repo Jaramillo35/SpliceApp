@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import feedback_system
 from feedback_system import FeedbackStore, get_feedback_area_options
 
 
@@ -60,3 +61,9 @@ def test_submit_ticket_and_sync_invokes_github_sync(tmp_path, monkeypatch):
     assert called["sync"] is True
     assert sync_result["ok"] is True
     assert len(store.load_tickets()) == 1
+
+
+def test_get_config_value_falls_back_to_streamlit_secret(monkeypatch):
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    monkeypatch.setattr(feedback_system, "_get_streamlit_secret", lambda *_keys: "Jaramillo35/SpliceApp")
+    assert feedback_system._get_config_value("GITHUB_REPOSITORY") == "Jaramillo35/SpliceApp"
