@@ -159,24 +159,88 @@ def _collapse_to_unique_connector_values(values: pd.Series) -> str:
     return " | ".join(unique_values)
 
 
+def _first_non_empty(values: pd.Series) -> str:
+    for value in values.tolist():
+        normalized = normalize_value(value)
+        if normalized:
+            return normalized
+    return ""
+
+
+def _read_dtx_report_rows(file_bytes: bytes, file_name: str) -> pd.DataFrame:
+    layout = detect_layout(file_bytes, file_name)
+    data_frame = pd.read_excel(
+        BytesIO(file_bytes),
+        sheet_name=layout.sheet_name,
+        header=layout.header_row,
+        dtype=object,
+    )
+    data_frame.columns = [normalize_value(column) for column in data_frame.columns]
+
+    missing_columns = [column for column in REQUIRED_COLUMNS if column not in data_frame.columns]
+    if missing_columns:
+        raise ValueError(f"{file_name} is missing required columns: {', '.join(missing_columns)}")
+
+    data_frame = data_frame[REQUIRED_COLUMNS].copy()
+    data_frame = data_frame.map(normalize_cell)
+    data_frame = data_frame.loc[
+        ~((data_frame["CNUM"] == "") & (data_frame["Pin Number"] == ""))
+    ].reset_index(drop=True)
+    return data_frame
+
+
+def _extract_report_metadata(file_bytes: bytes, file_name: str) -> dict[str, str]:
+    excel_file = pd.ExcelFile(BytesIO(file_bytes))
+    sheet_name = next(
+        (sheet for sheet in excel_file.sheet_names if "Detailed DTx Circuits Report" in sheet),
+        excel_file.sheet_names[0],
+    )
+    preview = pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name, header=None, nrows=12)
+
+    metadata = {"Vehicle Program": "", "Build Phase": "", "Report Date": ""}
+    for _, row in preview.iterrows():
+        for value in row.tolist():
+            normalized = normalize_value(value)
+            if normalized.startswith("Vehicle Program -"):
+                metadata["Vehicle Program"] = normalized
+            elif normalized.startswith("Build Phase -"):
+                metadata["Build Phase"] = normalized
+            elif normalized.startswith("Report Date:"):
+                metadata["Report Date"] = normalized
+
+    if not metadata["Vehicle Program"]:
+        metadata["Vehicle Program"] = Path(file_name).stem
+    if not metadata["Build Phase"]:
+        metadata["Build Phase"] = "Build Phase - Unknown"
+    if not metadata["Report Date"]:
+        metadata["Report Date"] = datetime.now().strftime("%b-%d-%Y %I:%M %p")
+
+    return metadata
+
+
 def _build_connector_grouped_frame(data_frame: pd.DataFrame) -> pd.DataFrame:
     connector_columns = [
         "CNUM",
-        "Suffix",
-        "Connector PN",
-        "Harness Family",
         "Device Control Number",
         "Device Name",
+        "Suffix",
         "Number of Cavities",
+        "Connector PN",
+        "Harness Family",
     ]
     grouped_frame = data_frame[connector_columns].copy()
     grouped_frame = grouped_frame.map(normalize_cell)
 
-    aggregation = {column: _collapse_to_unique_connector_values for column in connector_columns if column not in {"CNUM", "Suffix"}}
+    aggregation = {
+        "Device Control Number": _first_non_empty,
+        "Number of Cavities": _first_non_empty,
+        "Connector PN": _collapse_to_unique_connector_values,
+        "Harness Family": _collapse_to_unique_connector_values,
+    }
     grouped_frame = (
-        grouped_frame.groupby(["CNUM", "Suffix"], dropna=False, as_index=False)
+        grouped_frame.groupby(["CNUM", "Device Name", "Suffix"], dropna=False, as_index=False)
         .agg(aggregation)
-        .sort_values(["CNUM", "Suffix"])
+        .sort_values(["CNUM", "Device Name", "Suffix"])
         .reset_index(drop=True)
     )
     return grouped_frame
@@ -185,7 +249,9 @@ def _build_connector_grouped_frame(data_frame: pd.DataFrame) -> pd.DataFrame:
 def _apply_preorder_workbook_styles(workbook_bytes: bytes) -> bytes:
     workbook = load_workbook(BytesIO(workbook_bytes))
     header_fill = PatternFill(fill_type="solid", fgColor="004472C4")
-    highlight_fill = PatternFill(fill_type="solid", fgColor="00FFFF00")
+    yellow_fill = PatternFill(fill_type="solid", fgColor="00FFFF00")
+    deleted_fill = PatternFill(fill_type="solid", fgColor="00E6E6FA")
+    added_fill = PatternFill(fill_type="solid", fgColor="00FFD580")
     header_font = Font(bold=True, color="FFFFFF", name="Calibri", size=11)
     header_alignment = Alignment(horizontal="center", vertical="center")
 
@@ -222,11 +288,21 @@ def _apply_preorder_workbook_styles(workbook_bytes: bytes) -> bytes:
                 else:
                     cell.border = build_border(column, is_header=False)
                     if worksheet.title == "Connector Changes" and column == 5:
-                        if isinstance(cell.value, str) and ">>" in cell.value:
-                            cell.fill = highlight_fill
+                        change_type = worksheet.cell(row=row, column=7).value
+                        if change_type == "Deleted":
+                            cell.fill = deleted_fill
+                        elif change_type == "Added":
+                            cell.fill = added_fill
+                        elif isinstance(cell.value, str) and ">>" in cell.value:
+                            cell.fill = yellow_fill
                     elif worksheet.title == "Summary" and column == 2:
-                        if isinstance(cell.value, str) and ">>" in cell.value:
-                            cell.fill = highlight_fill
+                        change_type = worksheet.cell(row=row, column=4).value
+                        if change_type == "Deleted":
+                            cell.fill = deleted_fill
+                        elif change_type == "Added":
+                            cell.fill = added_fill
+                        elif isinstance(cell.value, str) and ">>" in cell.value:
+                            cell.fill = yellow_fill
 
         worksheet.freeze_panes = "A7"
 
@@ -242,53 +318,19 @@ def generate_preorder_generation_workbook(
     old_file_name: str,
     new_file_name: str,
 ) -> dict[str, object]:
-    old_df, _ = load_dtx_report(old_file_bytes, old_file_name)
-    new_df, _ = load_dtx_report(new_file_bytes, new_file_name)
+    old_df = _read_dtx_report_rows(old_file_bytes, old_file_name)
+    new_df = _read_dtx_report_rows(new_file_bytes, new_file_name)
 
     old_grouped = _build_connector_grouped_frame(old_df)
     new_grouped = _build_connector_grouped_frame(new_df)
 
-    deleted_keys = (
-        new_grouped[["CNUM", "Suffix"]]
-        .merge(old_grouped[["CNUM", "Suffix"]], on=["CNUM", "Suffix"], how="left", indicator=True)
-        .query("_merge == 'left_only'")
-    )
-    deleted_df = (
-        deleted_keys[["CNUM", "Suffix"]]
-        .merge(old_grouped, on=["CNUM", "Suffix"], how="left")
-        .rename(
-            columns={
-                "Connector PN": "Connector PN_old",
-                "Harness Family": "Harness Family_old",
-                "Device Control Number": "Device Control Number_old",
-                "Device Name": "Device Name_old",
-                "Number of Cavities": "Number of Cavities_old",
-            }
-        )
-    )
-
-    added_keys = (
-        old_grouped[["CNUM", "Suffix"]]
-        .merge(new_grouped[["CNUM", "Suffix"]], on=["CNUM", "Suffix"], how="left", indicator=True)
-        .query("_merge == 'left_only'")
-    )
-    added_df = (
-        added_keys[["CNUM", "Suffix"]]
-        .merge(new_grouped, on=["CNUM", "Suffix"], how="left")
-        .rename(
-            columns={
-                "Connector PN": "Connector PN_new",
-                "Harness Family": "Harness Family_new",
-                "Device Control Number": "Device Control Number_new",
-                "Device Name": "Device Name_new",
-                "Number of Cavities": "Number of Cavities_new",
-            }
-        )
-    )
+    key_columns = ["CNUM", "Device Name", "Suffix"]
+    old_grouped_keys = old_grouped[key_columns].drop_duplicates()
+    new_grouped_keys = new_grouped[key_columns].drop_duplicates()
 
     merged = old_grouped.merge(
         new_grouped,
-        on=["CNUM", "Suffix"],
+        on=key_columns,
         how="inner",
         suffixes=("_old", "_new"),
     )
@@ -298,152 +340,46 @@ def generate_preorder_generation_workbook(
     )
     changed_connector_pn_df = merged.loc[connector_pn_mask, [
         "CNUM",
-        "Suffix",
         "Device Control Number_old",
-        "Device Control Number_new",
-        "Device Name_old",
-        "Device Name_new",
+        "Device Name",
+        "Suffix",
         "Number of Cavities_old",
-        "Number of Cavities_new",
         "Harness Family_old",
-        "Harness Family_new",
         "Connector PN_old",
+        "Device Control Number_new",
+        "Device Name",
+        "Number of Cavities_new",
+        "Harness Family_new",
         "Connector PN_new",
     ]].copy()
     changed_connector_pn_df.insert(0, "Change Type", "Connector PN Change")
 
-    del_view = deleted_df[[
-        "CNUM",
-        "Suffix",
-        "Connector PN_old",
-        "Harness Family_old",
-        "Device Control Number_old",
-        "Device Name_old",
-        "Number of Cavities_old",
-    ]].copy()
-    add_view = added_df[[
-        "CNUM",
-        "Suffix",
-        "Connector PN_new",
-        "Harness Family_new",
-        "Device Control Number_new",
-        "Device Name_new",
-        "Number of Cavities_new",
-    ]].copy()
-
-    candidates = del_view.merge(add_view, on="CNUM", how="inner", suffixes=("_del", "_add"))
-    suffix_mask = (
-        candidates["Connector PN_old"].fillna("").astype(str).str.strip()
-        == candidates["Connector PN_new"].fillna("").astype(str).str.strip()
-    ) & (
-        candidates["Harness Family_old"].fillna("").astype(str).str.strip()
-        == candidates["Harness Family_new"].fillna("").astype(str).str.strip()
-    ) & (
-        candidates["Suffix_del"].fillna("").astype(str).str.strip()
-        != candidates["Suffix_add"].fillna("").astype(str).str.strip()
-    )
-    suffix_pairs = candidates.loc[suffix_mask].copy()
-
-    if not suffix_pairs.empty:
-        suffix_pairs.insert(0, "Change Type", "Suffix Change")
-        suffix_pairs["Connector PN Change"] = "Connector PN Change"
-        suffix_pairs["CNUM_Device Name-Suffix (Device Control Number)"] = (
-            suffix_pairs["CNUM"].astype(str) + "_" + suffix_pairs["Device Name_old"].astype(str) + "-" + suffix_pairs["Suffix_del"].astype(str) + " (" + suffix_pairs["Device Control Number_old"].astype(str) + ")"
+    deleted_df = (
+        old_grouped.merge(
+            new_grouped_keys,
+            on=key_columns,
+            how="left",
+            indicator=True,
         )
-        suffix_pairs["CNUM_Device Name-Suffix (Device Control Number).1"] = (
-            suffix_pairs["CNUM"].astype(str) + "_" + suffix_pairs["Device Name_new"].astype(str) + "-" + suffix_pairs["Suffix_add"].astype(str) + " (" + suffix_pairs["Device Control Number_new"].astype(str) + ")"
+        .query("_merge == 'left_only'")
+        .reset_index(drop=True)
+    )
+    deleted_df.insert(0, "Change Type", "Deleted")
+
+    added_df = (
+        new_grouped.merge(
+            old_grouped_keys,
+            on=key_columns,
+            how="left",
+            indicator=True,
         )
-        suffix_pairs["CNUM"] = suffix_pairs["CNUM"].astype(str)
-        suffix_pairs["Number of Cavities"] = suffix_pairs["Number of Cavities_old"]
-        suffix_pairs["Connector PN"] = suffix_pairs["Connector PN_old"]
-        suffix_pairs["Harness Family"] = suffix_pairs["Harness Family_old"]
-        suffix_pairs["CNUM.1"] = suffix_pairs["CNUM"]
-        suffix_pairs["Number of Cavities.1"] = suffix_pairs["Number of Cavities_new"]
-        suffix_pairs["Connector PN.1"] = suffix_pairs["Connector PN_new"]
-        suffix_changes_df = suffix_pairs[[
-            "CNUM_Device Name-Suffix (Device Control Number)",
-            "CNUM",
-            "Number of Cavities",
-            "Connector PN",
-            "Connector PN Change",
-            "Harness Family",
-            "Change Type",
-            "CNUM_Device Name-Suffix (Device Control Number).1",
-            "CNUM.1",
-            "Number of Cavities.1",
-            "Connector PN.1",
-        ]].copy()
-    else:
-        suffix_changes_df = pd.DataFrame(columns=[
-            "CNUM_Device Name-Suffix (Device Control Number)",
-            "CNUM",
-            "Number of Cavities",
-            "Connector PN",
-            "Connector PN Change",
-            "Harness Family",
-            "Change Type",
-            "CNUM_Device Name-Suffix (Device Control Number).1",
-            "CNUM.1",
-            "Number of Cavities.1",
-            "Connector PN.1",
-        ])
-
-    deleted_df_pruned = deleted_df.copy()
-    added_df_pruned = added_df.copy()
-    if not suffix_pairs.empty:
-        keys_to_drop = set(zip(suffix_pairs["CNUM"], suffix_pairs["Suffix_del"]))
-        deleted_df_pruned = deleted_df_pruned.loc[
-            ~deleted_df_pruned.apply(lambda row: (row["CNUM"], row["Suffix"]) in keys_to_drop, axis=1)
-        ].reset_index(drop=True)
-        keys_to_drop_add = set(zip(suffix_pairs["CNUM"], suffix_pairs["Suffix_add"]))
-        added_df_pruned = added_df_pruned.loc[
-            ~added_df_pruned.apply(lambda row: (row["CNUM"], row["Suffix"]) in keys_to_drop_add, axis=1)
-        ].reset_index(drop=True)
-
-    deleted_summary_df = deleted_df_pruned[[
-        "CNUM",
-        "Suffix",
-        "Device Control Number_old",
-        "Device Name_old",
-        "Connector PN_old",
-        "Harness Family_old",
-        "Number of Cavities_old",
-    ]].copy()
-    deleted_summary_df.insert(0, "Change Type", "Deleted")
-    deleted_summary_df = deleted_summary_df.rename(
-        columns={
-            "Device Control Number_old": "Device Control Number",
-            "Device Name_old": "Device Name",
-            "Connector PN_old": "Connector PN",
-            "Harness Family_old": "Harness Family",
-            "Number of Cavities_old": "Number of Cavities",
-        }
+        .query("_merge == 'left_only'")
+        .reset_index(drop=True)
     )
+    added_df.insert(0, "Change Type", "Added")
 
-    added_summary_df = added_df_pruned[[
-        "CNUM",
-        "Suffix",
-        "Device Control Number_new",
-        "Device Name_new",
-        "Connector PN_new",
-        "Harness Family_new",
-        "Number of Cavities_new",
-    ]].copy()
-    added_summary_df.insert(0, "Change Type", "Added")
-    added_summary_df = added_summary_df.rename(
-        columns={
-            "Device Control Number_new": "Device Control Number",
-            "Device Name_new": "Device Name",
-            "Connector PN_new": "Connector PN",
-            "Harness Family_new": "Harness Family",
-            "Number of Cavities_new": "Number of Cavities",
-        }
-    )
-
-    old_program_name = Path(old_file_name).stem or old_file_name
-    new_program_name = Path(new_file_name).stem or new_file_name
-    old_report_date = datetime.now().strftime("%b-%d-%Y %I:%M %p")
-    new_report_date = datetime.now().strftime("%b-%d-%Y %I:%M %p")
+    old_metadata = _extract_report_metadata(old_file_bytes, old_file_name)
+    new_metadata = _extract_report_metadata(new_file_bytes, new_file_name)
 
     connector_changes_columns = [
         "CNUM_Device Name-Suffix (Device Control Number)",
@@ -462,34 +398,95 @@ def generate_preorder_generation_workbook(
 
     connector_changes_rows: list[list[object]] = []
     summary_rows: list[list[object]] = []
+
     for _, row in changed_connector_pn_df.iterrows():
         old_identifier = (
-            f"{row['CNUM']}_{row['Device Name_old']}-{row['Suffix']} ({row['Device Control Number_old']})"
+            f"{row['CNUM']}_{row['Device Name']}-{row['Suffix']} ({row['Device Control Number_old']})"
         )
         new_identifier = (
-            f"{row['CNUM']}_{row['Device Name_new']}-{row['Suffix']} ({row['Device Control Number_new']})"
+            f"{row['CNUM']}_{row['Device Name']}-{row['Suffix']} ({row['Device Control Number_new']})"
         )
+        old_connector_pn = normalize_value(row["Connector PN_old"])
+        new_connector_pn = normalize_value(row["Connector PN_new"])
         connector_changes_rows.append(
             [
                 old_identifier,
                 row["CNUM"],
                 row["Number of Cavities_old"],
-                row["Connector PN_old"],
-                f"{row['Connector PN_old']} >> {row['Connector PN_new']}",
+                old_connector_pn,
+                f"{old_connector_pn} >> {new_connector_pn}",
                 row["Harness Family_old"],
                 "Connector PN Change",
                 new_identifier,
                 row["CNUM"],
                 row["Number of Cavities_new"],
-                row["Connector PN_new"],
+                new_connector_pn,
             ]
         )
         summary_rows.append(
             [
                 row["CNUM"],
-                f"{row['Connector PN_old']} >> {row['Connector PN_new']}",
+                f"{old_connector_pn} >> {new_connector_pn}",
                 row["Harness Family_old"],
                 "Connector PN Change",
+            ]
+        )
+
+    for _, row in deleted_df.iterrows():
+        old_identifier = (
+            f"{row['CNUM']}_{row['Device Name']}-{row['Suffix']} ({row['Device Control Number']})"
+        )
+        old_connector_pn = normalize_value(row["Connector PN"])
+        connector_changes_rows.append(
+            [
+                old_identifier,
+                row["CNUM"],
+                row["Number of Cavities"],
+                old_connector_pn,
+                f"{old_connector_pn} >>",
+                row["Harness Family"],
+                "Deleted",
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        summary_rows.append(
+            [
+                row["CNUM"],
+                f"{old_connector_pn} >>",
+                row["Harness Family"],
+                "Deleted",
+            ]
+        )
+
+    for _, row in added_df.iterrows():
+        new_identifier = (
+            f"{row['CNUM']}_{row['Device Name']}-{row['Suffix']} ({row['Device Control Number']})"
+        )
+        new_connector_pn = normalize_value(row["Connector PN"])
+        connector_changes_rows.append(
+            [
+                None,
+                None,
+                None,
+                None,
+                f">> {new_connector_pn}",
+                row["Harness Family"],
+                "Added",
+                new_identifier,
+                row["CNUM"],
+                row["Number of Cavities"],
+                new_connector_pn,
+            ]
+        )
+        summary_rows.append(
+            [
+                row["CNUM"],
+                f">> {new_connector_pn}",
+                row["Harness Family"],
+                "Added",
             ]
         )
 
@@ -502,7 +499,7 @@ def generate_preorder_generation_workbook(
             None,
             None,
             None,
-            f"Vehicle Program - {old_program_name} >> Vehicle Program - {new_program_name}",
+            f"{old_metadata['Vehicle Program']} >> {new_metadata['Vehicle Program']}",
             None,
             None,
             "Detailed DTx Circuits Report",
@@ -511,40 +508,40 @@ def generate_preorder_generation_workbook(
             None,
         ],
         [
-            f"Vehicle Program - {old_program_name}",
+            old_metadata["Vehicle Program"],
             None,
             None,
             None,
-            f"Build Phase - {old_program_name} >> Build Phase - {new_program_name}",
+            f"{old_metadata['Build Phase']} >> {new_metadata['Build Phase']}",
             None,
             None,
-            f"Vehicle Program - {new_program_name}",
-            None,
-            None,
-            None,
-        ],
-        [
-            f"Build Phase - {old_program_name}",
-            None,
-            None,
-            None,
-            f"Report Date: {old_report_date} >> Report Date: {new_report_date}",
-            None,
-            None,
-            f"Build Phase - {new_program_name}",
+            new_metadata["Vehicle Program"],
             None,
             None,
             None,
         ],
         [
-            f"Report Date: {old_report_date}",
+            old_metadata["Build Phase"],
+            None,
+            None,
+            None,
+            f"{old_metadata['Report Date']} >> {new_metadata['Report Date']}",
+            None,
+            None,
+            new_metadata["Build Phase"],
+            None,
+            None,
+            None,
+        ],
+        [
+            old_metadata["Report Date"],
             None,
             None,
             None,
             "Old >> New",
             None,
             None,
-            f"Report Date: {new_report_date}",
+            new_metadata["Report Date"],
             None,
             None,
             None,
@@ -553,19 +550,19 @@ def generate_preorder_generation_workbook(
     ]
     summary_metadata_rows = [
         [
-            f"Vehicle Program - {old_program_name} >> Vehicle Program - {new_program_name}",
+            f"{old_metadata['Vehicle Program']} >> {new_metadata['Vehicle Program']}",
             None,
             None,
             None,
         ],
         [
-            f"Build Phase - {old_program_name} >> Build Phase - {new_program_name}",
+            f"{old_metadata['Build Phase']} >> {new_metadata['Build Phase']}",
             None,
             None,
             None,
         ],
         [
-            f"Report Date: {old_report_date} >> Report Date: {new_report_date}",
+            f"{old_metadata['Report Date']} >> {new_metadata['Report Date']}",
             None,
             None,
             None,
@@ -596,9 +593,9 @@ def generate_preorder_generation_workbook(
         "output_file_name": "PreOrder_Generation_List.xlsx",
         "summary_df": summary_df,
         "connector_changes_df": connector_changes_df,
-        "suffix_changes_df": suffix_changes_df,
-        "deleted_df": deleted_df_pruned,
-        "added_df": added_df_pruned,
+        "suffix_changes_df": pd.DataFrame(),
+        "deleted_df": deleted_df,
+        "added_df": added_df,
         "changed_connector_pn_df": changed_connector_pn_df,
     }
 

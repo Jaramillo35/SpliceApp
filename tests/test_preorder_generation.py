@@ -208,6 +208,91 @@ def test_generate_preorder_generation_workbook_matches_sample_layout(tmp_path: P
     assert workbook["Summary"]["B7"].fill.fgColor.rgb == "00FFFF00"
 
 
+def test_generate_preorder_generation_workbook_matches_real_dtx_reports() -> None:
+    dtx_dir = Path(__file__).resolve().parents[1].parent / "DTx"
+    old_path = dtx_dir / "1 2027 KM AWDV1_FWDX2 DetailedDTxCircuitsReport_revA_EC.xls"
+    new_path = dtx_dir / "2 2028 KM X2_49-X1_74 DetailedDTxCircuitsReport_revA_ec.xls"
+
+    result = generate_preorder_generation_workbook(
+        old_file_bytes=old_path.read_bytes(),
+        new_file_bytes=new_path.read_bytes(),
+        old_file_name=old_path.name,
+        new_file_name=new_path.name,
+    )
+
+    assert len(result["summary_df"]) >= 10
+    assert result["summary_df"].iloc[0, 0] == "D1606B"
+
+    workbook = load_workbook(BytesIO(result["output_excel_bytes"]))
+    assert workbook["Connector Changes"]["A2"].value == "Vehicle Program - 2027KM"
+    assert workbook["Connector Changes"]["H2"].value == "Vehicle Program - 2028KM"
+
+
+def test_generate_preorder_generation_workbook_reports_deleted_and_added_connectors(tmp_path: Path) -> None:
+    old_path = tmp_path / "old.xlsx"
+    new_path = tmp_path / "new.xlsx"
+    _write_dtx_excel(
+        old_path,
+        [
+            {
+                "Device Control Number": "DCN1",
+                "Device Name": "Device A",
+                "Suffix": "A",
+                "CNUM": "C1",
+                "Number of Cavities": "2",
+                "Connector PN": "PN-OLD",
+                "Harness Family": "HF-1",
+                "Pin Number": "1",
+                "Circuit Name": "CIRCUIT1",
+                "Circuit Suffix": "S1",
+                "Circuit Function": "FUNC",
+                "Color": "RED",
+                "Terminal": "T1",
+                "Connector FCA part number": "FCA1",
+                "Wire Gauge": "18",
+                "Wire Type": "W1",
+                "Sales Code": "S1",
+            }
+        ],
+    )
+    _write_dtx_excel(
+        new_path,
+        [
+            {
+                "Device Control Number": "DCN2",
+                "Device Name": "Device B",
+                "Suffix": "B",
+                "CNUM": "C2",
+                "Number of Cavities": "4",
+                "Connector PN": "PN-NEW",
+                "Harness Family": "HF-2",
+                "Pin Number": "2",
+                "Circuit Name": "CIRCUIT2",
+                "Circuit Suffix": "S2",
+                "Circuit Function": "FUNC2",
+                "Color": "BLUE",
+                "Terminal": "T2",
+                "Connector FCA part number": "FCA2",
+                "Wire Gauge": "20",
+                "Wire Type": "W2",
+                "Sales Code": "S2",
+            }
+        ],
+    )
+
+    result = generate_preorder_generation_workbook(
+        old_file_bytes=old_path.read_bytes(),
+        new_file_bytes=new_path.read_bytes(),
+        old_file_name=old_path.name,
+        new_file_name=new_path.name,
+    )
+
+    assert any(result["connector_changes_df"]["Change Type"] == "Deleted")
+    assert any(result["connector_changes_df"]["Change Type"] == "Added")
+    assert any(result["summary_df"]["Change Type"] == "Deleted")
+    assert any(result["summary_df"]["Change Type"] == "Added")
+
+
 def test_generate_preorder_generation_workbook_requires_valid_input_files(tmp_path: Path) -> None:
     old_path = tmp_path / "old.xlsx"
     new_path = tmp_path / "new.xlsx"
