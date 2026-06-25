@@ -11,7 +11,16 @@ import pandas as pd
 
 
 def _resolve_vbom_root() -> Path:
-    return Path(__file__).resolve().parent.parent / "VBOMxRISKMATRIX 2"
+    candidates = [
+        Path(__file__).resolve().parent / "vbom_legacy",
+        Path(__file__).resolve().parent.parent / "VBOMxRISKMATRIX 2",
+        Path(__file__).resolve().parent.parent / "VBOMxRISKMATRIX 2" / "VBOMxRISKMATRIX 2",
+        Path("/mount/src/VBOMxRISKMATRIX 2"),
+    ]
+    for candidate in candidates:
+        if (candidate / "main_app.py").exists():
+            return candidate
+    return candidates[0]
 
 
 def _load_vbom_module():
