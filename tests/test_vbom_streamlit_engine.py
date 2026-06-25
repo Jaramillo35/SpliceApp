@@ -34,6 +34,11 @@ def test_load_vbom_module_succeeds_without_tkinter(monkeypatch):
     assert hasattr(module, "build_vin_matrix")
 
 
+def test_build_short_sheet_name_strips_program_and_phase_tokens():
+    assert vbom_streamlit_engine._build_short_sheet_name("Harness_Complexity_27XX_X2_HarnessA.xlsx") == "HarnessA"
+    assert vbom_streamlit_engine._build_short_sheet_name("27XX_X2_ABC_123.xlsx") == "ABC_123"
+
+
 def test_run_vbom_workflow_creates_expected_outputs(tmp_path):
     doall_df = pd.DataFrame(
         {

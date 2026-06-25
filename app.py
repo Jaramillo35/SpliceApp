@@ -41,6 +41,7 @@ from wiring_harness_processor import (
     validate_generated_expression,
 )
 from vbom_streamlit_engine import run_vbom_workflow
+from feedback_system import FeedbackStore, render_feedback_widget
 
 
 st.set_page_config(page_title="Wiring System Engineer Tools", layout="wide")
@@ -201,6 +202,8 @@ if mode != "Home":
     st.session_state["selected_tool"] = mode
 
 selected_tool = st.session_state.get("selected_tool", "Home")
+feedback_store = FeedbackStore()
+render_feedback_widget(workflow=selected_tool, area=selected_tool, store=feedback_store, key_prefix="main_app_feedback")
 
 if selected_tool == "Splice Generation":
     st.title("Wiring Harness Splice Generator")

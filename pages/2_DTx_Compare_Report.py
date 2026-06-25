@@ -12,12 +12,16 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 from dtx_compare_engine import generate_dtx_change_report, launch_preorder_generation_tool
+from feedback_system import FeedbackStore, render_feedback_widget
 
 
 st.set_page_config(page_title="DTx Compare Report", layout="wide")
 
 st.title("DTx Compare Report")
 st.caption("Upload OLD and NEW DTx files to generate an engineering change workbook.")
+
+feedback_store = FeedbackStore()
+render_feedback_widget(workflow="DTx Compare Report", area="DTx Compare Report", store=feedback_store, key_prefix="dtx_feedback")
 
 col_old, col_new = st.columns(2)
 with col_old:

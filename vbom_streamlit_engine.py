@@ -2,12 +2,94 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
+
+
+def _build_short_sheet_name(base_name: str) -> str:
+    stem = Path(base_name).stem
+    tokens = [token for token in re.split(r"[^A-Za-z0-9]+", stem) if token]
+    cleaned: list[str] = []
+    for token in tokens:
+        token_up = token.upper()
+        if token_up in {"HARNESS", "COMPLEXITY", "COMPLEX", "INPUT", "OUTPUT", "SHEET", "FILE"}:
+            continue
+        if re.fullmatch(r"2[678][A-Z0-9]{2}", token_up):
+            continue
+        if re.fullmatch(r"[VX][0-9]", token_up):
+            continue
+        cleaned.append(token)
+
+    name = "_".join(cleaned[:3]).strip("_") if cleaned else stem
+    name = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")
+    return (name[:31] if len(name) > 31 else name) or "Harness"
+
+
+def _style_worksheet(worksheet):
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    header_fill = PatternFill(fill_type="solid", fgColor="D9EAF7")
+    header_font = Font(bold=True, color="0B3D66")
+    thin = Side(style="thin", color="D0D7DE")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for row in worksheet.iter_rows(min_row=1, max_row=min(worksheet.max_row, 1)):
+        for cell in row:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = border
+
+    for col_idx in range(1, worksheet.max_column + 1):
+        values = []
+        for row_idx in range(1, worksheet.max_row + 1):
+            value = worksheet.cell(row=row_idx, column=col_idx).value
+            values.append("" if value is None else str(value))
+        max_len = max((len(v) for v in values), default=10)
+        worksheet.column_dimensions[get_column_letter(col_idx)].width = min(max(12, max_len + 2), 60)
+
+    worksheet.freeze_panes = "A2" if worksheet.max_row > 1 else "A1"
+    if worksheet.max_row > 1:
+        worksheet.auto_filter.ref = worksheet.dimensions
+
+    for row_idx in range(2, worksheet.max_row + 1):
+        for cell in worksheet[row_idx]:
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+            cell.border = border
+
+
+def format_workbook_output(path: str | os.PathLike[str]) -> str:
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(path)
+    for worksheet in workbook.worksheets:
+        _style_worksheet(worksheet)
+
+    if "AllCandidates" in workbook.sheetnames:
+        ws = workbook["AllCandidates"]
+        header_map = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
+        isbest_col = header_map.get("IsBest")
+        if isbest_col is not None:
+            highlight_fill = PatternFill(start_color="FFE5B4", end_color="FFE5B4", fill_type="solid")
+            for row_num in range(2, ws.max_row + 1):
+                val = ws.cell(row=row_num, column=isbest_col).value
+                is_true = (
+                    (isinstance(val, bool) and val)
+                    or (isinstance(val, (int, float)) and val == 1)
+                    or (isinstance(val, str) and val.strip().upper() == "TRUE")
+                )
+                if is_true:
+                    for col_num in range(1, ws.max_column + 1):
+                        ws.cell(row=row_num, column=col_num).fill = highlight_fill
+
+    workbook.save(path)
+    return str(path)
 
 
 def _resolve_vbom_root() -> Path:
@@ -112,7 +194,7 @@ def run_vbom_workflow(
     used_sheetnames = set()
     with pd.ExcelWriter(master_path, engine="openpyxl") as writer:
         for complexity_path, df_comp in per_file_master:
-            sheet_name = vbom_main_app.safe_sheetname(Path(complexity_path).stem, used_sheetnames)
+            sheet_name = vbom_main_app.safe_sheetname(Path(complexity_path).name, used_sheetnames)
             df_comp.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
 
     vin_matrix_df.to_excel(vin_matrix_path, index=False, engine="openpyxl")
@@ -127,31 +209,8 @@ def run_vbom_workflow(
             family_stats_df.to_excel(writer, sheet_name="Family_Code_Stats", index=False)
             global_code_df.to_excel(writer, sheet_name="Global_Code_Overview", index=False)
 
-    try:
-        from openpyxl import load_workbook
-        from openpyxl.styles import PatternFill
-
-        wb = load_workbook(selections_path)
-        ws = wb["AllCandidates"]
-        ws.freeze_panes = "A2"
-        ws.auto_filter.ref = ws.dimensions
-        highlight_fill = PatternFill(start_color="FFE5B4", end_color="FFE5B4", fill_type="solid")
-        header_map = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
-        isbest_col = header_map.get("IsBest")
-        if isbest_col is not None:
-            for row_num in range(2, ws.max_row + 1):
-                val = ws.cell(row=row_num, column=isbest_col).value
-                is_true = (
-                    (isinstance(val, bool) and val)
-                    or (isinstance(val, (int, float)) and val == 1)
-                    or (isinstance(val, str) and val.strip().upper() == "TRUE")
-                )
-                if is_true:
-                    for col_num in range(1, ws.max_column + 1):
-                        ws.cell(row=row_num, column=col_num).fill = highlight_fill
-        wb.save(selections_path)
-    except Exception:
-        pass
+    vbom_main_app.format_workbook_output(str(master_path))
+    vbom_main_app.format_workbook_output(str(selections_path))
 
     template_path = _resolve_vbom_root() / vbom_main_app.TEMPLATE_SOURCE_FILE
     formatted_template_path = None

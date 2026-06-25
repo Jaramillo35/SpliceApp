@@ -23,12 +23,16 @@ from wiring_harness_processor import (
     simplify_expression_for_display,
     validate_generated_expression,
 )
+from feedback_system import FeedbackStore, render_feedback_widget
 
 
 st.set_page_config(page_title="Wiring Harness Splice Generator", layout="wide")
 
 st.title("Wiring Harness Splice Generator")
 st.caption("Generate harness print-ready direct connections, splices, configuration groups, and validation reports.")
+
+feedback_store = FeedbackStore()
+render_feedback_widget(workflow="Splice Generation", area="Splice Generation", store=feedback_store, key_prefix="splice_feedback")
 
 uploaded_file = st.file_uploader("Upload Excel file (Complexity + OptionPerCkt)", type=["xlsx", "xls"])
 

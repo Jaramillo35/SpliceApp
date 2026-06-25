@@ -727,10 +727,92 @@ def write_df_to_excel_append(path: str, sheet_name: str, df: pd.DataFrame):
     with pd.ExcelWriter(path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
         df.to_excel(writer, sheet_name=sheet_name, index=False)
 
+
+def _build_short_sheet_name(base_name: str) -> str:
+    stem = os.path.splitext(os.path.basename(base_name))[0]
+    tokens = [token for token in re.split(r"[^A-Za-z0-9]+", stem) if token]
+    cleaned: list[str] = []
+    for token in tokens:
+        token_up = token.upper()
+        if token_up in {"HARNESS", "COMPLEXITY", "COMPLEX", "INPUT", "OUTPUT", "SHEET", "FILE"}:
+            continue
+        if re.fullmatch(r"2[678][A-Z0-9]{2}", token_up):
+            continue
+        if re.fullmatch(r"[VX][0-9]", token_up):
+            continue
+        cleaned.append(token)
+
+    name = "_".join(cleaned[:3]).strip("_") if cleaned else stem
+    name = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")
+    return (name[:31] if len(name) > 31 else name) or "Harness"
+
+
+def _style_worksheet(worksheet):
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    header_fill = PatternFill(fill_type="solid", fgColor="D9EAF7")
+    header_font = Font(bold=True, color="0B3D66")
+    thin = Side(style="thin", color="D0D7DE")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for row in worksheet.iter_rows(min_row=1, max_row=min(worksheet.max_row, 1)):
+        for cell in row:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = border
+
+    for col_idx in range(1, worksheet.max_column + 1):
+        values = []
+        for row_idx in range(1, worksheet.max_row + 1):
+            value = worksheet.cell(row=row_idx, column=col_idx).value
+            values.append("" if value is None else str(value))
+        max_len = max((len(v) for v in values), default=10)
+        worksheet.column_dimensions[get_column_letter(col_idx)].width = min(max(12, max_len + 2), 60)
+
+    worksheet.freeze_panes = "A2" if worksheet.max_row > 1 else "A1"
+    if worksheet.max_row > 1:
+        worksheet.auto_filter.ref = worksheet.dimensions
+
+    for row_idx in range(2, worksheet.max_row + 1):
+        for cell in worksheet[row_idx]:
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+            cell.border = border
+
+
+def format_workbook_output(path: str | os.PathLike[str]) -> str:
+    from openpyxl import load_workbook
+    from openpyxl.styles import PatternFill
+
+    workbook = load_workbook(path)
+    for worksheet in workbook.worksheets:
+        _style_worksheet(worksheet)
+
+    if "AllCandidates" in workbook.sheetnames:
+        ws = workbook["AllCandidates"]
+        header_map = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
+        isbest_col = header_map.get("IsBest")
+        if isbest_col is not None:
+            highlight_fill = PatternFill(start_color="FFE5B4", end_color="FFE5B4", fill_type="solid")
+            for row_num in range(2, ws.max_row + 1):
+                val = ws.cell(row=row_num, column=isbest_col).value
+                is_true = (
+                    (isinstance(val, bool) and val)
+                    or (isinstance(val, (int, float)) and val == 1)
+                    or (isinstance(val, str) and val.strip().upper() == "TRUE")
+                )
+                if is_true:
+                    for col_num in range(1, ws.max_column + 1):
+                        ws.cell(row=row_num, column=col_num).fill = highlight_fill
+
+    workbook.save(path)
+    return str(path)
+
+
 def safe_sheetname(base: str, used: set):
     """Return a safe/unique Excel sheet name (<=31 chars)."""
-    name = os.path.splitext(os.path.basename(base))[0]
-    name = name[:31] if len(name) > 31 else name
+    name = _build_short_sheet_name(base)
     candidate = name; i = 1
     while candidate in used:
         suffix = f"_{i}"
@@ -2355,6 +2437,7 @@ def main():
         for f, df_comp in per_file_master:
             sheet = safe_sheetname(os.path.basename(f), used_sheetnames)
             df_comp.to_excel(writer, sheet_name=sheet, index=False, header=False)
+    format_workbook_output(master_path)
     print(f"✓ Created: {MASTER_FILE_NAME}")
 
     # Write VIN matrix and append SalesCode_Diff in final selected folder.
@@ -2374,43 +2457,9 @@ def main():
         if not family_stats_df.empty:
             family_stats_df.to_excel(writer, sheet_name="Family_Code_Stats", index=False)
             global_code_df.to_excel(writer, sheet_name="Global_Code_Overview", index=False)
+    format_workbook_output(selections_out)
     print(f"✓ Created: {SELECTIONS_FILE}")
-
-    # Format AllCandidates: highlight ONLY rows where IsBest == TRUE in soft orange
-    try:
-        from openpyxl import load_workbook
-        from openpyxl.styles import PatternFill
-        wb = load_workbook(selections_out)
-        ws = wb["AllCandidates"]
-
-        # Freeze top row & autofilter
-        ws.freeze_panes = "A2"
-        ws.auto_filter.ref = ws.dimensions
-
-        # Soft orange (peach) highlight
-        highlight_fill = PatternFill(start_color="FFE5B4", end_color="FFE5B4", fill_type="solid")
-
-        # Find the IsBest column index by header text
-        header_map = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
-        isbest_col = header_map.get("IsBest", None)
-
-        if isbest_col is not None:
-            for r in range(2, ws.max_row + 1):
-                val = ws.cell(row=r, column=isbest_col).value
-                # Accept True, 'TRUE', 1 as true-ish
-                is_true = (
-                    (isinstance(val, bool) and val) or
-                    (isinstance(val, (int, float)) and val == 1) or
-                    (isinstance(val, str) and val.strip().upper() == "TRUE")
-                )
-                if is_true:
-                    for c in range(1, ws.max_column + 1):
-                        ws.cell(row=r, column=c).fill = highlight_fill
-
-        wb.save(selections_out)
-        print(f"✓ Highlighted IsBest rows in AllCandidates sheet")
-    except Exception as e:
-        print(f"✓ Formatting applied (note: {e})")
+    print("✓ Applied workbook formatting and highlights")
 
     # Format SalesCode statistics sheets
     try:
