@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from openpyxl import load_workbook
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -191,11 +192,20 @@ def test_generate_preorder_generation_workbook_matches_sample_layout(tmp_path: P
     assert connector_changes.iloc[5, 4] == "Connector PN Change"
     assert connector_changes.iloc[5, 6] == "Change Type"
 
+    workbook = load_workbook(BytesIO(result["output_excel_bytes"]))
+    connector_ws = workbook["Connector Changes"]
+    assert connector_ws["A6"].fill.fgColor.rgb == "004472C4"
+    assert connector_ws["A6"].font.bold is True
+    assert connector_ws["A6"].border.top.style == "thick"
+    assert connector_ws["A6"].border.left.style == "thick"
+    assert connector_ws["E7"].fill.fgColor.rgb == "00FFFF00"
+
     summary = pd.read_excel(BytesIO(result["output_excel_bytes"]), sheet_name="Summary", header=None)
     assert summary.iloc[5, 0] == "CNUM"
     assert summary.iloc[5, 1] == "Connector PN Change"
     assert summary.iloc[5, 2] == "Harness Family"
     assert summary.iloc[5, 3] == "Change Type"
+    assert workbook["Summary"]["B7"].fill.fgColor.rgb == "00FFFF00"
 
 
 def test_generate_preorder_generation_workbook_requires_valid_input_files(tmp_path: Path) -> None:

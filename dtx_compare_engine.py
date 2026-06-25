@@ -9,6 +9,8 @@ import sys
 from typing import Iterable
 
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from pandas.api.types import is_scalar
 
 
@@ -178,6 +180,60 @@ def _build_connector_grouped_frame(data_frame: pd.DataFrame) -> pd.DataFrame:
         .reset_index(drop=True)
     )
     return grouped_frame
+
+
+def _apply_preorder_workbook_styles(workbook_bytes: bytes) -> bytes:
+    workbook = load_workbook(BytesIO(workbook_bytes))
+    header_fill = PatternFill(fill_type="solid", fgColor="004472C4")
+    highlight_fill = PatternFill(fill_type="solid", fgColor="00FFFF00")
+    header_font = Font(bold=True, color="FFFFFF", name="Calibri", size=11)
+    header_alignment = Alignment(horizontal="center", vertical="center")
+
+    def build_border(column: int, is_header: bool) -> Border:
+        thin_side = Side(style="thin", color="000000")
+        thick_side = Side(style="thick", color="000000")
+        if worksheet.max_column == 4:
+            block_starts = {1}
+            block_ends = {4}
+        elif worksheet.max_column == 11:
+            block_starts = {1, 5, 8}
+            block_ends = {4, 7, 11}
+        else:
+            block_starts = {1}
+            block_ends = {worksheet.max_column}
+
+        left = thick_side if column in block_starts else thin_side
+        right = thick_side if column in block_ends else thin_side
+        top = thick_side if is_header else thin_side
+        bottom = thin_side if is_header else thin_side
+        return Border(left=left, right=right, top=top, bottom=bottom)
+
+    for worksheet in workbook.worksheets:
+        max_row = worksheet.max_row
+        max_col = worksheet.max_column
+        for row in range(6, max_row + 1):
+            for column in range(1, max_col + 1):
+                cell = worksheet.cell(row=row, column=column)
+                if row == 6:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = header_alignment
+                    cell.border = build_border(column, is_header=True)
+                else:
+                    cell.border = build_border(column, is_header=False)
+                    if worksheet.title == "Connector Changes" and column == 5:
+                        if isinstance(cell.value, str) and ">>" in cell.value:
+                            cell.fill = highlight_fill
+                    elif worksheet.title == "Summary" and column == 2:
+                        if isinstance(cell.value, str) and ">>" in cell.value:
+                            cell.fill = highlight_fill
+
+        worksheet.freeze_panes = "A7"
+
+    output_buffer = BytesIO()
+    workbook.save(output_buffer)
+    output_buffer.seek(0)
+    return output_buffer.getvalue()
 
 
 def generate_preorder_generation_workbook(
@@ -534,8 +590,9 @@ def generate_preorder_generation_workbook(
         )
 
     output_buffer.seek(0)
+    styled_bytes = _apply_preorder_workbook_styles(output_buffer.getvalue())
     return {
-        "output_excel_bytes": output_buffer.getvalue(),
+        "output_excel_bytes": styled_bytes,
         "output_file_name": "PreOrder_Generation_List.xlsx",
         "summary_df": summary_df,
         "connector_changes_df": connector_changes_df,
