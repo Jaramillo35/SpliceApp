@@ -69,6 +69,27 @@ class FeedbackStore:
         self.save_tickets(tickets)
         return ticket_id
 
+    def submit_ticket_and_sync(
+        self,
+        *,
+        reported_by: str,
+        workflow: str,
+        area: str,
+        description: str,
+        category: str = "feedback",
+        severity: str = "medium",
+    ) -> tuple[str, dict[str, Any]]:
+        ticket_id = self.submit_ticket(
+            reported_by=reported_by,
+            workflow=workflow,
+            area=area,
+            description=description,
+            category=category,
+            severity=severity,
+        )
+        sync_result = self.sync_to_github()
+        return ticket_id, sync_result
+
     def export_tickets(self, format: str = "json") -> bytes:
         tickets = self.load_tickets()
         fmt = format.lower()
@@ -153,6 +174,22 @@ class FeedbackStore:
         return f"TKT-{timestamp}-{existing_count:03d}"
 
 
+def get_feedback_area_options(*, workflow: str | None = None, area: str | None = None) -> list[str]:
+    options = [
+        "General",
+        "Home",
+        "Splice Generation",
+        "DTx Compare Report",
+        "Create SECR",
+        "DTCR Matching Report",
+        "VBOM Risk Matrix",
+    ]
+    for candidate in [workflow, area]:
+        if candidate and candidate not in options:
+            options.append(candidate)
+    return options
+
+
 def render_feedback_widget(
     *,
     workflow: str,
@@ -166,10 +203,17 @@ def render_feedback_widget(
     st.sidebar.markdown("### Report an issue or feedback")
     with st.sidebar.expander("Open ticket form", expanded=True):
         st.caption("Submit a structured ticket from anywhere in the app.")
-        st.caption("Tickets are stored in the repo-backed data file and can be downloaded as JSON or CSV.")
+        st.caption("Tickets are stored in the repo-backed data file and reviewed by the administrator.")
         st.text_input("Workflow", value=workflow, disabled=True, key=f"{key_prefix}_workflow")
         area_value = area or workflow
-        area_input = st.text_input("Area / part", value=area_value, key=f"{key_prefix}_area")
+        area_options = get_feedback_area_options(workflow=workflow, area=area_value)
+        default_index = area_options.index(area_value) if area_value in area_options else 0
+        area_input = st.selectbox(
+            "Area / part",
+            options=area_options,
+            index=default_index,
+            key=f"{key_prefix}_area",
+        )
         category = st.selectbox("Type", ["feedback", "bug", "enhancement", "question"], key=f"{key_prefix}_category")
         severity = st.selectbox("Priority", ["low", "medium", "high", "critical"], key=f"{key_prefix}_severity")
         reported_by = st.text_input("Your name / email", key=f"{key_prefix}_reported_by")
@@ -184,7 +228,7 @@ def render_feedback_widget(
             if not description.strip():
                 st.warning("Please describe the issue or feedback before submitting.")
             else:
-                ticket_id = store.submit_ticket(
+                ticket_id, sync_result = store.submit_ticket_and_sync(
                     reported_by=reported_by,
                     workflow=workflow,
                     area=area_input,
@@ -192,30 +236,12 @@ def render_feedback_widget(
                     category=category,
                     severity=severity,
                 )
-                st.success(f"Ticket submitted successfully. Reference: {ticket_id}")
-                st.caption("The ticket is saved in the repo-backed store and can be downloaded or synced to GitHub.")
-
-        st.download_button(
-            label="Download tickets as JSON",
-            data=store.export_tickets("json"),
-            file_name="streamlit_feedback_tickets.json",
-            mime="application/json",
-            key=f"{key_prefix}_download_json",
-        )
-        st.download_button(
-            label="Download tickets as CSV",
-            data=store.export_tickets("csv"),
-            file_name="streamlit_feedback_tickets.csv",
-            mime="text/csv",
-            key=f"{key_prefix}_download_csv",
-        )
-
-        if st.button("Sync tickets to GitHub", key=f"{key_prefix}_sync"):
-            sync_result = store.sync_to_github()
-            if sync_result.get("ok"):
-                st.success(sync_result["message"])
-            else:
-                st.info(sync_result["message"])
+                if sync_result.get("ok"):
+                    st.success(f"Ticket submitted successfully. Reference: {ticket_id}")
+                    st.caption("The ticket is saved locally and synced to GitHub.")
+                else:
+                    st.success(f"Ticket submitted successfully. Reference: {ticket_id}")
+                    st.info(sync_result.get("message", "GitHub sync was not completed."))
 
         st.caption(f"Stored tickets: {len(tickets)}")
         if tickets:

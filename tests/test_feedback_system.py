@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from feedback_system import FeedbackStore
+from feedback_system import FeedbackStore, get_feedback_area_options
 
 
 def test_submit_ticket_persists_and_exports(tmp_path):
@@ -27,3 +27,36 @@ def test_submit_ticket_persists_and_exports(tmp_path):
     csv_bytes = store.export_tickets(format="csv")
     assert b"ticket_id" in csv_bytes
     assert b"Jane Doe" in csv_bytes
+
+
+def test_feedback_area_options_include_site_workflows():
+    options = get_feedback_area_options(workflow="DTx Compare Report", area="PreOrder Generation List")
+    assert "DTx Compare Report" in options
+    assert "VBOM Risk Matrix" in options
+    assert "PreOrder Generation List" in options
+
+
+def test_submit_ticket_and_sync_invokes_github_sync(tmp_path, monkeypatch):
+    storage_path = tmp_path / "tickets.json"
+    store = FeedbackStore(storage_path=storage_path)
+    called = {}
+
+    def fake_sync(**_kwargs):
+        called["sync"] = True
+        return {"ok": True, "message": "synced"}
+
+    monkeypatch.setattr(store, "sync_to_github", fake_sync)
+
+    ticket_id, sync_result = store.submit_ticket_and_sync(
+        reported_by="Jane Doe",
+        workflow="Splice Generation",
+        area="Upload flow",
+        description="The upload button was not obvious.",
+        category="feedback",
+        severity="medium",
+    )
+
+    assert ticket_id.startswith("TKT-")
+    assert called["sync"] is True
+    assert sync_result["ok"] is True
+    assert len(store.load_tickets()) == 1
