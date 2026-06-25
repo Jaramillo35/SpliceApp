@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 import tempfile
@@ -15,11 +16,17 @@ def _resolve_vbom_root() -> Path:
 
 def _load_vbom_module():
     vbom_root = _resolve_vbom_root()
-    if str(vbom_root) not in sys.path:
-        sys.path.append(str(vbom_root))
-    import main_app as vbom_main_app
+    module_path = vbom_root / "main_app.py"
+    if not module_path.exists():
+        raise FileNotFoundError(f"Could not find VBOM legacy module at: {module_path}")
 
-    return vbom_main_app
+    spec = importlib.util.spec_from_file_location("vbom_legacy_main", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load VBOM legacy module from: {module_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _write_uploaded_file(uploaded_file, destination_path: Path) -> Path:
