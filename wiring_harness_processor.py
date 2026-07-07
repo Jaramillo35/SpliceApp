@@ -16,7 +16,6 @@ except Exception:  # pragma: no cover
 
 SALES_TOKEN_RE = re.compile(r"\s*([A-Za-z0-9_.]+|[()&/\-])\s*")
 SD454_VARIANT_RE = re.compile(r"^SD454[A-Z]$", re.IGNORECASE)
-ALWAYS_PRESENT_SALES_CODES = {"501"}
 
 
 @dataclass(frozen=True)
@@ -46,14 +45,6 @@ class SalesExpression:
     def __init__(self, postfix_tokens: list[str], symbols: set[str]):
         self.postfix_tokens = postfix_tokens
         self.symbols = symbols
-
-
-@dataclass(frozen=True)
-class _ExprNode:
-    kind: str
-    value: Any = None
-    left: "_ExprNode | None" = None
-    right: "_ExprNode | None" = None
 
 
 def _normalize_text(value: Any) -> str:
@@ -271,106 +262,7 @@ def parse_sales_code_expression(expression: str) -> SalesExpression:
             raise ExpressionSyntaxError(f"Unbalanced parentheses in: {expression}")
         output.append(op)
 
-    if ALWAYS_PRESENT_SALES_CODES & symbols:
-        output, symbols = _simplify_standard_sales_codes(output)
-
     return SalesExpression(postfix_tokens=output, symbols=symbols)
-
-
-def _postfix_to_ast(postfix_tokens: list[str]) -> _ExprNode:
-    stack: list[_ExprNode] = []
-
-    for token in postfix_tokens:
-        if token == "TRUE":
-            stack.append(_ExprNode(kind="const", value=True))
-        elif token == "FALSE":
-            stack.append(_ExprNode(kind="const", value=False))
-        elif token == "NOT":
-            if not stack:
-                raise ExpressionSyntaxError("Invalid NOT operation during simplification.")
-            stack.append(_ExprNode(kind="not", left=stack.pop()))
-        elif token in {"&", "/"}:
-            if len(stack) < 2:
-                raise ExpressionSyntaxError("Invalid binary operation during simplification.")
-            right = stack.pop()
-            left = stack.pop()
-            stack.append(_ExprNode(kind="and" if token == "&" else "or", left=left, right=right))
-        else:
-            stack.append(_ExprNode(kind="symbol", value=token))
-
-    if len(stack) != 1:
-        raise ExpressionSyntaxError("Expression simplification did not end in a single node.")
-
-    return stack[0]
-
-
-def _simplify_expr_node(node: _ExprNode) -> _ExprNode:
-    if node.kind == "symbol":
-        if node.value in ALWAYS_PRESENT_SALES_CODES:
-            return _ExprNode(kind="const", value=True)
-        return node
-
-    if node.kind == "const":
-        return node
-
-    if node.kind == "not":
-        operand = _simplify_expr_node(node.left)
-        if operand.kind == "const":
-            return _ExprNode(kind="const", value=not operand.value)
-        if operand.kind == "not":
-            return operand.left
-        return _ExprNode(kind="not", left=operand)
-
-    left = _simplify_expr_node(node.left)
-    right = _simplify_expr_node(node.right)
-
-    if node.kind == "and":
-        if left.kind == "const" and not left.value:
-            return left
-        if right.kind == "const" and not right.value:
-            return right
-        if left.kind == "const" and left.value:
-            return right
-        if right.kind == "const" and right.value:
-            return left
-        if left == right:
-            return left
-        return _ExprNode(kind="and", left=left, right=right)
-
-    if node.kind == "or":
-        if left.kind == "const" and left.value:
-            return left
-        if right.kind == "const" and right.value:
-            return right
-        if left.kind == "const" and not left.value:
-            return right
-        if right.kind == "const" and not right.value:
-            return left
-        if left == right:
-            return left
-        return _ExprNode(kind="or", left=left, right=right)
-
-    return node
-
-
-def _ast_to_postfix(node: _ExprNode) -> tuple[list[str], set[str]]:
-    if node.kind == "const":
-        return (["TRUE"] if node.value else ["FALSE"], set())
-    if node.kind == "symbol":
-        return ([str(node.value)], {str(node.value)})
-    if node.kind == "not":
-        child_tokens, child_symbols = _ast_to_postfix(node.left)
-        return child_tokens + ["NOT"], child_symbols
-
-    left_tokens, left_symbols = _ast_to_postfix(node.left)
-    right_tokens, right_symbols = _ast_to_postfix(node.right)
-    operator = "&" if node.kind == "and" else "/"
-    return left_tokens + right_tokens + [operator], left_symbols | right_symbols
-
-
-def _simplify_standard_sales_codes(postfix_tokens: list[str]) -> tuple[list[str], set[str]]:
-    simplified = _simplify_expr_node(_postfix_to_ast(postfix_tokens))
-    return _ast_to_postfix(simplified)
 
 
 def evaluate_expression(parsed_expression: SalesExpression, active_sales_codes: set[str]) -> bool:
@@ -379,8 +271,6 @@ def evaluate_expression(parsed_expression: SalesExpression, active_sales_codes: 
     for token in parsed_expression.postfix_tokens:
         if token == "TRUE":
             stack.append(True)
-        elif token == "FALSE":
-            stack.append(False)
         elif token == "NOT":
             if not stack:
                 raise ExpressionSyntaxError("Invalid NOT operation during evaluation.")
@@ -504,13 +394,6 @@ class NameAllocator:
         return name
 
 
-def _shared_splice_identity(circuit_name: str, anchor: Endpoint) -> tuple[str, str]:
-    """Return the shared splice bucket and base name for a circuit anchor endpoint."""
-    identity = f"{circuit_name}|{anchor.cnum}|{anchor.pin}"
-    base_name = f"S{circuit_name}"
-    return identity, base_name
-
-
 class CircuitNameAllocator:
     def __init__(self):
         self._counters: dict[str, int] = {}
@@ -524,52 +407,6 @@ class CircuitNameAllocator:
 def _extract_codes_from_expression(expression: str) -> set[str]:
     parsed = parse_sales_code_expression(expression)
     return parsed.symbols
-
-
-def _is_always_present_expression(expression: str) -> bool:
-    return parse_sales_code_expression(expression).postfix_tokens == ["TRUE"]
-
-
-def analyze_candidate_code_variability(
-    harness_code_map: dict[str, set[str]],
-    candidate_codes: set[str] | None,
-) -> dict[str, set[str]]:
-    """Classify candidate codes by whether they actually discriminate harnesses."""
-    normalized_candidates = {code for code in (candidate_codes or set()) if code}
-    if not normalized_candidates:
-        return {
-            "always_present": set(),
-            "always_absent": set(),
-            "discriminating": set(),
-        }
-
-    harness_values = list(harness_code_map.values())
-    if not harness_values:
-        return {
-            "always_present": set(),
-            "always_absent": normalized_candidates,
-            "discriminating": set(),
-        }
-
-    always_present: set[str] = set()
-    always_absent: set[str] = set()
-    discriminating: set[str] = set()
-
-    harness_count = len(harness_values)
-    for code in normalized_candidates:
-        present_count = sum(1 for active_codes in harness_values if code in active_codes)
-        if present_count == 0:
-            always_absent.add(code)
-        elif present_count == harness_count:
-            always_present.add(code)
-        else:
-            discriminating.add(code)
-
-    return {
-        "always_present": always_present,
-        "always_absent": always_absent,
-        "discriminating": discriminating,
-    }
 
 
 def _to_sales_expr_from_sympy(expr: Any) -> str:
@@ -612,7 +449,6 @@ def generate_sales_code_expression(
     target_harnesses: list[str],
     harness_code_map: dict[str, set[str]],
     candidate_codes: set[str] | None = None,
-    optimize_constants: bool = False,
 ) -> str:
     target = set(target_harnesses)
     all_harnesses = sorted(harness_code_map.keys())
@@ -624,12 +460,7 @@ def generate_sales_code_expression(
 
     if candidate_codes is None:
         candidate_codes = set().union(*harness_code_map.values())
-    candidate_codes = {c for c in candidate_codes if c and c not in ALWAYS_PRESENT_SALES_CODES}
-    if optimize_constants:
-        candidate_codes = analyze_candidate_code_variability(
-            harness_code_map=harness_code_map,
-            candidate_codes=candidate_codes,
-        )["discriminating"]
+    candidate_codes = {c for c in candidate_codes if c}
     if not candidate_codes:
         return "TRUE" if target == set(all_harnesses) else "FALSE"
 
@@ -863,7 +694,7 @@ def get_candidate_codes_from_option_df(
 
 def _choose_anchor_endpoint(endpoints: list[Endpoint]) -> Endpoint:
     """Choose the anchor (destination) endpoint - prefer always-present or least restrictive."""
-    always_present = [e for e in endpoints if _is_always_present_expression(e.sales_code)]
+    always_present = [e for e in endpoints if e.sales_code == ""]
     if always_present:
         return sorted(always_present, key=lambda e: (e.cnum, e.pin))[0]
     return sorted(endpoints, key=lambda e: (len(e.sales_code), e.cnum, e.pin))[-1]
@@ -1015,9 +846,10 @@ def generate_splices(
     if len(endpoints) < 3:
         return []
 
+    allocator = splice_allocator.setdefault(configuration.circuit_name, NameAllocator(f"S{configuration.circuit_name}"))
+    splice_name = allocator.next_name()
+
     anchor = _choose_anchor_endpoint(endpoints)
-    splice_identity, splice_name = _shared_splice_identity(configuration.circuit_name, anchor)
-    splice_allocator.setdefault(splice_identity, NameAllocator(splice_name))
     rows: list[dict[str, str]] = []
 
     for endpoint in endpoints:
@@ -1100,9 +932,9 @@ def generate_can_splice_connections(
     
     if len(endpoints) == 3:
         # Single splice for exactly 3 endpoints
+        allocator = splice_allocator.setdefault(configuration.circuit_name, NameAllocator(f"S{configuration.circuit_name}"))
+        splice_name = allocator.next_name()
         anchor = _choose_anchor_endpoint(endpoints)
-        splice_identity, splice_name = _shared_splice_identity(configuration.circuit_name, anchor)
-        splice_allocator.setdefault(splice_identity, NameAllocator(splice_name))
         rows: list[dict[str, str]] = []
         
         for endpoint in endpoints:
@@ -1146,9 +978,8 @@ def generate_can_splice_connections(
     # Multiple splices for >3 endpoints.
     # Build a binary aggregation tree so every splice has <=3 ends:
     # two inputs (endpoint or child splice) and one output (parent splice or anchor).
+    allocator = splice_allocator.setdefault(configuration.circuit_name, NameAllocator(f"S{configuration.circuit_name}"))
     anchor = _choose_anchor_endpoint(endpoints)
-    splice_identity, base_splice_name = _shared_splice_identity(configuration.circuit_name, anchor)
-    allocator = splice_allocator.setdefault(splice_identity, NameAllocator(base_splice_name))
     rows: list[dict[str, str]] = []
 
     # Worklist contains either endpoints or previously created splice nodes.
@@ -1198,7 +1029,7 @@ def generate_can_splice_connections(
         _connect_node_to_splice(right, parent_splice)
         nodes.append(parent_splice)
 
-    final_splice = base_splice_name
+    final_splice = allocator.next_name()
     _connect_node_to_splice(nodes[0], final_splice)
     _connect_node_to_splice(nodes[1], final_splice)
 
