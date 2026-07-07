@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from wiring_harness_processor import (
     analyze_candidate_code_variability,
     generate_sales_code_expression,
+    simplify_generated_sales_code_expression,
     validate_generated_expression,
 )
 
@@ -61,3 +62,20 @@ def test_generate_sales_code_expression_reduces_against_observed_harnesses() -> 
 
     assert expr == "-LCH&-LCL&-LHE"
     assert validate_generated_expression(expr, ["PN1"], harness_code_map)
+
+
+def test_simplify_generated_sales_code_expression_prefers_exact_single_code_alias() -> None:
+    harness_code_map = {
+        "PN1": {"LCA"},
+        "PN2": {"LCH"},
+        "PN3": {"LCL"},
+        "PN4": {"LHE"},
+    }
+
+    simplified = simplify_generated_sales_code_expression(
+        "-LCH&-LCL&-LHE",
+        harness_code_map,
+        candidate_codes={"LCA", "LCH", "LCL", "LHE"},
+    )
+
+    assert simplified == "LCA"
