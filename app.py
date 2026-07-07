@@ -30,6 +30,7 @@ from secr_enrichment_engine import (
     export_secr_enriched_output,
 )
 from wiring_harness_processor import (
+    analyze_candidate_code_variability,
     evaluate_expression_against_all_pns,
     generate_sales_code_expression,
     generate_expression_for_selected_pns,
@@ -395,6 +396,13 @@ if selected_tool == "Splice Generation":
         if not expression_valid:
             st.error(validation_message)
 
+        use_experimental_salescode_simplifier = st.checkbox(
+            "Use experimental salescode simplifier",
+            value=False,
+            help="Keeps the current generator available by default. When enabled, always-standard or never-used codes such as 501 are dropped before expression generation.",
+            key=f"experimental_salescode_simplifier_{selected_row_idx}",
+        )
+
         col_gen, col_apply = st.columns(2)
         with col_gen:
             if st.button("Generate Sales Code", key="btn_generate_sales_code"):
@@ -410,6 +418,10 @@ if selected_tool == "Splice Generation":
                     hk for hk in result["harness_code_map"].keys()
                     if hk.split("__")[0] in selected_set
                 ]
+                candidate_code_summary = analyze_candidate_code_variability(
+                    harness_code_map=result["harness_code_map"],
+                    candidate_codes=candidate_codes,
+                )
 
                 expr = ""
                 if target_harness_keys and candidate_codes:
@@ -417,6 +429,7 @@ if selected_tool == "Splice Generation":
                         target_harnesses=target_harness_keys,
                         harness_code_map=result["harness_code_map"],
                         candidate_codes=candidate_codes,
+                        optimize_constants=use_experimental_salescode_simplifier,
                     )
                 else:
                     expr = generate_expression_for_selected_pns(selected_pns, result["harness_code_map"])
@@ -439,6 +452,11 @@ if selected_tool == "Splice Generation":
                         st.session_state["interactive_generated_expr_display"] = display_expr
                         st.session_state["interactive_expr_valid"] = True
                         st.session_state["interactive_target_row"] = selected_row_idx
+                        if use_experimental_salescode_simplifier and candidate_code_summary["always_present"]:
+                            st.info(
+                                "Experimental simplifier ignored always-standard codes: "
+                                + ", ".join(sorted(candidate_code_summary["always_present"]))
+                            )
                         st.success(f"Generated Sales Code: {display_expr}")
 
         with col_apply:
