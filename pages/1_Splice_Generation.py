@@ -20,7 +20,6 @@ from wiring_harness_processor import (
     get_selected_harness_pns,
     run_analysis,
     run_analysis_from_option_df,
-    simplify_generated_sales_code_expression,
     simplify_expression_for_display,
     validate_generated_expression,
 )
@@ -210,20 +209,12 @@ else:
                     st.session_state["interactive_expr_valid"] = False
                     st.error("Combination not valid with available salescodes")
                 else:
-                    simplified_expr = simplify_generated_sales_code_expression(
-                        expr,
-                        result["harness_code_map"],
-                        candidate_codes=candidate_codes,
-                    )
-                    display_expr = simplify_expression_for_display(simplified_expr)
-                    st.session_state["interactive_generated_expr"] = simplified_expr
+                    display_expr = simplify_expression_for_display(expr)
+                    st.session_state["interactive_generated_expr"] = expr
                     st.session_state["interactive_generated_expr_display"] = display_expr
                     st.session_state["interactive_expr_valid"] = True
                     st.session_state["interactive_target_row"] = selected_row_idx
-                    if simplified_expr != expr:
-                        st.success(f"Generated Sales Code: {expr}\nSimplified Sales Code: {display_expr}")
-                    else:
-                        st.success(f"Generated Sales Code: {display_expr}")
+                    st.success(f"Generated Sales Code: {display_expr}")
 
     with col_apply:
         can_apply = (

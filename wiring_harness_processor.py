@@ -33,7 +33,6 @@ class Configuration:
     circuit_name: str
     endpoints: list[Endpoint]
     target_harness_pns: list[str]
-    generated_sales_code_original: str = ""
     generated_sales_code: str = ""
     generated_sales_code_display: str = ""
     topology_type: str = ""
@@ -685,19 +684,6 @@ def _matches_target_harnesses(
     return matched == target_harnesses
 
 
-def _find_single_code_alias_for_target(
-    target_harnesses: set[str],
-    harness_code_map: dict[str, set[str]],
-    candidate_codes: Iterable[str],
-) -> str | None:
-    for code in sorted({str(code).strip() for code in candidate_codes if str(code).strip()}):
-        if code in ALWAYS_PRESENT_SALES_CODES:
-            continue
-        if _matches_target_harnesses(code, target_harnesses, harness_code_map):
-            return code
-    return None
-
-
 def _reduce_dnf_terms_against_observed_harnesses(
     terms: list[list[str]],
     target_harnesses: set[str],
@@ -737,28 +723,6 @@ def _reduce_dnf_terms_against_observed_harnesses(
                 break
 
     return reduced
-
-
-def simplify_generated_sales_code_expression(
-    expression: str,
-    harness_code_map: dict[str, set[str]],
-    candidate_codes: set[str] | None = None,
-) -> str:
-    if not expression or expression in {"TRUE", "FALSE"}:
-        return expression
-
-    parsed = parse_sales_code_expression(expression)
-    target_harnesses = {
-        harness_key
-        for harness_key, active_codes in harness_code_map.items()
-        if evaluate_expression(parsed, active_codes)
-    }
-
-    if candidate_codes is None:
-        candidate_codes = set().union(*harness_code_map.values()) if harness_code_map else set()
-
-    alias = _find_single_code_alias_for_target(target_harnesses, harness_code_map, candidate_codes)
-    return alias or expression
 
 
 def generate_sales_code_expression(
@@ -1075,7 +1039,6 @@ def _build_d454_engineering_configurations(
         circuit_name="D454",
         endpoints=cfg1_endpoints,
         target_harness_pns=cfg1_target_harnesses,
-        generated_sales_code_original=cfg1_sales,
         generated_sales_code=cfg1_sales,
         generated_sales_code_display="BHG/BNZ&RFX",
         topology_type="Splice"
@@ -1093,7 +1056,6 @@ def _build_d454_engineering_configurations(
         circuit_name="D454",
         endpoints=cfg2_endpoints,
         target_harness_pns=cfg2_target_harnesses,
-        generated_sales_code_original=cfg2_sales,
         generated_sales_code=cfg2_sales,
         generated_sales_code_display="BHG/BNZ&(-RFX&-DK2&-DK4)",
         topology_type="Direct"
@@ -1111,7 +1073,6 @@ def _build_d454_engineering_configurations(
         circuit_name="D454",
         endpoints=cfg3_endpoints,
         target_harness_pns=cfg3_target_harnesses,
-        generated_sales_code_original=cfg3_sales,
         generated_sales_code=cfg3_sales,
         generated_sales_code_display="BHG/BNZ&RFX",
         topology_type="Splice"
@@ -1129,7 +1090,6 @@ def _build_d454_engineering_configurations(
         circuit_name="D454",
         endpoints=cfg4_endpoints,
         target_harness_pns=cfg4_target_harnesses,
-        generated_sales_code_original=cfg4_sales,
         generated_sales_code=cfg4_sales,
         generated_sales_code_display="(BHG/BNZ)&DK2&-RFX",
         topology_type="Splice"
@@ -1866,13 +1826,8 @@ def _run_analysis_core(
         generic_configs = group_configurations(non_d454_matrix)
         
         for cfg in generic_configs:
-            cfg.generated_sales_code_original = generate_sales_code_expression(
+            cfg.generated_sales_code = generate_sales_code_expression(
                 cfg.target_harness_pns,
-                harness_code_map,
-                candidate_codes=circuit_codes.get(cfg.circuit_name, set()),
-            )
-            cfg.generated_sales_code = simplify_generated_sales_code_expression(
-                cfg.generated_sales_code_original,
                 harness_code_map,
                 candidate_codes=circuit_codes.get(cfg.circuit_name, set()),
             )
@@ -1896,13 +1851,8 @@ def _run_analysis_core(
         configurations = group_configurations(presence_matrix)
 
         for cfg in configurations:
-            cfg.generated_sales_code_original = generate_sales_code_expression(
+            cfg.generated_sales_code = generate_sales_code_expression(
                 cfg.target_harness_pns,
-                harness_code_map,
-                candidate_codes=circuit_codes.get(cfg.circuit_name, set()),
-            )
-            cfg.generated_sales_code = simplify_generated_sales_code_expression(
-                cfg.generated_sales_code_original,
                 harness_code_map,
                 candidate_codes=circuit_codes.get(cfg.circuit_name, set()),
             )
@@ -1947,7 +1897,6 @@ def _run_analysis_core(
                 "Configuration ID": cfg.configuration_id,
                 "Circuit Name": cfg.circuit_name,
                 "Devices": ", ".join(sorted({e.cnum for e in cfg.endpoints})),
-                "Original Generated Sales Code": cfg.generated_sales_code_original,
                 "Generated Sales Code": cfg.generated_sales_code,
                 "Display Sales Code": cfg.generated_sales_code_display,
                 "Topology Type": cfg.topology_type,
