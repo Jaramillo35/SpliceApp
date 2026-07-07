@@ -10,17 +10,5 @@
     "description": "This is shit, doesnt work",
     "summary": "This is shit, doesnt work",
     "status": "new"
-  },
-  {
-    "ticket_id": "TKT-20260707185617-002",
-    "created_at": "2026-07-07T18:56:17.666826+00:00",
-    "reported_by": "Mario A",
-    "workflow": "Splice Generation",
-    "area": "Splice Generation",
-    "category": "feedback",
-    "severity": "low",
-    "description": "Device D6627B not appearing",
-    "summary": "Device D6627B not appearing",
-    "status": "new"
   }
 ]
