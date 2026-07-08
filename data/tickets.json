@@ -34,5 +34,17 @@
     "description": "Circuit Z913A has a unreasonable big SalesCode string. All other circuits have correct salescodes.",
     "summary": "Circuit Z913A has a unreasonable big SalesCode string. All other circuits have correct salescodes.",
     "status": "new"
+  },
+  {
+    "ticket_id": "TKT-20260708025916-004",
+    "created_at": "2026-07-08T02:59:16.947893+00:00",
+    "reported_by": "Eduardo",
+    "workflow": "Splice Generation",
+    "area": "Splice Generation",
+    "category": "bug",
+    "severity": "low",
+    "description": "Logic is generating different circuits with the same endpoints. Need to use only one circuit when both endpoints are the same cavities and devices.",
+    "summary": "Logic is generating different circuits with the same endpoints. Need to use only one circuit when both endpoints are the same cavities and d",
+    "status": "new"
   }
 ]
