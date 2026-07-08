@@ -47,6 +47,7 @@ from feedback_system import FeedbackStore, render_feedback_widget
 st.set_page_config(page_title="Wiring System Engineer Tools", layout="wide")
 
 LOGO_PATH = Path(__file__).resolve().parent / "assets" / "versigent_logo_horizontal.jpg"
+SPLICE_SAMPLE_INPUT_PATH = Path(__file__).resolve().parent / "assets" / "downloads" / "Z913_example_input.xlsx"
 if LOGO_PATH.exists():
     st.image(str(LOGO_PATH), width=300)
 
@@ -124,6 +125,10 @@ if mode == "Home":
                 <div class="tool-desc">
                     Build harness configurations, generated connections, print matrix, and interactive sales code validation.
                 </div>
+                <div class="tool-desc" style="margin-top: 0.5rem;">
+                    Upload one Excel workbook that contains exactly two required sheets: <strong>Complexity</strong> and <strong>OptionPerCkt</strong>.
+                    Use the sample input if you need a reference layout for column order, naming, and valid sales code formatting.
+                </div>
                 <span class="tool-badge">Complexity</span>
                 <span class="tool-badge">OptionPerCkt</span>
                 <span class="tool-badge">Output Excel</span>
@@ -134,6 +139,15 @@ if mode == "Home":
         if st.button("Open Splice Generation", key="go_splice", use_container_width=True):
             st.session_state["selected_tool"] = "Splice Generation"
             st.rerun()
+        if SPLICE_SAMPLE_INPUT_PATH.exists():
+            st.download_button(
+                "Download Example Splice Input",
+                data=SPLICE_SAMPLE_INPUT_PATH.read_bytes(),
+                file_name="Z913_example_input.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_splice_example_home",
+                use_container_width=True,
+            )
 
     with row1[1]:
         st.markdown(
@@ -227,6 +241,26 @@ render_feedback_widget(workflow=selected_tool, area=selected_tool, store=feedbac
 if selected_tool == "Splice Generation":
     st.title("Wiring Harness Splice Generator")
     st.caption("Generate harness print-ready direct connections, splices, configuration groups, and validation reports.")
+
+    with st.expander("How To Prepare The Upload File", expanded=True):
+        st.markdown(
+            """
+            Use one Excel workbook with these two required sheets:
+
+            1. `Complexity`: first column must be the Harness PN, and every other column must be a sales code. Mark valid harness/code combinations with `X`.
+            2. `OptionPerCkt`: must include the circuit/device rows with the required columns for `CNUM`, `Pin`, `Circuit`, and `Sales Code`.
+            3. Keep the sales codes in the workbook exactly as engineering defines them. Do not split the data into separate files.
+            4. If you need a reference, download the bundled example workbook and match your file structure to it before uploading.
+            """
+        )
+        if SPLICE_SAMPLE_INPUT_PATH.exists():
+            st.download_button(
+                "Download Example Input Workbook",
+                data=SPLICE_SAMPLE_INPUT_PATH.read_bytes(),
+                file_name="Z913_example_input.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_splice_example_page",
+            )
 
     # CAN Mode Configuration (must be selected before uploading)
     st.markdown("---")

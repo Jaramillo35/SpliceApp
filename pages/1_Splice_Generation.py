@@ -9,6 +9,7 @@ import streamlit as st
 
 CURRENT_DIR = Path(__file__).resolve().parent
 APP_DIR = CURRENT_DIR.parent
+SPLICE_SAMPLE_INPUT_PATH = APP_DIR / "assets" / "downloads" / "Z913_example_input.xlsx"
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
@@ -30,6 +31,26 @@ st.set_page_config(page_title="Wiring Harness Splice Generator", layout="wide")
 
 st.title("Wiring Harness Splice Generator")
 st.caption("Generate harness print-ready direct connections, splices, configuration groups, and validation reports.")
+
+with st.expander("How To Prepare The Upload File", expanded=True):
+    st.markdown(
+        """
+        Use one Excel workbook with these two required sheets:
+
+        1. `Complexity`: first column must be the Harness PN, and every other column must be a sales code. Mark valid harness/code combinations with `X`.
+        2. `OptionPerCkt`: must include the circuit/device rows with the required columns for `CNUM`, `Pin`, `Circuit`, and `Sales Code`.
+        3. Keep the sales codes in the workbook exactly as engineering defines them. Do not split the data into separate files.
+        4. If you need a reference, download the bundled example workbook and match your file structure to it before uploading.
+        """
+    )
+    if SPLICE_SAMPLE_INPUT_PATH.exists():
+        st.download_button(
+            "Download Example Input Workbook",
+            data=SPLICE_SAMPLE_INPUT_PATH.read_bytes(),
+            file_name="Z913_example_input.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_splice_example_standalone",
+        )
 
 feedback_store = FeedbackStore()
 render_feedback_widget(workflow="Splice Generation", area="Splice Generation", store=feedback_store, key_prefix="splice_feedback")
