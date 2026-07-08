@@ -9,6 +9,7 @@ from wiring_harness_processor import (
     CircuitNameAllocator,
     Configuration,
     Endpoint,
+    _candidate_codes_for_configuration,
     generate_sales_code_expression,
     generate_splices,
     _harmonize_shared_splice_trunk_rows,
@@ -64,8 +65,25 @@ def test_generate_sales_code_expression_reduces_against_observed_harnesses() -> 
         candidate_codes={"LCA", "LCH", "LCL", "LHE"},
     )
 
-    assert expr == "LCA&-LCH&-LCL&-LHE"
+    assert expr == "-LCH&-LCL&-LHE"
     assert validate_generated_expression(expr, ["PN1"], harness_code_map)
+
+
+def test_candidate_codes_for_configuration_prefers_endpoint_scope() -> None:
+    endpoints = [
+        Endpoint(cnum="A", pin="1", circuit="Z913", sales_code="CUS/(CUN&RTM)"),
+        Endpoint(cnum="B", pin="2", circuit="Z913", sales_code="LCH/LCL/LHE"),
+        Endpoint(cnum="C", pin="3", circuit="Z913", sales_code="GNC/XGD"),
+        Endpoint(cnum="D", pin="4", circuit="Z913", sales_code="GN6/GNC"),
+        Endpoint(cnum="E", pin="5", circuit="Z913", sales_code="501"),
+    ]
+
+    scoped = _candidate_codes_for_configuration(
+        endpoints,
+        {"CUS", "CUN", "RTM", "LCH", "LCL", "LHE", "GNC", "XGD", "GN6", "EXTRA"},
+    )
+
+    assert scoped == {"CUS", "CUN", "RTM", "LCH", "LCL", "LHE", "GNC", "XGD", "GN6"}
 
 
 def test_generate_splices_reuses_shared_always_present_anchor_for_same_circuit() -> None:

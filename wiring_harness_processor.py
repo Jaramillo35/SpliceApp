@@ -531,6 +531,17 @@ def _extract_codes_from_expression(expression: str) -> set[str]:
     return parsed.symbols
 
 
+def _candidate_codes_for_configuration(endpoints: list[Endpoint], fallback_codes: set[str]) -> set[str]:
+    endpoint_codes: set[str] = set()
+    for endpoint in endpoints:
+        endpoint_codes.update(_extract_codes_from_expression(endpoint.sales_code))
+
+    scoped_codes = {code for code in endpoint_codes if code and code not in ALWAYS_PRESENT_SALES_CODES}
+    if scoped_codes:
+        return scoped_codes
+    return {code for code in fallback_codes if code and code not in ALWAYS_PRESENT_SALES_CODES}
+
+
 def _to_sales_expr_from_sympy(expr: Any) -> str:
     if expr is True:
         return "TRUE"
@@ -567,6 +578,123 @@ def _to_sales_expr_from_sympy(expr: Any) -> str:
     return str(expr)
 
 
+def _sympy_expr_to_dnf_terms(expr: Any) -> list[list[str]]:
+    if expr is True:
+        return [[]]
+    if expr is False:
+        return []
+
+    if Symbol is not None and isinstance(expr, Symbol):
+        return [[str(expr)]]
+
+    if Not is not None and isinstance(expr, Not):
+        inner = expr.args[0]
+        if Symbol is not None and isinstance(inner, Symbol):
+            return [[f"-{inner}"]]
+        return [[_to_sales_expr_from_sympy(expr)]]
+
+    if And is not None and isinstance(expr, And):
+        term: list[str] = []
+        for arg in expr.args:
+            sub_terms = _sympy_expr_to_dnf_terms(arg)
+            if len(sub_terms) != 1:
+                raise ValueError("Expected a single conjunction term while converting DNF.")
+            term.extend(sub_terms[0])
+        return [term]
+
+    if Or is not None and isinstance(expr, Or):
+        terms: list[list[str]] = []
+        for arg in expr.args:
+            terms.extend(_sympy_expr_to_dnf_terms(arg))
+        return terms
+
+    return [[_to_sales_expr_from_sympy(expr)]]
+
+
+def _normalize_dnf_terms(terms: list[list[str]]) -> list[list[str]]:
+    normalized: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
+
+    for term in terms:
+        unique_literals = sorted(set(term), key=lambda literal: (literal.startswith("-"), literal.lstrip("-"), literal))
+        key = tuple(unique_literals)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(unique_literals)
+
+    normalized.sort(key=lambda term: (len(term), tuple(term)))
+    return normalized
+
+
+def _dnf_terms_to_expression(terms: list[list[str]]) -> str:
+    normalized = _normalize_dnf_terms(terms)
+    if not normalized:
+        return "FALSE"
+    if any(len(term) == 0 for term in normalized):
+        return "TRUE"
+
+    rendered_terms = ["&".join(term) for term in normalized]
+    if len(rendered_terms) == 1:
+        return rendered_terms[0]
+    return "/".join(f"({term})" for term in rendered_terms)
+
+
+def _matches_target_harnesses(
+    expression: str,
+    target_harnesses: set[str],
+    harness_code_map: dict[str, set[str]],
+) -> bool:
+    parsed = parse_sales_code_expression("" if expression == "TRUE" else expression)
+    matched = {
+        harness_key
+        for harness_key, active_codes in harness_code_map.items()
+        if evaluate_expression(parsed, active_codes)
+    }
+    return matched == target_harnesses
+
+
+def _reduce_dnf_terms_against_observed_harnesses(
+    terms: list[list[str]],
+    target_harnesses: set[str],
+    harness_code_map: dict[str, set[str]],
+) -> list[list[str]]:
+    reduced = _normalize_dnf_terms(terms)
+    if not reduced:
+        return reduced
+
+    changed = True
+    while changed:
+        changed = False
+
+        for idx in range(len(reduced)):
+            candidate_terms = [term[:] for pos, term in enumerate(reduced) if pos != idx]
+            candidate_expression = _dnf_terms_to_expression(candidate_terms)
+            if _matches_target_harnesses(candidate_expression, target_harnesses, harness_code_map):
+                reduced = _normalize_dnf_terms(candidate_terms)
+                changed = True
+                break
+        if changed:
+            continue
+
+        for idx, term in enumerate(reduced):
+            if not term:
+                continue
+            for literal in list(term):
+                candidate_term = [item for item in term if item != literal]
+                candidate_terms = [existing[:] for existing in reduced]
+                candidate_terms[idx] = candidate_term
+                candidate_expression = _dnf_terms_to_expression(candidate_terms)
+                if _matches_target_harnesses(candidate_expression, target_harnesses, harness_code_map):
+                    reduced = _normalize_dnf_terms(candidate_terms)
+                    changed = True
+                    break
+            if changed:
+                break
+
+    return reduced
+
+
 def generate_sales_code_expression(
     target_harnesses: list[str],
     harness_code_map: dict[str, set[str]],
@@ -599,7 +727,12 @@ def generate_sales_code_expression(
             return "FALSE"
 
         simplified = simplify_logic(SOPform(sympy_symbols, minterms), form="dnf", force=True)
-        return _to_sales_expr_from_sympy(simplified)
+        reduced_terms = _reduce_dnf_terms_against_observed_harnesses(
+            _sympy_expr_to_dnf_terms(simplified),
+            target,
+            harness_code_map,
+        )
+        return _dnf_terms_to_expression(reduced_terms)
 
     terms = []
     for pn in sorted(target):
@@ -607,9 +740,12 @@ def generate_sales_code_expression(
         literals = [code if code in active_codes else f"-{code}" for code in symbols_sorted]
         terms.append("&".join(literals))
 
-    if len(terms) == 1:
-        return terms[0]
-    return "/".join(f"({t})" for t in terms)
+    reduced_terms = _reduce_dnf_terms_against_observed_harnesses(
+        [term.split("&") if term else [] for term in terms],
+        target,
+        harness_code_map,
+    )
+    return _dnf_terms_to_expression(reduced_terms)
 
 
 def _connection_row(
@@ -1728,10 +1864,14 @@ def _run_analysis_core(
         generic_configs = group_configurations(non_d454_matrix)
         
         for cfg in generic_configs:
+            cfg_candidate_codes = _candidate_codes_for_configuration(
+                cfg.endpoints,
+                circuit_codes.get(cfg.circuit_name, set()),
+            )
             cfg.generated_sales_code = generate_sales_code_expression(
                 cfg.target_harness_pns,
                 harness_code_map,
-                candidate_codes=circuit_codes.get(cfg.circuit_name, set()),
+                candidate_codes=cfg_candidate_codes,
             )
             cfg.generated_sales_code_display = _simplify_sales_code_for_display(cfg.generated_sales_code)
 
@@ -1753,10 +1893,14 @@ def _run_analysis_core(
         configurations = group_configurations(presence_matrix)
 
         for cfg in configurations:
+            cfg_candidate_codes = _candidate_codes_for_configuration(
+                cfg.endpoints,
+                circuit_codes.get(cfg.circuit_name, set()),
+            )
             cfg.generated_sales_code = generate_sales_code_expression(
                 cfg.target_harness_pns,
                 harness_code_map,
-                candidate_codes=circuit_codes.get(cfg.circuit_name, set()),
+                candidate_codes=cfg_candidate_codes,
             )
             cfg.generated_sales_code_display = _simplify_sales_code_for_display(cfg.generated_sales_code)
 
