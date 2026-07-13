@@ -839,6 +839,19 @@ elif selected_tool == "Create SECR":
         )
         st.stop()
 
+    dtcr_matching_file = st.file_uploader(
+        "Optional: DTCR_Matching_Report workbook for later SECR enrichment",
+        type=["xlsx", "xlsm", "xls"],
+        key="create_secr_dtcr_matching_file",
+        help="Upload the Step 1 DTCR_Matching_Report workbook now if you want to use it when enriching the SECR after creation.",
+    )
+    if dtcr_matching_file is not None:
+        st.session_state["create_secr_dtcr_matching_bytes"] = dtcr_matching_file.getvalue()
+        st.session_state["create_secr_dtcr_matching_name"] = dtcr_matching_file.name
+    else:
+        st.session_state.pop("create_secr_dtcr_matching_bytes", None)
+        st.session_state.pop("create_secr_dtcr_matching_name", None)
+
     with st.form("secr_details_form"):
         st.subheader("SECR Details")
 
@@ -924,15 +937,11 @@ elif selected_tool == "Create SECR":
         # ──────────────────────────────────────────────────────────────────
         st.markdown("---")
         st.subheader("SECR Optional Enrichment")
-        st.markdown("Upload the DTCR_Matching_Report workbook from Step 1 to apply DTCR numbers and Reason for Change data to the SECR.")
+        st.markdown("If you uploaded the Step 1 DTCR_Matching_Report workbook above, you can use it here to apply DTCR numbers and Reason for Change data to the SECR.")
 
-        dtcr_matching_file = st.file_uploader(
-            "DTCR_Matching_Report workbook",
-            type=["xlsx", "xlsm", "xls"],
-            key="enrich_dtcr_matching_file",
-        )
+        dtcr_matching_bytes = st.session_state.get("create_secr_dtcr_matching_bytes")
 
-        if dtcr_matching_file is not None:
+        if dtcr_matching_bytes is not None:
             with st.form("secr_enrichment_form"):
                 st.markdown("**Enrichment Settings**")
                 enable_enrichment = st.checkbox(
@@ -952,7 +961,7 @@ elif selected_tool == "Create SECR":
             if enrich_clicked and enable_enrichment:
                 try:
                     with st.spinner("Processing SECR enrichment..."):
-                        dtcr_mapping_df = load_dtcr_matching_report(dtcr_matching_file.getvalue())
+                        dtcr_mapping_df = load_dtcr_matching_report(dtcr_matching_bytes)
                         secr_wb = load_generated_secr_workbook(secr_result)
 
                         if status_filter:
@@ -1029,4 +1038,6 @@ elif selected_tool == "Create SECR":
                     with st.expander("Preview: Matching DTCRs for This SECR"):
                         matched_df = preview_mapping_df[preview_mapping_df["Harness Family"] == preview_family]
                         st.dataframe(matched_df, use_container_width=True)
+        else:
+            st.info("No DTCR_Matching_Report workbook uploaded. Create SECR can still run normally, and you can upload the matching workbook later if needed for enrichment.")
 
