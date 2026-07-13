@@ -197,6 +197,24 @@ def load_generated_secr_workbook(file_bytes: bytes) -> openpyxl.Workbook:
         raise ValueError(f"Failed to load SECR workbook: {e}")
 
 
+def load_dtcr_matching_report(file_bytes: bytes) -> pd.DataFrame:
+    """Load a DTCR matching report workbook exported by DTCR Matching Report."""
+    df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    required = ["DTCR#", "Device Transmittal", "Reason for change", "Status", "Match Method", "Harness Family"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"DTCR Matching Report missing columns: {missing}. "
+            f"Detected columns: {list(df.columns[:20])}"
+        )
+
+    df = df.dropna(subset=["DTCR#"]).reset_index(drop=True)
+    df["DTCR#"] = df["DTCR#"].astype(str).str.strip()
+    return df[required + [c for c in df.columns if c not in required]]
+
+
 # ---------------------------------------------------------------------------
 # Text Processing
 # ---------------------------------------------------------------------------

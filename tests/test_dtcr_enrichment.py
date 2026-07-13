@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from io import BytesIO
 
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from secr_enrichment_engine import load_dtcr_report, match_dtcr_to_harness_family
+from secr_enrichment_engine import load_dtcr_matching_report, load_dtcr_report, match_dtcr_to_harness_family
 
 
 def test_match_dtcr_to_harness_family_includes_cnum_column() -> None:
@@ -49,3 +50,27 @@ def test_load_dtcr_report_accepts_summary_csv() -> None:
     assert result.loc[0, "Status"] == "Complete"
     assert result.loc[0, "Reason for change"] == "Adding seat belt reminder"
     assert result.loc[0, "Device Transmittal"] == "DTx wl 3rd row rt 1 (2)"
+
+
+def test_load_dtcr_matching_report_accepts_exported_workbook() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "DTCR#": "50311",
+                "Device Transmittal": "50311 - DTx wl 3rd row rt 1 (2).pdf",
+                "Reason for change": "Adding seat belt reminder",
+                "Status": "Complete",
+                "Match Method": "Device Name",
+                "Harness Family": "HF-1",
+            }
+        ]
+    )
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+
+    result = load_dtcr_matching_report(buffer.getvalue())
+
+    assert result.loc[0, "DTCR#"] == "50311"
+    assert result.loc[0, "Harness Family"] == "HF-1"
+    assert result.loc[0, "Match Method"] == "Device Name"
