@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import io
 import inspect
+import io
 import sys
 import tempfile
 import zipfile
@@ -27,7 +27,6 @@ from secr_enrichment_engine import (
     build_reason_for_change_for_secr,
     build_dtcr_numbers_for_secr,
     build_enrichment_summary,
-    validate_enrichment_inputs,
     export_dtcr_mapping_styled,
     export_secr_enriched_output,
 )
@@ -84,6 +83,47 @@ def render_tool_scroll_anchor(tool_name: str) -> None:
             """,
             height=0,
         )
+
+
+def _auto_enrich_secr_if_requested(
+    secr_bytes: bytes,
+    dtcr_matching_bytes: bytes,
+    output_filename: str,
+) -> tuple[bytes, dict, pd.DataFrame, pd.DataFrame, str]:
+    dtcr_mapping_df = load_dtcr_matching_report(dtcr_matching_bytes)
+    dtcr_mapping_df = dtcr_mapping_df[
+        dtcr_mapping_df["Status"].astype(str).str.strip().isin(["Complete", "Draft"])
+    ]
+
+    secr_wb = load_generated_secr_workbook(secr_bytes)
+    secr_harness_family = get_secr_harness_family_from_c12(secr_wb)
+    if dtcr_mapping_df.empty:
+        raise ValueError("DTCR Matching Report is empty after filtering.")
+    if not secr_harness_family:
+        raise ValueError("SECR cell C12 is empty or invalid.")
+
+    reason_text = build_reason_for_change_for_secr(secr_harness_family, dtcr_mapping_df)
+    summary_df = build_enrichment_summary(dtcr_mapping_df, secr_harness_family, reason_text)
+
+    reason_cell_info = find_reason_for_change_cell(secr_wb)
+    if reason_cell_info:
+        _, cell_ref = reason_cell_info
+        update_secr_reason_for_change(secr_wb, cell_ref, reason_text)
+
+    dtcr_label_info = find_dtcr_number_label_cell(secr_wb)
+    if dtcr_label_info:
+        _, dtcr_label_ref = dtcr_label_info
+        dtcr_numbers_text = build_dtcr_numbers_for_secr(secr_harness_family, dtcr_mapping_df)
+        update_secr_dtcr_numbers(secr_wb, dtcr_label_ref, dtcr_numbers_text)
+
+    enriched_bytes, export_meta = export_secr_enriched_output(
+        secr_wb,
+        dtcr_mapping_df,
+        dtcr_mapping_df,
+        summary_df,
+        output_filename=output_filename,
+    )
+    return enriched_bytes, export_meta, dtcr_mapping_df, summary_df, secr_harness_family
 
 st.markdown(
     """
@@ -823,7 +863,7 @@ elif selected_tool == "Create SECR":
     render_tool_scroll_anchor("Create SECR")
     st.title("Create SECR")
     st.caption(
-        "Create a SECR workbook from the DEF-to-DEF compare file, then enrich it using the DTCR_Matching_Report workbook exported from Step 1."
+        "Create a SECR workbook from the DEF-to-DEF compare file. If you upload a DTCR_Matching_Report workbook, the SECR is enriched automatically after generation."
     )
 
     def_file = st.file_uploader(
@@ -840,17 +880,11 @@ elif selected_tool == "Create SECR":
         st.stop()
 
     dtcr_matching_file = st.file_uploader(
-        "Optional: DTCR_Matching_Report workbook for later SECR enrichment",
+        "Optional: DTCR_Matching_Report workbook",
         type=["xlsx", "xlsm", "xls"],
         key="create_secr_dtcr_matching_file",
-        help="Upload the Step 1 DTCR_Matching_Report workbook now if you want to use it when enriching the SECR after creation.",
+        help="Upload the Step 1 DTCR_Matching_Report workbook now to auto-enrich the SECR after it is created.",
     )
-    if dtcr_matching_file is not None:
-        st.session_state["create_secr_dtcr_matching_bytes"] = dtcr_matching_file.getvalue()
-        st.session_state["create_secr_dtcr_matching_name"] = dtcr_matching_file.name
-    else:
-        st.session_state.pop("create_secr_dtcr_matching_bytes", None)
-        st.session_state.pop("create_secr_dtcr_matching_name", None)
 
     with st.form("secr_details_form"):
         st.subheader("SECR Details")
@@ -896,28 +930,40 @@ elif selected_tool == "Create SECR":
     if generate_clicked:
         try:
             with st.spinner("Building SECR workbook..."):
-                create_secr_kwargs = {
-                    "def_bytes": def_file.getvalue(),
-                    "def_filename": def_file.name,
-                    "reason_for_change": reason_for_change,
-                    "secr_author": secr_author,
-                    "design_release_engineer": design_release_engineer,
-                    "change_requested_by": change_requested_by,
-                    "original_issue_date": original_issue_date,
-                    "reissue_date": reissue_date,
-                    "version": version,
-                    "phase_implemented": phase_implemented,
-                    "pull_ahead": pull_ahead,
-                    "m_code_suffix": int(m_code_suffix),
-                }
-                if "dtcr_matching_bytes" in inspect.signature(create_secr_bytes).parameters:
-                    create_secr_kwargs["dtcr_matching_bytes"] = st.session_state.get(
-                        "create_secr_dtcr_matching_bytes"
-                    )
-                secr_bytes, meta = create_secr_bytes(**create_secr_kwargs)
-            st.session_state["secr_result_bytes"] = secr_bytes
-            st.session_state["secr_result_filename"] = meta["filename"]
-            st.session_state["secr_result_meta"] = meta
+                secr_bytes, meta = create_secr_bytes(
+                    def_bytes=def_file.getvalue(),
+                    def_filename=def_file.name,
+                    reason_for_change=reason_for_change,
+                    secr_author=secr_author,
+                    design_release_engineer=design_release_engineer,
+                    change_requested_by=change_requested_by,
+                    original_issue_date=original_issue_date,
+                    reissue_date=reissue_date,
+                    version=version,
+                    phase_implemented=phase_implemented,
+                    pull_ahead=pull_ahead,
+                    m_code_suffix=int(m_code_suffix),
+                )
+                st.session_state["secr_result_bytes"] = secr_bytes
+                st.session_state["secr_result_filename"] = meta["filename"]
+                st.session_state["secr_result_meta"] = meta
+                st.session_state["secr_result_enriched"] = False
+                if dtcr_matching_file is not None:
+                    try:
+                        secr_bytes, meta, dtcr_mapping_df, summary_df, secr_harness_family = _auto_enrich_secr_if_requested(
+                            secr_bytes,
+                            dtcr_matching_file.getvalue(),
+                            meta.get("filename", "SECR_output.xlsx"),
+                        )
+                        st.session_state["dtcr_matching_preview_df"] = dtcr_mapping_df
+                        st.session_state["dtcr_matching_preview_summary_df"] = summary_df
+                        st.session_state["dtcr_matching_preview_family"] = secr_harness_family
+                        st.session_state["secr_result_filename"] = meta["filename"]
+                        st.session_state["secr_result_meta"] = meta
+                        st.session_state["secr_result_bytes"] = secr_bytes
+                        st.session_state["secr_result_enriched"] = True
+                    except Exception as enrich_exc:
+                        st.warning(f"DTCR matching workbook was uploaded but could not be applied: {enrich_exc}")
         except Exception as exc:
             st.error(f"SECR creation failed: {exc}")
 
@@ -936,113 +982,6 @@ elif selected_tool == "Create SECR":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="secr_dl_btn",
         )
-
-        # ──────────────────────────────────────────────────────────────────
-        # Optional: SECR Reason for Change Enrichment
-        # ──────────────────────────────────────────────────────────────────
-        st.markdown("---")
-        st.subheader("SECR Optional Enrichment")
-        st.markdown("If you uploaded the Step 1 DTCR_Matching_Report workbook above, you can use it here to apply DTCR numbers and Reason for Change data to the SECR.")
-
-        dtcr_matching_bytes = st.session_state.get("create_secr_dtcr_matching_bytes")
-
-        if dtcr_matching_bytes is not None:
-            with st.form("secr_enrichment_form"):
-                st.markdown("**Enrichment Settings**")
-                enable_enrichment = st.checkbox(
-                    "Enable SECR Reason for Change Enrichment",
-                    value=True,
-                    key="enrich_enable",
-                )
-                status_options = ["Complete", "Draft", "Rejected", "Deleted"]
-                status_filter = st.multiselect(
-                    "Filter DTCRs by Status",
-                    options=status_options,
-                    default=["Complete", "Draft"],
-                    key="enrich_status_filter",
-                )
-                enrich_clicked = st.form_submit_button("Run SECR Enrichment", type="primary")
-
-            if enrich_clicked and enable_enrichment:
-                try:
-                    with st.spinner("Processing SECR enrichment..."):
-                        dtcr_mapping_df = load_dtcr_matching_report(dtcr_matching_bytes)
-                        secr_wb = load_generated_secr_workbook(secr_result)
-
-                        if status_filter:
-                            dtcr_mapping_df = dtcr_mapping_df[
-                                dtcr_mapping_df["Status"].astype(str).str.strip().isin(status_filter)
-                            ]
-
-                        secr_harness_family = get_secr_harness_family_from_c12(secr_wb)
-                        if dtcr_mapping_df.empty:
-                            raise ValueError("DTCR Matching Report is empty after filtering.")
-                        if not secr_harness_family:
-                            raise ValueError("SECR cell C12 is empty or invalid.")
-
-                        reason_text = build_reason_for_change_for_secr(secr_harness_family, dtcr_mapping_df)
-                        summary_df = build_enrichment_summary(dtcr_mapping_df, secr_harness_family, reason_text)
-
-                        reason_cell_info = find_reason_for_change_cell(secr_wb)
-                        if reason_cell_info:
-                            _, cell_ref = reason_cell_info
-                            update_secr_reason_for_change(secr_wb, cell_ref, reason_text)
-                        else:
-                            st.warning("Could not find Reason for Change field in SECR. Skipping update.")
-
-                        dtcr_label_info = find_dtcr_number_label_cell(secr_wb)
-                        if dtcr_label_info:
-                            _, dtcr_label_ref = dtcr_label_info
-                            dtcr_numbers_text = build_dtcr_numbers_for_secr(secr_harness_family, dtcr_mapping_df)
-                            update_secr_dtcr_numbers(secr_wb, dtcr_label_ref, dtcr_numbers_text)
-                        else:
-                            st.warning("Could not find DTCR # field in SECR. Skipping DTCR # update.")
-
-                        base_secr_filename = st.session_state.get("secr_result_filename", "SECR_output.xlsx")
-                        enriched_bytes, export_meta = export_secr_enriched_output(
-                            secr_wb,
-                            dtcr_mapping_df,
-                            dtcr_mapping_df,
-                            summary_df,
-                            output_filename=base_secr_filename,
-                        )
-
-                        st.session_state["enriched_secr_bytes"] = enriched_bytes
-                        st.session_state["enriched_secr_filename"] = export_meta["filename"]
-                        st.session_state["dtcr_matching_preview_df"] = dtcr_mapping_df
-                        st.session_state["dtcr_matching_preview_summary_df"] = summary_df
-                        st.session_state["dtcr_matching_preview_family"] = secr_harness_family
-
-                except Exception as exc:
-                    st.error(f"Enrichment failed: {exc}")
-
-            enriched_result = st.session_state.get("enriched_secr_bytes")
-            if enriched_result is not None:
-                st.success("SECR enrichment complete.")
-
-                st.download_button(
-                    label="Download Updated SECR with DTCRs",
-                    data=enriched_result,
-                    file_name=st.session_state.get("enriched_secr_filename", "SECR_Enriched.xlsx"),
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="enrich_dl_secr_top",
-                    use_container_width=True,
-                )
-
-                preview_mapping_df = st.session_state.get("dtcr_matching_preview_df")
-                preview_summary_df = st.session_state.get("dtcr_matching_preview_summary_df")
-                preview_family = st.session_state.get("dtcr_matching_preview_family")
-
-                if preview_mapping_df is not None:
-                    with st.expander("Preview: DTCR Matching Report"):
-                        st.dataframe(preview_mapping_df, use_container_width=True)
-                if preview_summary_df is not None:
-                    with st.expander("Preview: Enrichment Summary"):
-                        st.dataframe(preview_summary_df, use_container_width=True)
-                if preview_mapping_df is not None and preview_family:
-                    with st.expander("Preview: Matching DTCRs for This SECR"):
-                        matched_df = preview_mapping_df[preview_mapping_df["Harness Family"] == preview_family]
-                        st.dataframe(matched_df, use_container_width=True)
-        else:
-            st.info("No DTCR_Matching_Report workbook uploaded. Create SECR can still run normally, and you can upload the matching workbook later if needed for enrichment.")
+        if st.session_state.get("secr_result_enriched"):
+            st.success("SECR was auto-enriched from the uploaded DTCR_Matching_Report workbook.")
 
