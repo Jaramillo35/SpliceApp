@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 import openpyxl
+import pandas as pd
 from openpyxl.cell import MergedCell
 
 TEMPLATE_PATH = Path(__file__).resolve().parent / "assets" / "SECR_TEMPLATE.xlsx"
@@ -78,6 +79,150 @@ def _find_action_col(ws, header_row: int = 3) -> int:
         if val and str(val).strip().lower() == "action":
             return c
     return 1  # fallback
+
+
+def _find_header_col(ws, header_row: int, candidates: tuple[str, ...]) -> int | None:
+    lowered_candidates = tuple(candidate.strip().lower() for candidate in candidates)
+    for col_idx in range(1, (ws.max_column or 1) + 1):
+        value = ws.cell(row=header_row, column=col_idx).value
+        if value is None:
+            continue
+        text = str(value).strip().lower()
+        if any(candidate == text or candidate in text for candidate in lowered_candidates):
+            return col_idx
+    return None
+
+
+def _normalize_comment_value(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _prepend_dtcr_comment(existing_comment: object, dtcr_number: str) -> str:
+    existing_text = _normalize_comment_value(existing_comment)
+    dtcr_text = f"DTCR {str(dtcr_number).strip()}"
+    if not existing_text:
+        return dtcr_text
+
+    parts = [part.strip() for part in existing_text.split("/") if part.strip()]
+    if dtcr_text in parts:
+        return existing_text
+    return "/".join([dtcr_text] + parts)
+
+
+def _normalize_match_token(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip().lower()
+
+
+def _value_matches_token(cell_value: object, token: str) -> bool:
+    if not token:
+        return False
+    text = _normalize_match_token(cell_value)
+    if not text:
+        return False
+    token_norm = token.strip().lower()
+    return token_norm in text or text in token_norm
+
+
+def _collect_dtcr_comment_targets(dtcr_matching_bytes: bytes | None) -> list[tuple[str, set[str]]]:
+    if not dtcr_matching_bytes:
+        return []
+
+    from secr_enrichment_engine import load_dtcr_matching_report
+
+    dtcr_df = load_dtcr_matching_report(dtcr_matching_bytes)
+    targets: list[tuple[str, set[str]]] = []
+    for _, row in dtcr_df.iterrows():
+        dtcr_number = _normalize_comment_value(row.get("DTCR#"))
+        if not dtcr_number:
+            continue
+        tokens = {
+            _normalize_match_token(row.get("CNUM")),
+            _normalize_match_token(row.get("Matched DTx Value")),
+            _normalize_match_token(row.get("Device Transmittal")),
+            _normalize_match_token(row.get("Extracted Device Control Number")),
+        }
+        tokens = {token for token in tokens if token}
+        targets.append((dtcr_number, tokens))
+    return targets
+
+
+def _apply_dtcr_comments_to_connector_sheet(wb_secr, dtcr_targets: list[tuple[str, set[str]]]) -> None:
+    if CONNECTOR_SHEET not in wb_secr.sheetnames or not dtcr_targets:
+        return
+
+    ws = wb_secr[CONNECTOR_SHEET]
+    comment_col = _find_header_col(ws, header_row=3, candidates=("SE Comment", "SE Comments"))
+    cnum_col = _find_header_col(ws, header_row=3, candidates=("FCA-CNUM",))
+    if comment_col is None or cnum_col is None:
+        return
+
+    for row_idx in range(4, (ws.max_row or 3) + 1):
+        row_values = [
+            ws.cell(row=row_idx, column=col_idx).value
+            for col_idx in range(1, ws.max_column + 1)
+            if col_idx != comment_col
+        ]
+        if not any(value is not None and str(value).strip() for value in row_values):
+            continue
+        for dtcr_number, tokens in dtcr_targets:
+            if any(
+                _value_matches_token(cell_value, token)
+                for cell_value in row_values
+                for token in tokens
+            ):
+                target_cell = ws.cell(row=row_idx, column=comment_col)
+                target_cell.value = _prepend_dtcr_comment(target_cell.value, dtcr_number)
+
+
+def _apply_dtcr_comments_to_circuit_sheet(wb_secr, dtcr_targets: list[tuple[str, set[str]]]) -> None:
+    if CIRCUIT_SHEET not in wb_secr.sheetnames or not dtcr_targets:
+        return
+
+    ws = wb_secr[CIRCUIT_SHEET]
+    comment_col = _find_header_col(ws, header_row=3, candidates=("SE Comment", "SE Comments"))
+    ckt_nbr_col = _find_header_col(ws, header_row=3, candidates=("CKT NBR",))
+    ckt_from_col = _find_header_col(ws, header_row=3, candidates=("CKT FROM (DNUM | CAV)",))
+    ckt_to_col = _find_header_col(ws, header_row=3, candidates=("CKT To (DNUM | CAV)", "CKT TO (DNUM | CAV)"))
+    if comment_col is None:
+        return
+
+    for row_idx in range(4, (ws.max_row or 3) + 1):
+        row_values = [
+            ws.cell(row=row_idx, column=col_idx).value
+            for col_idx in range(1, ws.max_column + 1)
+            if col_idx != comment_col
+        ]
+
+        if not any(value is not None and str(value).strip() for value in row_values):
+            continue
+
+        matched_dtcr_numbers: list[str] = []
+        for dtcr_number, tokens in dtcr_targets:
+            if any(
+                _value_matches_token(cell_value, token)
+                for cell_value in row_values
+                for token in tokens
+            ):
+                matched_dtcr_numbers.append(dtcr_number)
+
+        if matched_dtcr_numbers:
+            target_cell = ws.cell(row=row_idx, column=comment_col)
+            updated_comment = target_cell.value
+            for dtcr_number in matched_dtcr_numbers:
+                updated_comment = _prepend_dtcr_comment(updated_comment, dtcr_number)
+            target_cell.value = updated_comment
+
+
+def _apply_dtcr_comments_to_secr(wb_secr, dtcr_matching_bytes: bytes | None) -> None:
+    dtcr_targets = _collect_dtcr_comment_targets(dtcr_matching_bytes)
+    if not dtcr_targets:
+        return
+    _apply_dtcr_comments_to_connector_sheet(wb_secr, dtcr_targets)
+    _apply_dtcr_comments_to_circuit_sheet(wb_secr, dtcr_targets)
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +343,7 @@ def create_secr_bytes(
     phase_implemented: str,
     pull_ahead: str,
     m_code_suffix: int = 1,
+    dtcr_matching_bytes: bytes | None = None,
 ) -> Tuple[bytes, Dict[str, Any]]:
     """Create a SECR workbook from DEF compare bytes.
 
@@ -277,6 +423,7 @@ def create_secr_bytes(
     _process_def_def_summary(wb_template, ws_summary)
     _process_connector_sheet(wb_template, ws_summary)
     _process_circuit_sheet(wb_template, ws_summary)
+    _apply_dtcr_comments_to_secr(wb_template, dtcr_matching_bytes)
 
     # Unprotect all sheets so the user can edit the output
     for ws in wb_template.worksheets:
