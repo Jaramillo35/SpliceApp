@@ -597,6 +597,7 @@ elif selected_tool == "Create SECR":
                     phase_implemented=phase_implemented,
                     pull_ahead=pull_ahead,
                     m_code_suffix=int(m_code_suffix),
+                    dtcr_matching_bytes=st.session_state.get("create_secr_dtcr_matching_bytes"),
                 )
             st.session_state["secr_result_bytes"] = secr_bytes
             st.session_state["secr_result_filename"] = meta["filename"]
