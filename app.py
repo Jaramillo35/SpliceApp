@@ -265,7 +265,6 @@ if mode == "Home":
         with st.expander("Install and use the extension", expanded=False):
             st.markdown(
                 """
-## Ready-to-paste website instructions
 
 ### Install
 
