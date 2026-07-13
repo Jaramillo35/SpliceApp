@@ -46,8 +46,10 @@ from feedback_system import FeedbackStore, render_feedback_widget
 
 st.set_page_config(page_title="Wiring System Engineer Tools", layout="wide")
 
-LOGO_PATH = Path(__file__).resolve().parent / "assets" / "versigent_logo_horizontal.jpg"
-SPLICE_SAMPLE_INPUT_PATH = Path(__file__).resolve().parent / "assets" / "downloads" / "Z913_example_input.xlsx"
+APP_DIR = Path(__file__).resolve().parent
+LOGO_PATH = APP_DIR / "assets" / "versigent_logo_horizontal.jpg"
+SPLICE_SAMPLE_INPUT_PATH = APP_DIR / "assets" / "downloads" / "Z913_example_input.xlsx"
+DTCR_EXTENSION_ZIP_PATH = APP_DIR / "assets" / "downloads" / "ispeed-dtcr-downloader.zip"
 if LOGO_PATH.exists():
     st.image(str(LOGO_PATH), width=300)
 
@@ -230,6 +232,66 @@ if mode == "Home":
         if st.button("Open VBOM Risk Matrix", key="go_vbom", use_container_width=True):
             st.session_state["selected_tool"] = "VBOM Risk Matrix"
             st.rerun()
+
+    row3 = st.columns(1)
+
+    with row3[0]:
+        st.markdown(
+            """
+            <div class="tool-card">
+                <div class="tool-title">iSpeed DTCR Downloader</div>
+                <div class="tool-desc">
+                    Download the Chrome extension package used to capture iSpeed DTCR search results, attachments, and a DTCR summary CSV in one run.
+                </div>
+                <span class="tool-badge">Chrome Extension</span>
+                <span class="tool-badge">DTCR Attachments</span>
+                <span class="tool-badge">CSV Summary</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if DTCR_EXTENSION_ZIP_PATH.exists():
+            st.download_button(
+                "Download iSpeed DTCR Downloader",
+                data=DTCR_EXTENSION_ZIP_PATH.read_bytes(),
+                file_name="ispeed-dtcr-downloader.zip",
+                mime="application/zip",
+                key="download_ispeed_dtcr_extension",
+                use_container_width=True,
+            )
+        else:
+            st.warning("Chrome extension package not found. Expected: assets/downloads/ispeed-dtcr-downloader.zip")
+
+        with st.expander("Install and use the extension", expanded=False):
+            st.markdown(
+                """
+## Ready-to-paste website instructions
+
+### Install
+
+1. Download and unzip the extension.
+2. Open `chrome://extensions` in Chrome.
+3. Turn on **Developer mode**.
+4. Click **Load unpacked**.
+5. Select the unzipped `ispeed-dtcr-downloader` folder.
+6. Pin the extension from Chrome's Extensions menu.
+
+### What it does
+The extension processes the current iSpeed DTCR search results. It skips deleted or canceled DTCRs, records each Reason for Change, downloads attachments with cleaned filenames, and creates `DTCR_Summary.csv`.
+
+### How to use it
+
+1. Sign in to iSpeed.
+2. Select a Vehicle Program and Build Phase, then click **Search**.
+3. With the results visible, click the extension icon.
+4. Confirm the DTCR count.
+5. Click **Choose folder** and select an empty destination folder.
+6. Click **Start download**.
+7. Keep both tabs open until the run finishes.
+
+iSpeed can be slow. The extension waits for each detail page and the restored search results before continuing.
+                """
+            )
 
 if mode != "Home":
     st.session_state["selected_tool"] = mode

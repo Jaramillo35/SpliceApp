@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "vercel_app.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/download/ispeed-dtcr-downloader.zip",
+      "dest": "/vercel_app.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/vercel_app.py"
+    }
+  ]
+}

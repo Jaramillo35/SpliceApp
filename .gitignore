@@ -17,6 +17,7 @@ venv/
 
 # Build/artifacts
 *.zip
+!assets/downloads/ispeed-dtcr-downloader.zip
 
 # Generated outputs
 Wiring_Harness_Output.xlsx
@@ -26,3 +27,5 @@ Final_Test_Output.xlsx
 # Office temp lock files
 ~$*.xlsx
 ~$*.xls
+.vercel
+.env*
