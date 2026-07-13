@@ -66,7 +66,64 @@ def _map_columns(df: pd.DataFrame, mappings: dict) -> pd.DataFrame:
     return df.rename(columns=col_map)
 
 
-def load_dtcr_report(file_bytes: bytes) -> pd.DataFrame:
+def _derive_device_transmittal_from_attachments(value: object) -> str:
+    """Use the first attachment name as a best-effort transmittal fallback."""
+    if value is None or pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+    if not text:
+        return ""
+
+    first_attachment = re.split(r"[;\n]", text, maxsplit=1)[0].strip()
+    first_attachment = re.sub(r"\.[A-Za-z0-9]{1,8}$", "", first_attachment)
+    first_attachment = re.sub(r"^\s*\d+\s*-\s*", "", first_attachment)
+    return first_attachment.strip()
+
+
+def _load_dtcr_summary_csv(file_bytes: bytes) -> pd.DataFrame:
+    """Load DTCR_Summary.csv from the Chrome extension."""
+    df = pd.read_csv(io.BytesIO(file_bytes), dtype=str)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    mappings = {
+        "DTCR#": ["dtcr#", "dtcr #", "dtcr number", "dtcr no", "dtcr"],
+        "Reason for change": ["reason for change", "reason for", "reason"],
+        "Status": ["status", "request action", "action"],
+        "Device Transmittal": ["device transmittal", "transmittal", "device trans"],
+        "Attachments": ["attachments", "attachment"],
+    }
+    df = _map_columns(df, mappings)
+
+    required = ["DTCR#", "Reason for change"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"DTCR Summary CSV missing columns: {missing}. "
+            f"Detected columns: {list(df.columns[:20])}"
+        )
+
+    if "Device Transmittal" not in df.columns:
+        if "Attachments" in df.columns:
+            df["Device Transmittal"] = df["Attachments"].map(_derive_device_transmittal_from_attachments)
+        else:
+            df["Device Transmittal"] = ""
+
+    if "Status" not in df.columns:
+        df["Status"] = ""
+
+    keep_cols = ["DTCR#", "Device Transmittal", "Reason for change", "Status"]
+    df = df[keep_cols].copy()
+    df = df.dropna(subset=["DTCR#"]).reset_index(drop=True)
+    df["DTCR#"] = df["DTCR#"].astype(str).str.strip()
+    return df
+
+
+def load_dtcr_report(file_bytes: bytes, file_name: str | None = None) -> pd.DataFrame:
+    """Load a DTCR report from Excel or DTCR_Summary.csv bytes."""
+    if file_name and file_name.lower().endswith(".csv"):
+        return _load_dtcr_summary_csv(file_bytes)
+
     """Load DTCR Report from Excel bytes with auto header-row detection."""
     keyword_sets = [["dtcr"], ["transmittal"], ["reason"], ["status"]]
     header_row = _find_header_row(file_bytes, keyword_sets)
