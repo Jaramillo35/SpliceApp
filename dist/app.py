@@ -584,21 +584,25 @@ elif selected_tool == "Create SECR":
     if generate_clicked:
         try:
             with st.spinner("Building SECR workbook..."):
-                secr_bytes, meta = create_secr_bytes(
-                    def_bytes=def_file.getvalue(),
-                    def_filename=def_file.name,
-                    reason_for_change=reason_for_change,
-                    secr_author=secr_author,
-                    design_release_engineer=design_release_engineer,
-                    change_requested_by=change_requested_by,
-                    original_issue_date=original_issue_date,
-                    reissue_date=reissue_date,
-                    version=version,
-                    phase_implemented=phase_implemented,
-                    pull_ahead=pull_ahead,
-                    m_code_suffix=int(m_code_suffix),
-                    dtcr_matching_bytes=st.session_state.get("create_secr_dtcr_matching_bytes"),
-                )
+                create_secr_kwargs = {
+                    "def_bytes": def_file.getvalue(),
+                    "def_filename": def_file.name,
+                    "reason_for_change": reason_for_change,
+                    "secr_author": secr_author,
+                    "design_release_engineer": design_release_engineer,
+                    "change_requested_by": change_requested_by,
+                    "original_issue_date": original_issue_date,
+                    "reissue_date": reissue_date,
+                    "version": version,
+                    "phase_implemented": phase_implemented,
+                    "pull_ahead": pull_ahead,
+                    "m_code_suffix": int(m_code_suffix),
+                }
+                if "dtcr_matching_bytes" in inspect.signature(create_secr_bytes).parameters:
+                    create_secr_kwargs["dtcr_matching_bytes"] = st.session_state.get(
+                        "create_secr_dtcr_matching_bytes"
+                    )
+                secr_bytes, meta = create_secr_bytes(**create_secr_kwargs)
             st.session_state["secr_result_bytes"] = secr_bytes
             st.session_state["secr_result_filename"] = meta["filename"]
             st.session_state["secr_result_meta"] = meta
