@@ -944,22 +944,23 @@ elif selected_tool == "Create SECR":
                     pull_ahead=pull_ahead,
                     m_code_suffix=int(m_code_suffix),
                 )
+                base_meta = dict(meta)
                 st.session_state["secr_result_bytes"] = secr_bytes
-                st.session_state["secr_result_filename"] = meta["filename"]
-                st.session_state["secr_result_meta"] = meta
+                st.session_state["secr_result_filename"] = base_meta["filename"]
+                st.session_state["secr_result_meta"] = base_meta
                 st.session_state["secr_result_enriched"] = False
                 if dtcr_matching_file is not None:
                     try:
                         secr_bytes, meta, dtcr_mapping_df, summary_df, secr_harness_family = _auto_enrich_secr_if_requested(
                             secr_bytes,
                             dtcr_matching_file.getvalue(),
-                            meta.get("filename", "SECR_output.xlsx"),
+                            base_meta.get("filename", "SECR_output.xlsx"),
                         )
                         st.session_state["dtcr_matching_preview_df"] = dtcr_mapping_df
                         st.session_state["dtcr_matching_preview_summary_df"] = summary_df
                         st.session_state["dtcr_matching_preview_family"] = secr_harness_family
-                        st.session_state["secr_result_filename"] = meta["filename"]
-                        st.session_state["secr_result_meta"] = meta
+                        st.session_state["secr_result_filename"] = base_meta["filename"]
+                        st.session_state["secr_result_meta"] = base_meta
                         st.session_state["secr_result_bytes"] = secr_bytes
                         st.session_state["secr_result_enriched"] = True
                     except Exception as enrich_exc:
