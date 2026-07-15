@@ -1,4 +1,45 @@
 {
-  "workflow_runs": [],
-  "workflow_feedback": []
+  "workflow_runs": [
+    {
+      "id": "54c76097-fd84-40fa-aee0-a959d189d748",
+      "anonymous_user_id": null,
+      "anonymous_session_id": "f1cf3d63-3f1f-4bbe-89ef-de19b18eea05",
+      "workflow_id": "splice_generation",
+      "workflow_version": null,
+      "started_at": "2026-07-15T19:27:00.324089+00:00",
+      "completed_at": "2026-07-15T19:27:01.410288+00:00",
+      "status": "completed",
+      "processing_seconds": 1.0862014050362632,
+      "input_file_count": 1,
+      "output_file_count": 1,
+      "rows_read": 8,
+      "rows_processed": 27,
+      "circuits_processed": 1,
+      "harness_variants_processed": 55,
+      "automatic_validation_errors": 1,
+      "automatic_validation_warnings": 0,
+      "automatic_validation_failures": 1,
+      "output_generated": true,
+      "failure_category": null,
+      "created_at": "2026-07-15T19:27:00.324089+00:00"
+    }
+  ],
+  "workflow_feedback": [
+    {
+      "id": "3467df2d-a698-42a3-a08f-5f15953719be",
+      "workflow_run_id": "54c76097-fd84-40fa-aee0-a959d189d748",
+      "workflow_id": "splice_generation",
+      "anonymous_session_id": "f1cf3d63-3f1f-4bbe-89ef-de19b18eea05",
+      "baseline_minutes": null,
+      "baseline_manual_touchpoints": null,
+      "remaining_manual_touchpoints": null,
+      "manual_touchpoints_eliminated": null,
+      "user_reported_errors_prevented": null,
+      "usefulness_rating": null,
+      "non_confidential_feedback": null,
+      "time_saved_minutes": null,
+      "time_savings_percentage": null,
+      "created_at": "2026-07-15T19:27:01.412251+00:00"
+    }
+  ]
 }
