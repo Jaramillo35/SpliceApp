@@ -27,7 +27,7 @@ def render_metrics_dashboard(tracker: MetricsTracker) -> None:
         st.stop()
 
     if not tracker.metrics_storage_available():
-        st.warning("Persistent metrics storage is not configured. Dashboard can only show data when PostgreSQL/Supabase is connected.")
+        st.warning("Metrics storage is not configured. Dashboard can only show data when JSON persistence is available.")
         st.stop()
 
     weeks = st.slider("Lookback window (weeks)", min_value=4, max_value=52, value=12)

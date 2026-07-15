@@ -71,8 +71,7 @@ time_savings_percentage is null when baseline_minutes is missing or baseline_min
 
 ## File Storage
 
-- Shared/deployed persistence: PostgreSQL via METRICS_DATABASE_URL
-- Local fallback metrics file: data/impact_metrics.json
+- Metrics output file: data/impact_metrics.json
 - Baseline configuration file: data/impact_baselines.json
 
 ## Workflow-Specific Counting Notes

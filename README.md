@@ -122,11 +122,8 @@ The metrics system does not store workbook contents, filenames, circuit names, c
 
 ### Metrics Persistence
 
-Local development fallback:
+Metrics are saved locally to:
 - metrics are saved to `data/impact_metrics.json`
-
-Deployed Streamlit Cloud / shared usage:
-- set `METRICS_DATABASE_URL` in Streamlit secrets so metrics persist across users and app restarts
 
 Baseline manual minutes are configured in:
 - `data/impact_baselines.json`
@@ -136,8 +133,6 @@ Set baseline minutes per workflow key in `data/impact_baselines.json` to enable 
 ### Disable Metrics Persistence (Optional)
 
 Set `METRICS_JSON_PATH` to an alternate file path if needed.
-
-If `METRICS_DATABASE_URL` is configured, the app prefers PostgreSQL storage over the local JSON fallback.
 
 ### Protected Metrics Dashboard
 
