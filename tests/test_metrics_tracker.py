@@ -83,9 +83,9 @@ def test_tracker_feedback_auto_records_on_completion() -> None:
     assert len(storage.feedback) == 1
     saved = storage.feedback[0]
     assert saved["workflow_run_id"] == run["run_id"]
-    assert saved["baseline_minutes"] is None
-    assert saved["time_saved_minutes"] is None
-    assert saved["time_savings_percentage"] is None
+    assert saved["baseline_minutes"] == 3360
+    assert saved["time_saved_minutes"] is not None
+    assert saved["time_savings_percentage"] is not None
 
 
 def test_storage_unavailability_never_blocks() -> None:

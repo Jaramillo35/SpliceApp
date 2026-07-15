@@ -1,8 +1,8 @@
 {
-  "splice_generation": null,
-  "dtx_preorder_generation": null,
-  "dtx_compare_report": null,
-  "dtcr_matching_report": null,
-  "create_secr": null,
-  "vbom_risk_matrix": null
+  "splice_generation": 30,
+  "dtx_preorder_generation": 60,
+  "dtx_compare_report": 60,
+  "dtcr_matching_report": 240,
+  "create_secr": 40,
+  "vbom_risk_matrix": 3360
 }
