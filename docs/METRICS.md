@@ -13,7 +13,7 @@ The metrics system intentionally does not store:
 - stack traces
 - raw IP addresses
 
-Only aggregate-safe counts and optional non-confidential user feedback are stored.
+Only aggregate-safe counts and automatically computed impact fields are stored.
 
 ## workflow_runs
 
@@ -32,8 +32,8 @@ Only aggregate-safe counts and optional non-confidential user feedback are store
 | output_file_count | int nullable | automatic | Number of generated output files |
 | rows_read | int nullable | automatic | Number of rows read from existing in-memory dataframes |
 | rows_processed | int nullable | automatic | Number of relevant engineering rows processed/generated |
-| circuits_processed | int nullable | automatic or user-reported fallback | Null when not reliably measurable |
-| harness_variants_processed | int nullable | automatic or user-reported fallback | Null when not reliably measurable |
+| circuits_processed | int nullable | automatic | Null when not reliably measurable |
+| harness_variants_processed | int nullable | automatic | Null when not reliably measurable |
 | automatic_validation_errors | int nullable | automatic | Error counts already detected by workflow logic |
 | automatic_validation_warnings | int nullable | automatic | Warning counts already detected by workflow logic |
 | automatic_validation_failures | int nullable | automatic | Validation failure counts already detected by workflow logic |
@@ -49,13 +49,13 @@ Only aggregate-safe counts and optional non-confidential user feedback are store
 | workflow_run_id | UUID text | automatic linkage | One feedback row per run |
 | workflow_id | text | automatic | Workflow identifier |
 | anonymous_session_id | text | automatic | Session identifier |
-| baseline_minutes | int nullable | user-reported | Parsed from pre-run hours/minutes |
-| baseline_manual_touchpoints | int nullable | user-reported | Pre-run touchpoints |
-| remaining_manual_touchpoints | int nullable | user-reported | Post-run touchpoints |
-| manual_touchpoints_eliminated | int nullable | calculated | max(baseline_manual_touchpoints - remaining_manual_touchpoints, 0) |
-| user_reported_errors_prevented | int nullable | user-reported | Separate from automatic errors |
-| usefulness_rating | int nullable | user-reported | Optional 1 to 5 |
-| non_confidential_feedback | text nullable | user-reported | Must not include confidential data |
+| baseline_minutes | int nullable | configured | Loaded per workflow from data/impact_baselines.json (or env/secrets override) |
+| baseline_manual_touchpoints | int nullable | automatic null | Reserved for future use |
+| remaining_manual_touchpoints | int nullable | automatic null | Reserved for future use |
+| manual_touchpoints_eliminated | int nullable | automatic null | Reserved for future use |
+| user_reported_errors_prevented | int nullable | automatic null | Reserved for future use |
+| usefulness_rating | int nullable | automatic null | Reserved for future use |
+| non_confidential_feedback | text nullable | automatic null | Reserved for future use |
 | time_saved_minutes | double precision nullable | calculated | max(baseline_minutes - automated_processing_minutes, 0) |
 | time_savings_percentage | double precision nullable | calculated | ((baseline_minutes - automated_processing_minutes) / baseline_minutes) * 100 |
 | created_at | timestamptz | automatic | UTC timestamp |
@@ -64,11 +64,15 @@ Only aggregate-safe counts and optional non-confidential user feedback are store
 
 Only compute savings metrics when required values exist.
 
-- manual_touchpoints_eliminated = max(baseline_manual_touchpoints - remaining_manual_touchpoints, 0)
 - time_saved_minutes = max(baseline_minutes - automated_processing_minutes, 0)
 - time_savings_percentage = ((baseline_minutes - automated_processing_minutes) / baseline_minutes) * 100
 
 time_savings_percentage is null when baseline_minutes is missing or baseline_minutes <= 0.
+
+## File Storage
+
+- Metrics output file: data/impact_metrics.json
+- Baseline configuration file: data/impact_baselines.json
 
 ## Workflow-Specific Counting Notes
 

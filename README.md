@@ -98,21 +98,13 @@ Automatic metrics (when reliably detectable):
 - workflow version (commit SHA) when available
 - failure category without stack traces
 
-User-reported metrics (optional prompts):
-- baseline manual duration before automation
-- baseline manual touchpoints
-- remaining manual touchpoints after automation
-- user-reported errors prevented before release
-- optional usefulness rating
-- optional non-confidential feedback text
+Configured baseline metrics (no in-app user prompts):
+- baseline manual duration per workflow from `data/impact_baselines.json`
+- automatic time saved and time-savings percentage per run when baseline is configured
 
 ### Formulas
 
 The app calculates impact only when required values are available:
-
-$$
-manual\_touchpoints\_eliminated = \max(baseline\_manual\_touchpoints - remaining\_manual\_touchpoints, 0)
-$$
 
 $$
 time\_saved\_minutes = \max(baseline\_minutes - automated\_processing\_minutes, 0)
@@ -128,20 +120,19 @@ time_savings_percentage is only calculated when baseline_minutes > 0.
 
 The metrics system does not store workbook contents, filenames, circuit names, company identifiers, ticket contents, raw IP addresses, or stack traces.
 
-### Database Configuration
+### JSON Persistence
 
-Streamlit local filesystem storage is not used as the production metrics database.
+Metrics are saved locally to:
+- `data/impact_metrics.json`
 
-Configure a persistent PostgreSQL/Supabase database:
-1. Apply schema from [docs/metrics_schema.sql](docs/metrics_schema.sql)
-2. Set METRICS_DATABASE_URL in deployment secrets
-3. Optionally set METRICS_ADMIN_TOKEN to enable the protected dashboard page
+Baseline manual minutes are configured in:
+- `data/impact_baselines.json`
 
-A placeholder secrets template is included at [.streamlit/secrets.toml.example](.streamlit/secrets.toml.example).
+Set baseline minutes per workflow key in `data/impact_baselines.json` to enable automatic time-savings calculations.
 
-### Disable Metrics Persistence
+### Disable Metrics Persistence (Optional)
 
-If METRICS_DATABASE_URL is not configured, the app falls back to a safe no-storage mode that logs a non-sensitive warning and never blocks workflows.
+Set `METRICS_JSON_PATH` to an alternate file path if needed.
 
 ### Protected Metrics Dashboard
 

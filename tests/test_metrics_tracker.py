@@ -68,7 +68,7 @@ def test_tracker_records_failed_workflow_without_stacktrace() -> None:
     assert "xlsx" not in str(stored_run)
 
 
-def test_tracker_feedback_calculation_and_storage() -> None:
+def test_tracker_feedback_auto_records_on_completion() -> None:
     st.session_state.clear()
     storage = InMemoryStorage()
     tracker = MetricsTracker(storage)
@@ -80,25 +80,12 @@ def test_tracker_feedback_calculation_and_storage() -> None:
     run = tracker.get_last_completed_run("vbom_risk_matrix")
     assert run is not None
 
-    tracker.save_workflow_feedback(
-        "vbom_risk_matrix",
-        run["run_id"],
-        {
-            "baseline_minutes": 120,
-            "baseline_manual_touchpoints": 12,
-            "remaining_manual_touchpoints": 3,
-            "user_reported_errors_prevented": 2,
-            "usefulness_rating": 5,
-            "non_confidential_feedback": "Helpful output validation.",
-            "processing_seconds": 600.0,
-        },
-    )
-
     assert len(storage.feedback) == 1
     saved = storage.feedback[0]
-    assert saved["manual_touchpoints_eliminated"] == 9
-    assert round(saved["time_saved_minutes"], 2) == 110.0
-    assert round(saved["time_savings_percentage"], 2) == 91.67
+    assert saved["workflow_run_id"] == run["run_id"]
+    assert saved["baseline_minutes"] is None
+    assert saved["time_saved_minutes"] is None
+    assert saved["time_savings_percentage"] is None
 
 
 def test_storage_unavailability_never_blocks() -> None:

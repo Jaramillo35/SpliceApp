@@ -46,7 +46,6 @@ from vbom_streamlit_engine import run_vbom_workflow
 from feedback_system import FeedbackStore, render_feedback_widget
 from metrics.storage import build_metrics_storage
 from metrics.tracker import MetricsTracker
-from metrics.ui import render_post_run_feedback, render_pre_run_questions
 from metrics.workflow_metrics import (
     create_secr_counts,
     dtcr_matching_counts,
@@ -424,14 +423,6 @@ if selected_tool == "Splice Generation":
         st.info("Upload Input.xlsx (or equivalent) to begin analysis.")
         st.stop()
 
-    splice_pre_answers = render_pre_run_questions(
-        metrics_tracker,
-        "splice_generation",
-        ask_circuits_if_unknown=False,
-        ask_harness_if_unknown=False,
-    )
-    st.session_state["metrics_pre_answers_splice_generation"] = splice_pre_answers
-
     st.session_state["can_mode"] = can_mode
 
     upload_signature = f"{uploaded_file.name}:{uploaded_file.size}:{int(can_mode)}"
@@ -686,16 +677,6 @@ if selected_tool == "Splice Generation":
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-    splice_run = metrics_tracker.get_last_completed_run("splice_generation")
-    if splice_run is not None:
-        render_post_run_feedback(
-            metrics_tracker,
-            "splice_generation",
-            run_id=splice_run["run_id"],
-            processing_seconds=float(splice_run.get("processing_seconds") or 0.0),
-            pre_run_answers=st.session_state.get("metrics_pre_answers_splice_generation", {}),
-        )
-
 elif selected_tool == "DTx Compare Report":
     render_tool_scroll_anchor("DTx Compare Report")
     st.title("DTx Compare Report")
@@ -713,14 +694,6 @@ elif selected_tool == "DTx Compare Report":
 
     st.subheader("PreOrder Generation List")
     st.caption("Generate the PreOrder workbook directly for the selected DTx reports.")
-
-    preorder_pre_answers = render_pre_run_questions(
-        metrics_tracker,
-        "dtx_preorder_generation",
-        ask_circuits_if_unknown=True,
-        ask_harness_if_unknown=True,
-    )
-    st.session_state["metrics_pre_answers_dtx_preorder_generation"] = preorder_pre_answers
 
     if st.button("Generate PreOrder Generation List", type="secondary"):
         try:
@@ -746,16 +719,8 @@ elif selected_tool == "DTx Compare Report":
                 tracked_run.record_counts(
                     rows_read=preorder_counts["rows_read"],
                     rows_processed=preorder_counts["rows_processed"],
-                    circuits_processed=(
-                        preorder_counts["circuits_processed"]
-                        if preorder_counts["circuits_processed"] is not None
-                        else preorder_pre_answers.get("user_reported_circuits_processed")
-                    ),
-                    harness_variants_processed=(
-                        preorder_counts["harness_variants_processed"]
-                        if preorder_counts["harness_variants_processed"] is not None
-                        else preorder_pre_answers.get("user_reported_harness_variants_processed")
-                    ),
+                        circuits_processed=preorder_counts["circuits_processed"],
+                        harness_variants_processed=preorder_counts["harness_variants_processed"],
                     output_file_count=1,
                 )
                 tracked_run.record_validation_results(
@@ -783,24 +748,6 @@ elif selected_tool == "DTx Compare Report":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-    preorder_run = metrics_tracker.get_last_completed_run("dtx_preorder_generation")
-    if preorder_run is not None:
-        render_post_run_feedback(
-            metrics_tracker,
-            "dtx_preorder_generation",
-            run_id=preorder_run["run_id"],
-            processing_seconds=float(preorder_run.get("processing_seconds") or 0.0),
-            pre_run_answers=st.session_state.get("metrics_pre_answers_dtx_preorder_generation", {}),
-        )
-
-    compare_pre_answers = render_pre_run_questions(
-        metrics_tracker,
-        "dtx_compare_report",
-        ask_circuits_if_unknown=False,
-        ask_harness_if_unknown=True,
-    )
-    st.session_state["metrics_pre_answers_dtx_compare_report"] = compare_pre_answers
-
     if st.button("Generate Compare Report", type="primary"):
         try:
             event_key = f"dtx_compare_report:{time.time_ns()}"
@@ -822,11 +769,7 @@ elif selected_tool == "DTx Compare Report":
                     rows_read=compare_counts["rows_read"],
                     rows_processed=compare_counts["rows_processed"],
                     circuits_processed=compare_counts["circuits_processed"],
-                    harness_variants_processed=(
-                        compare_counts["harness_variants_processed"]
-                        if compare_counts["harness_variants_processed"] is not None
-                        else compare_pre_answers.get("user_reported_harness_variants_processed")
-                    ),
+                    harness_variants_processed=compare_counts["harness_variants_processed"],
                     output_file_count=1,
                 )
                 tracked_run.record_validation_results(
@@ -882,16 +825,6 @@ elif selected_tool == "DTx Compare Report":
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-    dtx_compare_run = metrics_tracker.get_last_completed_run("dtx_compare_report")
-    if dtx_compare_run is not None:
-        render_post_run_feedback(
-            metrics_tracker,
-            "dtx_compare_report",
-            run_id=dtx_compare_run["run_id"],
-            processing_seconds=float(dtx_compare_run.get("processing_seconds") or 0.0),
-            pre_run_answers=st.session_state.get("metrics_pre_answers_dtx_compare_report", {}),
-        )
-
 elif selected_tool == "DTCR Matching Report":
     render_tool_scroll_anchor("DTCR Matching Report")
     st.title("DTCR Matching Report")
@@ -912,14 +845,6 @@ elif selected_tool == "DTCR Matching Report":
         )
 
     if dtcr_match_file is not None and dtx_match_file is not None:
-        dtcr_pre_answers = render_pre_run_questions(
-            metrics_tracker,
-            "dtcr_matching_report",
-            ask_circuits_if_unknown=True,
-            ask_harness_if_unknown=False,
-        )
-        st.session_state["metrics_pre_answers_dtcr_matching_report"] = dtcr_pre_answers
-
         if st.button(
             "Generate DTCR Matching Report",
             type="primary",
@@ -942,11 +867,7 @@ elif selected_tool == "DTCR Matching Report":
                     tracked_run.record_counts(
                         rows_read=counts["rows_read"],
                         rows_processed=counts["rows_processed"],
-                        circuits_processed=(
-                            counts["circuits_processed"]
-                            if counts["circuits_processed"] is not None
-                            else dtcr_pre_answers.get("user_reported_circuits_processed")
-                        ),
+                        circuits_processed=counts["circuits_processed"],
                         harness_variants_processed=counts["harness_variants_processed"],
                         output_file_count=1,
                     )
@@ -982,30 +903,12 @@ elif selected_tool == "DTCR Matching Report":
                 use_container_width=True,
             )
 
-        dtcr_run = metrics_tracker.get_last_completed_run("dtcr_matching_report")
-        if dtcr_run is not None:
-            render_post_run_feedback(
-                metrics_tracker,
-                "dtcr_matching_report",
-                run_id=dtcr_run["run_id"],
-                processing_seconds=float(dtcr_run.get("processing_seconds") or 0.0),
-                pre_run_answers=st.session_state.get("metrics_pre_answers_dtcr_matching_report", {}),
-            )
-
 elif selected_tool == "VBOM Risk Matrix":
     render_tool_scroll_anchor("VBOM Risk Matrix")
     st.title("VBOM Risk Matrix")
     st.caption(
         "Upload a DoAll or BuildSpec file and one or more harness complexity files to generate the VBOM workbook bundle used by the desktop workflow."
     )
-
-    vbom_pre_answers = render_pre_run_questions(
-        metrics_tracker,
-        "vbom_risk_matrix",
-        ask_circuits_if_unknown=False,
-        ask_harness_if_unknown=False,
-    )
-    st.session_state["metrics_pre_answers_vbom_risk_matrix"] = vbom_pre_answers
 
     with st.form("vbom_streamlit_form"):
         my = st.text_input("Model Year (MY)", value="27")
@@ -1096,16 +999,6 @@ elif selected_tool == "VBOM Risk Matrix":
             use_container_width=True,
         )
 
-    vbom_run = metrics_tracker.get_last_completed_run("vbom_risk_matrix")
-    if vbom_run is not None:
-        render_post_run_feedback(
-            metrics_tracker,
-            "vbom_risk_matrix",
-            run_id=vbom_run["run_id"],
-            processing_seconds=float(vbom_run.get("processing_seconds") or 0.0),
-            pre_run_answers=st.session_state.get("metrics_pre_answers_vbom_risk_matrix", {}),
-        )
-
 elif selected_tool == "Create SECR":
     render_tool_scroll_anchor("Create SECR")
     st.title("Create SECR")
@@ -1132,14 +1025,6 @@ elif selected_tool == "Create SECR":
         key="create_secr_dtcr_matching_file",
         help="Upload the Step 1 DTCR_Matching_Report workbook now to auto-enrich the SECR after it is created.",
     )
-
-    secr_pre_answers = render_pre_run_questions(
-        metrics_tracker,
-        "create_secr",
-        ask_circuits_if_unknown=True,
-        ask_harness_if_unknown=True,
-    )
-    st.session_state["metrics_pre_answers_create_secr"] = secr_pre_answers
 
     with st.form("secr_details_form"):
         st.subheader("SECR Details")
@@ -1237,16 +1122,8 @@ elif selected_tool == "Create SECR":
                 tracked_run.record_counts(
                     rows_read=counts["rows_read"],
                     rows_processed=counts["rows_processed"],
-                    circuits_processed=(
-                        counts["circuits_processed"]
-                        if counts["circuits_processed"] is not None
-                        else secr_pre_answers.get("user_reported_circuits_processed")
-                    ),
-                    harness_variants_processed=(
-                        counts["harness_variants_processed"]
-                        if counts["harness_variants_processed"] is not None
-                        else secr_pre_answers.get("user_reported_harness_variants_processed")
-                    ),
+                    circuits_processed=counts["circuits_processed"],
+                    harness_variants_processed=counts["harness_variants_processed"],
                     output_file_count=1,
                 )
                 tracked_run.record_validation_results(
@@ -1276,13 +1153,4 @@ elif selected_tool == "Create SECR":
         if st.session_state.get("secr_result_enriched"):
             st.success("SECR was auto-enriched from the uploaded DTCR_Matching_Report workbook.")
 
-    secr_run = metrics_tracker.get_last_completed_run("create_secr")
-    if secr_run is not None:
-        render_post_run_feedback(
-            metrics_tracker,
-            "create_secr",
-            run_id=secr_run["run_id"],
-            processing_seconds=float(secr_run.get("processing_seconds") or 0.0),
-            pre_run_answers=st.session_state.get("metrics_pre_answers_create_secr", {}),
-        )
 
