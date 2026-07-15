@@ -125,6 +125,10 @@ The metrics system does not store workbook contents, filenames, circuit names, c
 Metrics are saved locally to:
 - metrics are saved to `data/impact_metrics.json`
 
+Optional shared sync for Streamlit Cloud:
+- set `GITHUB_REPOSITORY` and `GITHUB_TOKEN` in Streamlit secrets to sync metrics JSON back to the repo like tickets
+- optional overrides: `GITHUB_BRANCH` and `METRICS_GITHUB_PATH`
+
 Baseline manual minutes are configured in:
 - `data/impact_baselines.json`
 

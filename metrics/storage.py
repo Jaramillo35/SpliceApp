@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -8,9 +9,39 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean, median
 from typing import Any, Protocol
+from urllib import error, parse, request
+
+import streamlit as st
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _get_streamlit_secret(*keys: str) -> str | None:
+    try:
+        github_secrets = st.secrets.get("github", {})
+        for key in keys:
+            if key in st.secrets and st.secrets[key]:
+                return str(st.secrets[key])
+            if isinstance(github_secrets, dict) and key in github_secrets and github_secrets[key]:
+                return str(github_secrets[key])
+            lower_key = key.lower()
+            if isinstance(github_secrets, dict) and lower_key in github_secrets and github_secrets[lower_key]:
+                return str(github_secrets[lower_key])
+    except Exception:
+        return None
+    return None
+
+
+def _get_config_value(env_key: str, *, default: str | None = None, secret_keys: tuple[str, ...] = ()) -> str | None:
+    value = os.getenv(env_key)
+    if value:
+        return value
+    lookup_keys = (env_key, *secret_keys)
+    secret_value = _get_streamlit_secret(*lookup_keys)
+    if secret_value:
+        return secret_value
+    return default
 
 
 class MetricsStorage(Protocol):
@@ -85,6 +116,46 @@ class JsonMetricsStorage:
             self.file_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     @staticmethod
+    def _sort_metric_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        def sort_key(row: dict[str, Any]) -> tuple[str, str]:
+            created_at = str(row.get("created_at") or row.get("started_at") or row.get("completed_at") or "")
+            row_id = str(row.get("id") or row.get("workflow_run_id") or "")
+            return (created_at, row_id)
+
+        return sorted(rows, key=sort_key)
+
+    @classmethod
+    def _merge_rows(cls, existing: list[dict[str, Any]], incoming: list[dict[str, Any]], *, key_field: str) -> list[dict[str, Any]]:
+        merged_by_key: dict[str, dict[str, Any]] = {}
+        ordered_keys: list[str] = []
+
+        for row in [*existing, *incoming]:
+            key = str(row.get(key_field) or "")
+            if not key:
+                continue
+            if key not in merged_by_key:
+                ordered_keys.append(key)
+            merged_by_key[key] = dict(row)
+
+        merged_rows = [merged_by_key[key] for key in ordered_keys]
+        return cls._sort_metric_rows(merged_rows)
+
+    @classmethod
+    def _merge_metrics_payload(cls, existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "workflow_runs": cls._merge_rows(
+                existing.get("workflow_runs", []),
+                incoming.get("workflow_runs", []),
+                key_field="id",
+            ),
+            "workflow_feedback": cls._merge_rows(
+                existing.get("workflow_feedback", []),
+                incoming.get("workflow_feedback", []),
+                key_field="workflow_run_id",
+            ),
+        }
+
+    @staticmethod
     def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         normalized = {}
         for key, value in payload.items():
@@ -111,6 +182,8 @@ class JsonMetricsStorage:
             if row.get("id") == run_id:
                 row.update(normalized)
                 self._save(data)
+                if row.get("status") in {"failed", "abandoned"}:
+                    self.sync_to_github()
                 return
 
     def create_workflow_feedback(self, payload: dict[str, Any]) -> None:
@@ -120,6 +193,108 @@ class JsonMetricsStorage:
             return
         data["workflow_feedback"].append(self._normalize_payload(payload))
         self._save(data)
+        self.sync_to_github()
+
+    def sync_to_github(
+        self,
+        *,
+        repository: str | None = None,
+        token: str | None = None,
+        branch: str | None = None,
+        file_path: str | None = None,
+        max_attempts: int = 3,
+    ) -> dict[str, Any]:
+        repository = repository or _get_config_value(
+            "GITHUB_REPOSITORY",
+            secret_keys=("repository",),
+        )
+        token = token or _get_config_value(
+            "GITHUB_TOKEN",
+            secret_keys=("token",),
+        )
+        branch = branch or _get_config_value(
+            "GITHUB_BRANCH",
+            default="main",
+            secret_keys=("branch",),
+        )
+        file_path = file_path or _get_config_value(
+            "METRICS_GITHUB_PATH",
+            default="data/impact_metrics.json",
+            secret_keys=("metrics_path", "metrics_file_path"),
+        )
+
+        if not repository or not token:
+            return {
+                "ok": False,
+                "message": "GitHub sync requires GITHUB_REPOSITORY and GITHUB_TOKEN (env vars or Streamlit secrets).",
+            }
+
+        encoded_path = parse.quote(file_path)
+        url = f"https://api.github.com/repos/{repository}/contents/{encoded_path}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+        }
+
+        for attempt in range(max_attempts):
+            remote_payload = {"workflow_runs": [], "workflow_feedback": []}
+            sha: str | None = None
+
+            try:
+                existing_req = request.Request(url, headers=headers, method="GET")
+                with request.urlopen(existing_req) as response:
+                    existing = json.loads(response.read().decode("utf-8"))
+                sha = existing.get("sha")
+                raw_content = existing.get("content") or ""
+                decoded = base64.b64decode(raw_content).decode("utf-8") if raw_content else "{}"
+                loaded = json.loads(decoded) or {}
+                if isinstance(loaded, dict):
+                    remote_payload = {
+                        "workflow_runs": loaded.get("workflow_runs", []),
+                        "workflow_feedback": loaded.get("workflow_feedback", []),
+                    }
+            except error.HTTPError as exc:
+                if exc.code != 404:
+                    return {"ok": False, "message": f"GitHub lookup failed: {exc}"}
+            except Exception as exc:
+                return {"ok": False, "message": f"GitHub lookup failed: {exc}"}
+
+            merged_payload = self._merge_metrics_payload(remote_payload, self._load())
+            upload_payload = {
+                "message": "Update automated impact metrics",
+                "content": base64.b64encode(
+                    json.dumps(merged_payload, indent=2, ensure_ascii=False).encode("utf-8")
+                ).decode("utf-8"),
+                "branch": branch,
+            }
+            if sha:
+                upload_payload["sha"] = sha
+
+            put_req = request.Request(
+                url,
+                data=json.dumps(upload_payload).encode("utf-8"),
+                headers=headers,
+                method="PUT",
+            )
+            try:
+                with request.urlopen(put_req) as response:
+                    response_body = json.loads(response.read().decode("utf-8"))
+                self._save(merged_payload)
+                return {
+                    "ok": True,
+                    "message": f"Metrics synced to {repository}/{file_path}",
+                    "html_url": response_body.get("content", {}).get("html_url"),
+                }
+            except error.HTTPError as exc:
+                if exc.code in {409, 422} and attempt + 1 < max_attempts:
+                    continue
+                return {"ok": False, "message": f"GitHub update failed: {exc}"}
+            except Exception as exc:
+                return {"ok": False, "message": f"GitHub update failed: {exc}"}
+
+        return {"ok": False, "message": "GitHub update failed after multiple attempts."}
 
     def get_latest_baseline(self, anonymous_session_id: str, workflow_id: str) -> dict[str, Any] | None:
         data = self._load()

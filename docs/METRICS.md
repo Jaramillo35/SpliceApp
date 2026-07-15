@@ -73,6 +73,7 @@ time_savings_percentage is null when baseline_minutes is missing or baseline_min
 
 - Metrics output file: data/impact_metrics.json
 - Baseline configuration file: data/impact_baselines.json
+- Optional shared sync target: GitHub repo file via GITHUB_REPOSITORY, GITHUB_TOKEN, and METRICS_GITHUB_PATH
 
 ## Workflow-Specific Counting Notes
 
