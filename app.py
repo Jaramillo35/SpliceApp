@@ -45,7 +45,7 @@ from vbom_streamlit_engine import run_vbom_workflow
 from feedback_system import FeedbackStore, render_feedback_widget
 
 
-st.set_page_config(page_title="Wiring System Engineer Tools", layout="wide")
+st.set_page_config(page_title="Automotive Wiring Automation", layout="wide")
 
 APP_DIR = Path(__file__).resolve().parent
 LOGO_PATH = APP_DIR / "assets" / "versigent_logo_horizontal.jpg"
@@ -172,7 +172,7 @@ st.markdown(
 st.markdown(
     """
     <div class="hero">
-        <h1 style="margin-bottom: 0.35rem; color: #10273a;">Wiring System Engineer Tools</h1>
+        <h1 style="margin-bottom: 0.35rem; color: #10273a;">Automotive Wiring Automation</h1>
         <p style="margin: 0; color: #2f4b62;">
             Select a workflow below to launch wiring splice generation, DTx report comparison, or SECR creation.
         </p>

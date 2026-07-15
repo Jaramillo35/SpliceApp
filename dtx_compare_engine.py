@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import sys
 from collections import Counter
@@ -44,7 +45,14 @@ STATUS_COLORS = {
     "Modified": "#FFEB9C",
     "Unchanged": "#D9D9D9",
 }
-PREORDER_GENERATION_EXE_PATH = Path("/Users/martinjaramillo/Downloads/Development/DTx/PreOrderListGen.exe")
+
+
+def get_preorder_generation_exe_path() -> Path:
+    """Resolve PreOrder tool path from env var or a local assets fallback."""
+    env_path = os.getenv("PREORDER_GENERATION_EXE_PATH")
+    if env_path:
+        return Path(env_path).expanduser()
+    return Path(__file__).resolve().parent / "assets" / "downloads" / "PreOrderListGen.exe"
 
 
 @dataclass(frozen=True)

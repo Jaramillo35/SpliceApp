@@ -358,7 +358,7 @@ class RunSetupDialog:
             self.logo_img = ImageTk.PhotoImage(pil)
             tk.Label(parent, image=self.logo_img, bg=self.BRAND_NAVY).pack(anchor="w")
         except Exception:
-            tk.Label(parent, text="VERSIGENT", bg=self.BRAND_NAVY, fg=self.BRAND_WHITE, font=("Segoe UI", 18, "bold")).pack(anchor="w")
+            tk.Label(parent, text="Wiring Automation", bg=self.BRAND_NAVY, fg=self.BRAND_WHITE, font=("Segoe UI", 18, "bold")).pack(anchor="w")
 
     def _enable_dnd(self):
         self.doall_drop.drop_target_register(DND_FILES)

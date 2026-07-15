@@ -1,0 +1,3 @@
+DTCR#,Device Transmittal,Reason for change,Status,Match Method,Harness Family,CNUM
+60001,60001 - SAMPLE DEVICE A,Routing update,Complete,Device Name,HF-01,C100
+60002,60002 - SAMPLE DEVICE B,Terminal swap,Draft,Manual,HF-02,C245

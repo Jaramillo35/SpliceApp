@@ -213,6 +213,9 @@ def test_generate_preorder_generation_workbook_matches_real_dtx_reports() -> Non
     old_path = dtx_dir / "1 2027 KM AWDV1_FWDX2 DetailedDTxCircuitsReport_revA_EC.xls"
     new_path = dtx_dir / "2 2028 KM X2_49-X1_74 DetailedDTxCircuitsReport_revA_ec.xls"
 
+    if not old_path.exists() or not new_path.exists():
+        pytest.skip("Real DTx fixture files are not available in this environment.")
+
     result = generate_preorder_generation_workbook(
         old_file_bytes=old_path.read_bytes(),
         new_file_bytes=new_path.read_bytes(),

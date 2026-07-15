@@ -1,0 +1,26 @@
+[
+  {
+    "ticket_id": "TKT-SAMPLE-001",
+    "created_at": "2026-01-01T12:00:00+00:00",
+    "reported_by": "Engineer A",
+    "workflow": "Splice Generation",
+    "area": "Validation",
+    "category": "feedback",
+    "severity": "low",
+    "description": "Generated expression should be simplified for readability.",
+    "summary": "Simplify generated expression readability.",
+    "status": "new"
+  },
+  {
+    "ticket_id": "TKT-SAMPLE-002",
+    "created_at": "2026-01-02T14:30:00+00:00",
+    "reported_by": "Engineer B",
+    "workflow": "DTx Compare Report",
+    "area": "Summary Output",
+    "category": "bug",
+    "severity": "medium",
+    "description": "Missing summary row when CNUM exists only in the new file.",
+    "summary": "Summary misses new-only CNUM.",
+    "status": "new"
+  }
+]

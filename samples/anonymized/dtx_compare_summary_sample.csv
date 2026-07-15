@@ -1,0 +1,4 @@
+CNUM,Connector PN Change,Harness Family,Change Type
+C100,PN100A >> PN100B,HF-01,Connector PN Change
+C245,,-,Added
+C310,,-,Deleted

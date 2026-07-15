@@ -17,6 +17,8 @@ venv/
 
 # Build/artifacts
 *.zip
+*.exe
+dist/
 !assets/downloads/ispeed-dtcr-downloader.zip
 
 # Generated outputs
