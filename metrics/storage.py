@@ -535,6 +535,25 @@ class PostgresMetricsStorage:
 
 
 def build_metrics_storage() -> MetricsStorage:
+    dsn = os.getenv("METRICS_DATABASE_URL") or os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+    if not dsn:
+        try:
+            import streamlit as st
+
+            dsn = (
+                st.secrets.get("METRICS_DATABASE_URL")
+                or st.secrets.get("SUPABASE_DB_URL")
+                or st.secrets.get("DATABASE_URL")
+            )
+        except Exception:
+            dsn = None
+
+    if dsn:
+        try:
+            return PostgresMetricsStorage(dsn=dsn)
+        except Exception as exc:  # pragma: no cover
+            LOGGER.warning("Failed to initialize PostgreSQL metrics storage: %s", exc)
+
     json_path = os.getenv("METRICS_JSON_PATH")
     if not json_path:
         json_path = str(Path(__file__).resolve().parents[1] / "data" / "impact_metrics.json")

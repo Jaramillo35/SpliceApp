@@ -120,10 +120,13 @@ time_savings_percentage is only calculated when baseline_minutes > 0.
 
 The metrics system does not store workbook contents, filenames, circuit names, company identifiers, ticket contents, raw IP addresses, or stack traces.
 
-### JSON Persistence
+### Metrics Persistence
 
-Metrics are saved locally to:
-- `data/impact_metrics.json`
+Local development fallback:
+- metrics are saved to `data/impact_metrics.json`
+
+Deployed Streamlit Cloud / shared usage:
+- set `METRICS_DATABASE_URL` in Streamlit secrets so metrics persist across users and app restarts
 
 Baseline manual minutes are configured in:
 - `data/impact_baselines.json`
@@ -133,6 +136,8 @@ Set baseline minutes per workflow key in `data/impact_baselines.json` to enable 
 ### Disable Metrics Persistence (Optional)
 
 Set `METRICS_JSON_PATH` to an alternate file path if needed.
+
+If `METRICS_DATABASE_URL` is configured, the app prefers PostgreSQL storage over the local JSON fallback.
 
 ### Protected Metrics Dashboard
 
