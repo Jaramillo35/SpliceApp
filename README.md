@@ -80,6 +80,79 @@ pytest -q
 
 GitHub Actions runs the same suite in a clean Python environment on pushes and pull requests.
 
+## Production Impact Metrics
+
+The app now includes a shared, production-safe metrics layer across workflow cards.
+
+Automatic metrics (when reliably detectable):
+- workflow identifier
+- anonymous session identifier
+- workflow start and completion timestamps
+- processing duration in seconds
+- status (started, completed, failed, abandoned)
+- input and output file counts
+- rows read and rows processed
+- circuits and harness variants when available from existing data structures
+- automatic validation warnings/errors/failures already detected by the workflow
+- output generated flag
+- workflow version (commit SHA) when available
+- failure category without stack traces
+
+User-reported metrics (optional prompts):
+- baseline manual duration before automation
+- baseline manual touchpoints
+- remaining manual touchpoints after automation
+- user-reported errors prevented before release
+- optional usefulness rating
+- optional non-confidential feedback text
+
+### Formulas
+
+The app calculates impact only when required values are available:
+
+$$
+manual\_touchpoints\_eliminated = \max(baseline\_manual\_touchpoints - remaining\_manual\_touchpoints, 0)
+$$
+
+$$
+time\_saved\_minutes = \max(baseline\_minutes - automated\_processing\_minutes, 0)
+$$
+
+$$
+time\_savings\_percentage = \frac{baseline\_minutes - automated\_processing\_minutes}{baseline\_minutes} \times 100
+$$
+
+time_savings_percentage is only calculated when baseline_minutes > 0.
+
+### Privacy Behavior
+
+The metrics system does not store workbook contents, filenames, circuit names, company identifiers, ticket contents, raw IP addresses, or stack traces.
+
+### Database Configuration
+
+Streamlit local filesystem storage is not used as the production metrics database.
+
+Configure a persistent PostgreSQL/Supabase database:
+1. Apply schema from [docs/metrics_schema.sql](docs/metrics_schema.sql)
+2. Set METRICS_DATABASE_URL in deployment secrets
+3. Optionally set METRICS_ADMIN_TOKEN to enable the protected dashboard page
+
+A placeholder secrets template is included at [.streamlit/secrets.toml.example](.streamlit/secrets.toml.example).
+
+### Disable Metrics Persistence
+
+If METRICS_DATABASE_URL is not configured, the app falls back to a safe no-storage mode that logs a non-sensitive warning and never blocks workflows.
+
+### Protected Metrics Dashboard
+
+A protected Streamlit page is available at [Splice/pages/3_Metrics_Dashboard.py](pages/3_Metrics_Dashboard.py). It remains disabled until METRICS_ADMIN_TOKEN is configured.
+
+### Limitation: Unique Users vs Sessions
+
+Without authenticated identity, weekly unique users are approximated by weekly unique anonymous sessions.
+
+Full data dictionary: [docs/METRICS.md](docs/METRICS.md)
+
 ## Anonymized Sample Data
 
 Sample fixtures are available in [samples/anonymized](samples/anonymized):

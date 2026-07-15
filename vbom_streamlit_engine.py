@@ -224,10 +224,21 @@ def run_vbom_workflow(
             vin_matrix_df,
         )
 
+    metrics_stats = {
+        # rows_read combines primary input matrix rows and all harness complexity sheet rows.
+        "rows_read": int(len(vin_matrix_df) + sum(len(df_comp) for _, df_comp in per_file_master)),
+        # rows_processed reflects generated engineering output row totals.
+        "rows_processed": int(len(selections_df) + len(all_candidates_df) + len(final_bom_df)),
+        "circuits_processed": None,
+        "harness_variants_processed": int(len(per_file_families)),
+        "validation_warnings": int(len(excluded_df)),
+    }
+
     return {
         "output_dir": target_dir,
         "master_path": master_path,
         "vin_matrix_path": vin_matrix_path,
         "selections_path": selections_path,
         "formatted_template_path": formatted_template_path,
+        "metrics_stats": metrics_stats,
     }

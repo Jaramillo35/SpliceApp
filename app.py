@@ -4,6 +4,7 @@ import inspect
 import io
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -43,9 +44,22 @@ from wiring_harness_processor import (
 )
 from vbom_streamlit_engine import run_vbom_workflow
 from feedback_system import FeedbackStore, render_feedback_widget
+from metrics.storage import build_metrics_storage
+from metrics.tracker import MetricsTracker
+from metrics.ui import render_post_run_feedback, render_pre_run_questions
+from metrics.workflow_metrics import (
+    create_secr_counts,
+    dtcr_matching_counts,
+    dtx_compare_counts,
+    dtx_preorder_counts,
+    splice_counts,
+    vbom_counts,
+)
 
 
 st.set_page_config(page_title="Automotive Wiring Automation", layout="wide")
+
+metrics_tracker = MetricsTracker(build_metrics_storage())
 
 APP_DIR = Path(__file__).resolve().parent
 LOGO_PATH = APP_DIR / "assets" / "versigent_logo_horizontal.jpg"
@@ -410,34 +424,70 @@ if selected_tool == "Splice Generation":
         st.info("Upload Input.xlsx (or equivalent) to begin analysis.")
         st.stop()
 
+    splice_pre_answers = render_pre_run_questions(
+        metrics_tracker,
+        "splice_generation",
+        ask_circuits_if_unknown=False,
+        ask_harness_if_unknown=False,
+    )
+    st.session_state["metrics_pre_answers_splice_generation"] = splice_pre_answers
+
     st.session_state["can_mode"] = can_mode
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as temp_file:
-        temp_file.write(uploaded_file.getbuffer())
-        temp_path = temp_file.name
+    upload_signature = f"{uploaded_file.name}:{uploaded_file.size}:{int(can_mode)}"
+    previous_signature = st.session_state.get("analysis_signature")
+    should_recompute = ("analysis_result" not in st.session_state) or (previous_signature != upload_signature)
 
-    try:
-        run_analysis_sig = inspect.signature(run_analysis)
-        if "can_mode" in run_analysis_sig.parameters:
-            result = run_analysis(temp_path, can_mode=can_mode)
-        else:
-            result = run_analysis(temp_path)
-            if can_mode:
-                st.warning("CAN mode is not available in the loaded backend yet. Please reboot/redeploy the app.")
-    except Exception as exc:
-        st.error(f"Analysis failed: {exc}")
-        st.stop()
+    if should_recompute:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as temp_file:
+            temp_file.write(uploaded_file.getbuffer())
+            temp_path = temp_file.name
+        st.session_state["analysis_temp_path"] = temp_path
 
-    if "analysis_result" not in st.session_state:
-        st.session_state["analysis_result"] = result
-    else:
-        prev_name = st.session_state.get("uploaded_file_name")
-        prev_can_mode = st.session_state.get("analysis_can_mode")
-        if prev_name != uploaded_file.name or prev_can_mode != can_mode:
-            st.session_state["analysis_result"] = result
+        event_key = f"splice_generation:{upload_signature}"
+        try:
+            with metrics_tracker.track_workflow(
+                "splice_generation",
+                event_key=event_key,
+                input_file_count=1,
+            ) as tracked_run:
+                run_analysis_sig = inspect.signature(run_analysis)
+                if "can_mode" in run_analysis_sig.parameters:
+                    result = run_analysis(temp_path, can_mode=can_mode)
+                else:
+                    result = run_analysis(temp_path)
+                    if can_mode:
+                        st.warning("CAN mode is not available in the loaded backend yet. Please reboot/redeploy the app.")
 
-    st.session_state["uploaded_file_name"] = uploaded_file.name
-    st.session_state["analysis_can_mode"] = can_mode
+                st.session_state["analysis_result"] = result
+                counts = splice_counts(result)
+                tracked_run.record_counts(
+                    rows_read=counts["rows_read"],
+                    rows_processed=counts["rows_processed"],
+                    circuits_processed=counts["circuits_processed"],
+                    harness_variants_processed=counts["harness_variants_processed"],
+                    output_file_count=1,
+                )
+                tracked_run.record_validation_results(
+                    automatic_validation_errors=counts["automatic_validation_errors"],
+                    automatic_validation_warnings=counts["automatic_validation_warnings"],
+                    automatic_validation_failures=counts["automatic_validation_failures"],
+                )
+                tracked_run.complete(output_generated=bool(result.get("output_excel_bytes")), output_file_count=1)
+        except Exception as exc:
+            st.error(f"Analysis failed: {exc}")
+            st.stop()
+
+        st.session_state["analysis_signature"] = upload_signature
+        st.session_state["uploaded_file_name"] = uploaded_file.name
+        st.session_state["analysis_can_mode"] = can_mode
+
+    temp_path = st.session_state.get("analysis_temp_path", "")
+    if not temp_path:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as temp_file:
+            temp_file.write(uploaded_file.getbuffer())
+            temp_path = temp_file.name
+        st.session_state["analysis_temp_path"] = temp_path
     result = st.session_state["analysis_result"]
 
     st.subheader("Input Previews")
@@ -636,6 +686,16 @@ if selected_tool == "Splice Generation":
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+    splice_run = metrics_tracker.get_last_completed_run("splice_generation")
+    if splice_run is not None:
+        render_post_run_feedback(
+            metrics_tracker,
+            "splice_generation",
+            run_id=splice_run["run_id"],
+            processing_seconds=float(splice_run.get("processing_seconds") or 0.0),
+            pre_run_answers=st.session_state.get("metrics_pre_answers_splice_generation", {}),
+        )
+
 elif selected_tool == "DTx Compare Report":
     render_tool_scroll_anchor("DTx Compare Report")
     st.title("DTx Compare Report")
@@ -654,19 +714,60 @@ elif selected_tool == "DTx Compare Report":
     st.subheader("PreOrder Generation List")
     st.caption("Generate the PreOrder workbook directly for the selected DTx reports.")
 
+    preorder_pre_answers = render_pre_run_questions(
+        metrics_tracker,
+        "dtx_preorder_generation",
+        ask_circuits_if_unknown=True,
+        ask_harness_if_unknown=True,
+    )
+    st.session_state["metrics_pre_answers_dtx_preorder_generation"] = preorder_pre_answers
+
     if st.button("Generate PreOrder Generation List", type="secondary"):
         try:
-            temp_dir = Path(tempfile.mkdtemp(prefix="dtx_preorder_", dir=tempfile.gettempdir()))
-            old_temp_path = temp_dir / old_file.name
-            new_temp_path = temp_dir / new_file.name
-            old_temp_path.write_bytes(old_file.getvalue())
-            new_temp_path.write_bytes(new_file.getvalue())
+            event_key = f"dtx_preorder_generation:{time.time_ns()}"
+            with metrics_tracker.track_workflow(
+                "dtx_preorder_generation",
+                event_key=event_key,
+                input_file_count=2,
+            ) as tracked_run:
+                temp_dir = Path(tempfile.mkdtemp(prefix="dtx_preorder_", dir=tempfile.gettempdir()))
+                old_temp_path = temp_dir / old_file.name
+                new_temp_path = temp_dir / new_file.name
+                old_temp_path.write_bytes(old_file.getvalue())
+                new_temp_path.write_bytes(new_file.getvalue())
 
-            with st.spinner("Generating PreOrder workbook..."):
-                preorder_result = launch_preorder_generation_tool(
-                    old_file_path=old_temp_path,
-                    new_file_path=new_temp_path,
+                with st.spinner("Generating PreOrder workbook..."):
+                    preorder_result = launch_preorder_generation_tool(
+                        old_file_path=old_temp_path,
+                        new_file_path=new_temp_path,
+                    )
+
+                preorder_counts = dtx_preorder_counts(preorder_result)
+                tracked_run.record_counts(
+                    rows_read=preorder_counts["rows_read"],
+                    rows_processed=preorder_counts["rows_processed"],
+                    circuits_processed=(
+                        preorder_counts["circuits_processed"]
+                        if preorder_counts["circuits_processed"] is not None
+                        else preorder_pre_answers.get("user_reported_circuits_processed")
+                    ),
+                    harness_variants_processed=(
+                        preorder_counts["harness_variants_processed"]
+                        if preorder_counts["harness_variants_processed"] is not None
+                        else preorder_pre_answers.get("user_reported_harness_variants_processed")
+                    ),
+                    output_file_count=1,
                 )
+                tracked_run.record_validation_results(
+                    automatic_validation_errors=preorder_counts["automatic_validation_errors"],
+                    automatic_validation_warnings=preorder_counts["automatic_validation_warnings"],
+                    automatic_validation_failures=preorder_counts["automatic_validation_failures"],
+                )
+                tracked_run.complete(
+                    output_generated=bool(preorder_result.get("output_excel_bytes")),
+                    output_file_count=1,
+                )
+
             st.session_state["preorder_generation_result"] = preorder_result
             st.success("PreOrder workbook generated.")
         except Exception as exc:
@@ -682,15 +783,62 @@ elif selected_tool == "DTx Compare Report":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
+    preorder_run = metrics_tracker.get_last_completed_run("dtx_preorder_generation")
+    if preorder_run is not None:
+        render_post_run_feedback(
+            metrics_tracker,
+            "dtx_preorder_generation",
+            run_id=preorder_run["run_id"],
+            processing_seconds=float(preorder_run.get("processing_seconds") or 0.0),
+            pre_run_answers=st.session_state.get("metrics_pre_answers_dtx_preorder_generation", {}),
+        )
+
+    compare_pre_answers = render_pre_run_questions(
+        metrics_tracker,
+        "dtx_compare_report",
+        ask_circuits_if_unknown=False,
+        ask_harness_if_unknown=True,
+    )
+    st.session_state["metrics_pre_answers_dtx_compare_report"] = compare_pre_answers
+
     if st.button("Generate Compare Report", type="primary"):
         try:
-            with st.spinner("Comparing reports and building workbook..."):
-                dtx_result = generate_dtx_change_report(
-                    old_file_bytes=old_file.getvalue(),
-                    new_file_bytes=new_file.getvalue(),
-                    old_file_name=old_file.name,
-                    new_file_name=new_file.name,
+            event_key = f"dtx_compare_report:{time.time_ns()}"
+            with metrics_tracker.track_workflow(
+                "dtx_compare_report",
+                event_key=event_key,
+                input_file_count=2,
+            ) as tracked_run:
+                with st.spinner("Comparing reports and building workbook..."):
+                    dtx_result = generate_dtx_change_report(
+                        old_file_bytes=old_file.getvalue(),
+                        new_file_bytes=new_file.getvalue(),
+                        old_file_name=old_file.name,
+                        new_file_name=new_file.name,
+                    )
+
+                compare_counts = dtx_compare_counts(dtx_result)
+                tracked_run.record_counts(
+                    rows_read=compare_counts["rows_read"],
+                    rows_processed=compare_counts["rows_processed"],
+                    circuits_processed=compare_counts["circuits_processed"],
+                    harness_variants_processed=(
+                        compare_counts["harness_variants_processed"]
+                        if compare_counts["harness_variants_processed"] is not None
+                        else compare_pre_answers.get("user_reported_harness_variants_processed")
+                    ),
+                    output_file_count=1,
                 )
+                tracked_run.record_validation_results(
+                    automatic_validation_errors=compare_counts["automatic_validation_errors"],
+                    automatic_validation_warnings=compare_counts["automatic_validation_warnings"],
+                    automatic_validation_failures=compare_counts["automatic_validation_failures"],
+                )
+                tracked_run.complete(
+                    output_generated=bool(dtx_result.get("output_excel_bytes")),
+                    output_file_count=1,
+                )
+
             st.session_state["dtx_compare_result"] = dtx_result
         except Exception as exc:
             st.error(f"DTx comparison failed: {exc}")
@@ -734,6 +882,16 @@ elif selected_tool == "DTx Compare Report":
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+    dtx_compare_run = metrics_tracker.get_last_completed_run("dtx_compare_report")
+    if dtx_compare_run is not None:
+        render_post_run_feedback(
+            metrics_tracker,
+            "dtx_compare_report",
+            run_id=dtx_compare_run["run_id"],
+            processing_seconds=float(dtx_compare_run.get("processing_seconds") or 0.0),
+            pre_run_answers=st.session_state.get("metrics_pre_answers_dtx_compare_report", {}),
+        )
+
 elif selected_tool == "DTCR Matching Report":
     render_tool_scroll_anchor("DTCR Matching Report")
     st.title("DTCR Matching Report")
@@ -754,17 +912,53 @@ elif selected_tool == "DTCR Matching Report":
         )
 
     if dtcr_match_file is not None and dtx_match_file is not None:
+        dtcr_pre_answers = render_pre_run_questions(
+            metrics_tracker,
+            "dtcr_matching_report",
+            ask_circuits_if_unknown=True,
+            ask_harness_if_unknown=False,
+        )
+        st.session_state["metrics_pre_answers_dtcr_matching_report"] = dtcr_pre_answers
+
         if st.button(
             "Generate DTCR Matching Report",
             type="primary",
             key="generate_dtcr_matching_report",
         ):
             try:
-                with st.spinner("Building DTCR matching report..."):
-                    dtcr_match_df = load_dtcr_report(dtcr_match_file.getvalue(), dtcr_match_file.name)
-                    dtx_match_df = load_dtx_circuits_report(dtx_match_file.getvalue())
-                    dtcr_mapping_df = match_dtcr_to_harness_family(dtcr_match_df, dtx_match_df)
-                    dtcr_map_bytes = export_dtcr_mapping_styled(dtcr_mapping_df)
+                event_key = f"dtcr_matching_report:{time.time_ns()}"
+                with metrics_tracker.track_workflow(
+                    "dtcr_matching_report",
+                    event_key=event_key,
+                    input_file_count=2,
+                ) as tracked_run:
+                    with st.spinner("Building DTCR matching report..."):
+                        dtcr_match_df = load_dtcr_report(dtcr_match_file.getvalue(), dtcr_match_file.name)
+                        dtx_match_df = load_dtx_circuits_report(dtx_match_file.getvalue())
+                        dtcr_mapping_df = match_dtcr_to_harness_family(dtcr_match_df, dtx_match_df)
+                        dtcr_map_bytes = export_dtcr_mapping_styled(dtcr_mapping_df)
+
+                    counts = dtcr_matching_counts(dtcr_match_df, dtx_match_df, dtcr_mapping_df)
+                    tracked_run.record_counts(
+                        rows_read=counts["rows_read"],
+                        rows_processed=counts["rows_processed"],
+                        circuits_processed=(
+                            counts["circuits_processed"]
+                            if counts["circuits_processed"] is not None
+                            else dtcr_pre_answers.get("user_reported_circuits_processed")
+                        ),
+                        harness_variants_processed=counts["harness_variants_processed"],
+                        output_file_count=1,
+                    )
+                    tracked_run.record_validation_results(
+                        automatic_validation_errors=counts["automatic_validation_errors"],
+                        automatic_validation_warnings=counts["automatic_validation_warnings"],
+                        automatic_validation_failures=counts["automatic_validation_failures"],
+                    )
+                    tracked_run.complete(
+                        output_generated=bool(dtcr_map_bytes),
+                        output_file_count=1,
+                    )
 
                 st.session_state["dtcr_matching_report_bytes"] = dtcr_map_bytes
                 st.session_state["dtcr_matching_report_df"] = dtcr_mapping_df
@@ -788,12 +982,30 @@ elif selected_tool == "DTCR Matching Report":
                 use_container_width=True,
             )
 
+        dtcr_run = metrics_tracker.get_last_completed_run("dtcr_matching_report")
+        if dtcr_run is not None:
+            render_post_run_feedback(
+                metrics_tracker,
+                "dtcr_matching_report",
+                run_id=dtcr_run["run_id"],
+                processing_seconds=float(dtcr_run.get("processing_seconds") or 0.0),
+                pre_run_answers=st.session_state.get("metrics_pre_answers_dtcr_matching_report", {}),
+            )
+
 elif selected_tool == "VBOM Risk Matrix":
     render_tool_scroll_anchor("VBOM Risk Matrix")
     st.title("VBOM Risk Matrix")
     st.caption(
         "Upload a DoAll or BuildSpec file and one or more harness complexity files to generate the VBOM workbook bundle used by the desktop workflow."
     )
+
+    vbom_pre_answers = render_pre_run_questions(
+        metrics_tracker,
+        "vbom_risk_matrix",
+        ask_circuits_if_unknown=False,
+        ask_harness_if_unknown=False,
+    )
+    st.session_state["metrics_pre_answers_vbom_risk_matrix"] = vbom_pre_answers
 
     with st.form("vbom_streamlit_form"):
         my = st.text_input("Model Year (MY)", value="27")
@@ -817,15 +1029,40 @@ elif selected_tool == "VBOM Risk Matrix":
             st.error("Please upload an input file and at least one harness complexity file.")
         else:
             try:
-                with st.spinner("Generating VBOM outputs..."):
-                    result = run_vbom_workflow(
-                        my=my,
-                        program=program,
-                        source_type=source_type,
-                        input_upload=input_upload,
-                        complexity_uploads=complexity_uploads,
-                        output_dir=Path(tempfile.gettempdir()) / "splice_vbom_outputs",
+                event_key = f"vbom_risk_matrix:{time.time_ns()}"
+                with metrics_tracker.track_workflow(
+                    "vbom_risk_matrix",
+                    event_key=event_key,
+                    input_file_count=1 + len(complexity_uploads),
+                ) as tracked_run:
+                    with st.spinner("Generating VBOM outputs..."):
+                        result = run_vbom_workflow(
+                            my=my,
+                            program=program,
+                            source_type=source_type,
+                            input_upload=input_upload,
+                            complexity_uploads=complexity_uploads,
+                            output_dir=Path(tempfile.gettempdir()) / "splice_vbom_outputs",
+                        )
+
+                    counts = vbom_counts(result)
+                    tracked_run.record_counts(
+                        rows_read=counts["rows_read"],
+                        rows_processed=counts["rows_processed"],
+                        circuits_processed=counts["circuits_processed"],
+                        harness_variants_processed=counts["harness_variants_processed"],
+                        output_file_count=4,
                     )
+                    tracked_run.record_validation_results(
+                        automatic_validation_errors=counts["automatic_validation_errors"],
+                        automatic_validation_warnings=counts["automatic_validation_warnings"],
+                        automatic_validation_failures=counts["automatic_validation_failures"],
+                    )
+                    tracked_run.complete(
+                        output_generated=True,
+                        output_file_count=4,
+                    )
+
                 st.session_state["vbom_result"] = result
                 st.success("VBOM workbook bundle generated.")
             except Exception as exc:
@@ -859,6 +1096,16 @@ elif selected_tool == "VBOM Risk Matrix":
             use_container_width=True,
         )
 
+    vbom_run = metrics_tracker.get_last_completed_run("vbom_risk_matrix")
+    if vbom_run is not None:
+        render_post_run_feedback(
+            metrics_tracker,
+            "vbom_risk_matrix",
+            run_id=vbom_run["run_id"],
+            processing_seconds=float(vbom_run.get("processing_seconds") or 0.0),
+            pre_run_answers=st.session_state.get("metrics_pre_answers_vbom_risk_matrix", {}),
+        )
+
 elif selected_tool == "Create SECR":
     render_tool_scroll_anchor("Create SECR")
     st.title("Create SECR")
@@ -885,6 +1132,14 @@ elif selected_tool == "Create SECR":
         key="create_secr_dtcr_matching_file",
         help="Upload the Step 1 DTCR_Matching_Report workbook now to auto-enrich the SECR after it is created.",
     )
+
+    secr_pre_answers = render_pre_run_questions(
+        metrics_tracker,
+        "create_secr",
+        ask_circuits_if_unknown=True,
+        ask_harness_if_unknown=True,
+    )
+    st.session_state["metrics_pre_answers_create_secr"] = secr_pre_answers
 
     with st.form("secr_details_form"):
         st.subheader("SECR Details")
@@ -929,42 +1184,77 @@ elif selected_tool == "Create SECR":
 
     if generate_clicked:
         try:
-            with st.spinner("Building SECR workbook..."):
-                secr_bytes, meta = create_secr_bytes(
-                    def_bytes=def_file.getvalue(),
-                    def_filename=def_file.name,
-                    reason_for_change=reason_for_change,
-                    secr_author=secr_author,
-                    design_release_engineer=design_release_engineer,
-                    change_requested_by=change_requested_by,
-                    original_issue_date=original_issue_date,
-                    reissue_date=reissue_date,
-                    version=version,
-                    phase_implemented=phase_implemented,
-                    pull_ahead=pull_ahead,
-                    m_code_suffix=int(m_code_suffix),
+            event_key = f"create_secr:{time.time_ns()}"
+            with metrics_tracker.track_workflow(
+                "create_secr",
+                event_key=event_key,
+                input_file_count=1 + (1 if dtcr_matching_file is not None else 0),
+            ) as tracked_run:
+                with st.spinner("Building SECR workbook..."):
+                    secr_bytes, meta = create_secr_bytes(
+                        def_bytes=def_file.getvalue(),
+                        def_filename=def_file.name,
+                        reason_for_change=reason_for_change,
+                        secr_author=secr_author,
+                        design_release_engineer=design_release_engineer,
+                        change_requested_by=change_requested_by,
+                        original_issue_date=original_issue_date,
+                        reissue_date=reissue_date,
+                        version=version,
+                        phase_implemented=phase_implemented,
+                        pull_ahead=pull_ahead,
+                        m_code_suffix=int(m_code_suffix),
+                    )
+                    base_meta = dict(meta)
+                    st.session_state["secr_result_bytes"] = secr_bytes
+                    st.session_state["secr_result_filename"] = base_meta["filename"]
+                    st.session_state["secr_result_meta"] = base_meta
+                    st.session_state["secr_result_enriched"] = False
+                    enrichment_summary_df = None
+                    if dtcr_matching_file is not None:
+                        try:
+                            secr_bytes, meta, dtcr_mapping_df, summary_df, secr_harness_family = _auto_enrich_secr_if_requested(
+                                secr_bytes,
+                                dtcr_matching_file.getvalue(),
+                                base_meta.get("filename", "SECR_output.xlsx"),
+                            )
+                            enrichment_summary_df = summary_df
+                            st.session_state["dtcr_matching_preview_df"] = dtcr_mapping_df
+                            st.session_state["dtcr_matching_preview_summary_df"] = summary_df
+                            st.session_state["dtcr_matching_preview_family"] = secr_harness_family
+                            st.session_state["secr_result_filename"] = base_meta["filename"]
+                            st.session_state["secr_result_meta"] = base_meta
+                            st.session_state["secr_result_bytes"] = secr_bytes
+                            st.session_state["secr_result_enriched"] = True
+                        except Exception as enrich_exc:
+                            st.warning(f"DTCR matching workbook was uploaded but could not be applied: {enrich_exc}")
+
+                counts = create_secr_counts(
+                    def_file_uploaded=def_file is not None,
+                    enriched=bool(st.session_state.get("secr_result_enriched")),
+                    enrichment_summary_df=enrichment_summary_df,
                 )
-                base_meta = dict(meta)
-                st.session_state["secr_result_bytes"] = secr_bytes
-                st.session_state["secr_result_filename"] = base_meta["filename"]
-                st.session_state["secr_result_meta"] = base_meta
-                st.session_state["secr_result_enriched"] = False
-                if dtcr_matching_file is not None:
-                    try:
-                        secr_bytes, meta, dtcr_mapping_df, summary_df, secr_harness_family = _auto_enrich_secr_if_requested(
-                            secr_bytes,
-                            dtcr_matching_file.getvalue(),
-                            base_meta.get("filename", "SECR_output.xlsx"),
-                        )
-                        st.session_state["dtcr_matching_preview_df"] = dtcr_mapping_df
-                        st.session_state["dtcr_matching_preview_summary_df"] = summary_df
-                        st.session_state["dtcr_matching_preview_family"] = secr_harness_family
-                        st.session_state["secr_result_filename"] = base_meta["filename"]
-                        st.session_state["secr_result_meta"] = base_meta
-                        st.session_state["secr_result_bytes"] = secr_bytes
-                        st.session_state["secr_result_enriched"] = True
-                    except Exception as enrich_exc:
-                        st.warning(f"DTCR matching workbook was uploaded but could not be applied: {enrich_exc}")
+                tracked_run.record_counts(
+                    rows_read=counts["rows_read"],
+                    rows_processed=counts["rows_processed"],
+                    circuits_processed=(
+                        counts["circuits_processed"]
+                        if counts["circuits_processed"] is not None
+                        else secr_pre_answers.get("user_reported_circuits_processed")
+                    ),
+                    harness_variants_processed=(
+                        counts["harness_variants_processed"]
+                        if counts["harness_variants_processed"] is not None
+                        else secr_pre_answers.get("user_reported_harness_variants_processed")
+                    ),
+                    output_file_count=1,
+                )
+                tracked_run.record_validation_results(
+                    automatic_validation_errors=counts["automatic_validation_errors"],
+                    automatic_validation_warnings=counts["automatic_validation_warnings"],
+                    automatic_validation_failures=counts["automatic_validation_failures"],
+                )
+                tracked_run.complete(output_generated=bool(st.session_state.get("secr_result_bytes")), output_file_count=1)
         except Exception as exc:
             st.error(f"SECR creation failed: {exc}")
 
@@ -985,4 +1275,14 @@ elif selected_tool == "Create SECR":
         )
         if st.session_state.get("secr_result_enriched"):
             st.success("SECR was auto-enriched from the uploaded DTCR_Matching_Report workbook.")
+
+    secr_run = metrics_tracker.get_last_completed_run("create_secr")
+    if secr_run is not None:
+        render_post_run_feedback(
+            metrics_tracker,
+            "create_secr",
+            run_id=secr_run["run_id"],
+            processing_seconds=float(secr_run.get("processing_seconds") or 0.0),
+            pre_run_answers=st.session_state.get("metrics_pre_answers_create_secr", {}),
+        )
 
