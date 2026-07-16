@@ -15,7 +15,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from dtx_compare_engine import generate_dtx_change_report, launch_preorder_generation_tool
-from secr_engine import create_secr_bytes
+from secr_engine import create_secr_bytes, update_secr_bytes
 from secr_enrichment_engine import (
     load_dtcr_report,
     load_dtcr_matching_report,
@@ -1291,12 +1291,157 @@ elif selected_tool == "Update SECR":
     render_tool_scroll_anchor("Update SECR")
     st.title("Update SECR")
     st.caption(
-        "Update SECR is now available in the desktop SECR Tracker app. "
-        "This web workflow entry is enabled so the action is visible in navigation."
+        "Create an updated SECR workbook from a new DEF-to-DEF compare and "
+        "an old SECR baseline workbook."
     )
-    st.info(
-        "Use the desktop flow for now: select new DEF-to-DEF compare + old SECR, "
-        "then apply version/reissue updates and comment carry-over."
-    )
+
+    up_col1, up_col2 = st.columns(2)
+    with up_col1:
+        update_def_file = st.file_uploader(
+            "New DEF-to-DEF Compare file",
+            type=["xlsx", "xls", "xlsm"],
+            key="update_secr_def_file",
+        )
+    with up_col2:
+        update_old_secr_file = st.file_uploader(
+            "Old SECR Version",
+            type=["xlsx", "xls", "xlsm"],
+            key="update_secr_old_file",
+        )
+
+    if update_def_file is None or update_old_secr_file is None:
+        st.info("Upload both files to continue: New DEF-to-DEF and Old SECR Version.")
+        st.stop()
+
+    with st.form("update_secr_details_form"):
+        st.subheader("Update SECR Details")
+
+        extracted_my, extracted_program, extracted_phase = _extract_secr_number_inputs_from_def(
+            update_def_file.getvalue()
+        )
+        def_stem_parts = Path(update_def_file.name).stem.split("_")
+        fallback_my = def_stem_parts[0] if len(def_stem_parts) > 0 else ""
+        fallback_program = def_stem_parts[1] if len(def_stem_parts) > 1 else ""
+        fallback_phase = (
+            f"{def_stem_parts[2]}{def_stem_parts[3]}".replace("_", "")
+            if len(def_stem_parts) > 3 else ""
+        )
+
+        default_my = extracted_my or fallback_my
+        default_program = extracted_program or fallback_program
+        default_phase = extracted_phase or fallback_phase
+
+        num_col1, num_col2, num_col3 = st.columns(3)
+        with num_col1:
+            update_secr_model_year = st.text_input(
+                "MY",
+                value=default_my,
+                key="update_secr_number_my",
+            )
+        with num_col2:
+            update_secr_program = st.text_input(
+                "Program (Vehicle Line)",
+                value=default_program,
+                key="update_secr_number_program",
+            )
+        with num_col3:
+            update_secr_phase = st.text_input(
+                "Phase",
+                value=default_phase,
+                key="update_secr_number_phase",
+            )
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            update_subject = st.text_area(
+                "Subject", height=100, key="update_secr_subject"
+            )
+            update_secr_author = st.text_input("SECR Author", key="update_secr_author")
+            update_design_release_engineer = st.text_input(
+                "Design Release Engineer", key="update_secr_dre"
+            )
+            update_change_requested_by = st.text_input(
+                "Change Requested By", key="update_secr_crb"
+            )
+        with col_b:
+            update_version = st.text_input("Version", value="A", key="update_secr_version")
+            update_phase_implemented = st.text_input(
+                "Phase Implemented", key="update_secr_phase_impl"
+            )
+            update_pull_ahead = st.selectbox(
+                "Pull Ahead (Y/N)", options=["", "N", "Y"], key="update_secr_pull_ahead"
+            )
+            update_reissue_date = st.text_input(
+                "ReIssue Date (MM/DD/YYYY)",
+                key="update_secr_reissue_date",
+            )
+            update_secr_change_type = st.selectbox(
+                "SECR # Type",
+                options=["Miscellaneous", "Design Change"],
+                key="update_secr_change_type",
+            )
+
+            update_secr_number_preview = _build_secr_number_preview(
+                update_secr_model_year,
+                update_secr_program,
+                update_secr_phase,
+                update_secr_change_type,
+                sequence=1000,
+            )
+            st.text_input(
+                "SECR # Preview",
+                value=update_secr_number_preview,
+                disabled=True,
+                key="update_secr_number_preview",
+                help="Auto-generated as M/D + MY + PROGRAM + PHASE + _1000.",
+            )
+
+        update_generate_clicked = st.form_submit_button("Generate Updated SECR", type="primary")
+
+    if update_generate_clicked:
+        try:
+            with st.spinner("Building updated SECR workbook..."):
+                update_bytes, update_meta = update_secr_bytes(
+                    def_bytes=update_def_file.getvalue(),
+                    def_filename=update_def_file.name,
+                    old_secr_bytes=update_old_secr_file.getvalue(),
+                    subject=update_subject,
+                    secr_author=update_secr_author,
+                    design_release_engineer=update_design_release_engineer,
+                    change_requested_by=update_change_requested_by,
+                    reissue_date=update_reissue_date,
+                    version=update_version,
+                    phase_implemented=update_phase_implemented,
+                    pull_ahead=update_pull_ahead,
+                    secr_change_type=update_secr_change_type,
+                    secr_model_year=update_secr_model_year,
+                    secr_program=update_secr_program,
+                    secr_phase=update_secr_phase,
+                )
+
+            st.session_state["update_secr_result_bytes"] = update_bytes
+            st.session_state["update_secr_result_meta"] = update_meta
+            st.session_state["update_secr_result_filename"] = update_meta.get(
+                "filename",
+                "Updated_SECR.xlsx",
+            )
+            st.success("Updated SECR workbook created successfully.")
+        except Exception as exc:
+            st.error(f"Update SECR failed: {exc}")
+
+    update_result = st.session_state.get("update_secr_result_bytes")
+    if update_result is not None:
+        update_meta = st.session_state.get("update_secr_result_meta", {})
+        mcol1, mcol2, mcol3 = st.columns(3)
+        mcol1.metric("SECR #", update_meta.get("I2", ""))
+        mcol2.metric("Vehicle Line", update_meta.get("C11", ""))
+        mcol3.metric("Phase", update_meta.get("F10", ""))
+        st.download_button(
+            label="Download Updated SECR Excel",
+            data=update_result,
+            file_name=st.session_state.get("update_secr_result_filename", "Updated_SECR.xlsx"),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="update_secr_dl_btn",
+        )
 
 
