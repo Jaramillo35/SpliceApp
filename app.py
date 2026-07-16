@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import inspect
 import io
+import re
 import sys
 import tempfile
 import time
 import zipfile
 from pathlib import Path
 
+import openpyxl
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -157,6 +159,50 @@ def _build_secr_number_preview(
     type_prefix = "D" if secr_type_label == "Design Change" else "M"
     my_two = my_clean[-2:]
     return f"{type_prefix}{my_two}{program_clean}{phase_clean}_{sequence}"
+
+
+def _extract_secr_number_inputs_from_def(def_bytes: bytes) -> tuple[str, str, str]:
+    """Extract MY, Program(Vehicle Line), and Phase from DEF_DEF_Summary identifier.
+
+    Expected snippet in workbook: "DEF_New (Identifier) := 2028 RU X1_A ..."
+    """
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(def_bytes), data_only=True, read_only=True)
+    except Exception:
+        return "", "", ""
+
+    try:
+        if "DEF_DEF_Summary" not in wb.sheetnames:
+            return "", "", ""
+
+        ws = wb["DEF_DEF_Summary"]
+        identifier_text = ""
+
+        for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row or 1, 120), min_col=1, max_col=min(ws.max_column or 1, 12), values_only=True):
+            for value in row:
+                if not value:
+                    continue
+                text = str(value)
+                if "DEF_New" in text and "Identifier" in text:
+                    identifier_text = text
+                    break
+            if identifier_text:
+                break
+
+        if not identifier_text:
+            return "", "", ""
+
+        # Match: 2028 RU X1_A
+        match = re.search(r"(\d{4})\s+([A-Za-z0-9]+)\s+([A-Za-z0-9]+_[A-Za-z0-9]+)", identifier_text)
+        if not match:
+            return "", "", ""
+
+        my = match.group(1)
+        program = match.group(2).upper()
+        phase = match.group(3).replace("_", "").upper()
+        return my, program, phase
+    finally:
+        wb.close()
 
 st.markdown(
     """
@@ -1049,14 +1095,22 @@ elif selected_tool == "Create SECR":
     with st.form("secr_details_form"):
         st.subheader("SECR Details")
 
-        # Defaults from DEF filename for convenience; user can override.
+        # Defaults from DEF workbook identifier; fallback to filename when needed.
+        extracted_my, extracted_program, extracted_phase = _extract_secr_number_inputs_from_def(
+            def_file.getvalue()
+        )
+
         def_stem_parts = Path(def_file.name).stem.split("_")
-        default_my = def_stem_parts[0] if len(def_stem_parts) > 0 else ""
-        default_program = def_stem_parts[1] if len(def_stem_parts) > 1 else ""
-        default_phase = (
-            f"{def_stem_parts[2]}{def_stem_parts[3]}"
+        fallback_my = def_stem_parts[0] if len(def_stem_parts) > 0 else ""
+        fallback_program = def_stem_parts[1] if len(def_stem_parts) > 1 else ""
+        fallback_phase = (
+            f"{def_stem_parts[2]}{def_stem_parts[3]}".replace("_", "")
             if len(def_stem_parts) > 3 else ""
         )
+
+        default_my = extracted_my or fallback_my
+        default_program = extracted_program or fallback_program
+        default_phase = extracted_phase or fallback_phase
 
         num_col1, num_col2, num_col3 = st.columns(3)
         with num_col1:
