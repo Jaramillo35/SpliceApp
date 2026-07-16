@@ -198,7 +198,8 @@ def create_secr_bytes(
     version: str,
     phase_implemented: str,
     pull_ahead: str,
-    m_code_suffix: int = 1,
+    secr_change_type: str = "Miscellaneous",
+    secr_sequence: int = 1000,
 ) -> Tuple[bytes, Dict[str, Any]]:
     """Create a SECR workbook from DEF compare bytes.
 
@@ -231,7 +232,9 @@ def create_secr_bytes(
     f10_value = f"{code1}_{code2}"
     c12_value = pre_def_string
     my_two = c10_value[-2:]
-    m_code = f"M{my_two}{m_code_suffix:03d}"
+    type_prefix = "D" if str(secr_change_type).strip().lower().startswith("design") else "M"
+    phase = f"{code1}{code2}".replace("_", "")
+    m_code = f"{type_prefix}{my_two}{c11_value}{phase}_{int(secr_sequence)}"
 
     wb_template = openpyxl.load_workbook(str(TEMPLATE_PATH))
     wb_def = openpyxl.load_workbook(io.BytesIO(def_bytes), data_only=False)
@@ -247,6 +250,7 @@ def create_secr_bytes(
     ws_summary["F10"] = f10_value
     ws_summary["C12"] = c12_value
     ws_summary["I2"] = m_code
+    ws_summary["C8"] = m_code
 
     # Copy all DEF sheets into the template workbook
     for ws in wb_def.worksheets:
@@ -287,10 +291,7 @@ def create_secr_bytes(
         wb_template.security.lockWindows = False
         wb_template.security.lockRevision = False
 
-    creation_date = datetime.date.today().strftime("%m%d%Y")
-    secr_filename = (
-        f"SECR_{my_two}{c11_value}_{f10_value}_{c12_value}_{m_code}_{creation_date}.xlsx"
-    )
+    secr_filename = f"{m_code}.xlsx"
 
     buf = io.BytesIO()
     wb_template.save(buf)

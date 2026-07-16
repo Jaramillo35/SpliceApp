@@ -138,6 +138,31 @@ def _auto_enrich_secr_if_requested(
     )
     return enriched_bytes, export_meta, dtcr_mapping_df, summary_df, secr_harness_family
 
+
+def _build_secr_number_preview(
+    def_filename: str,
+    secr_type_label: str,
+    sequence: int = 1000,
+) -> str:
+    """Build SECR number preview from DEF filename and selected change type."""
+    stem = Path(def_filename).stem
+    parts = stem.split("_")
+    if len(parts) < 4:
+        return ""
+
+    my_full = parts[0]
+    program = parts[1]
+    code1 = parts[2]
+    code2 = parts[3]
+
+    if not my_full:
+        return ""
+
+    type_prefix = "D" if secr_type_label == "Design Change" else "M"
+    my_two = my_full[-2:]
+    phase = f"{code1}{code2}".replace("_", "")
+    return f"{type_prefix}{my_two}{program}{phase}_{sequence}"
+
 st.markdown(
     """
     <style>
@@ -1031,8 +1056,8 @@ elif selected_tool == "Create SECR":
 
         col_a, col_b = st.columns(2)
         with col_a:
-            reason_for_change = st.text_area(
-                "Reason for Change", height=100, key="secr_reason"
+            subject = st.text_area(
+                "Subject", height=100, key="secr_subject"
             )
             secr_author = st.text_input("SECR Author", key="secr_author")
             design_release_engineer = st.text_input(
@@ -1056,13 +1081,23 @@ elif selected_tool == "Create SECR":
                 "ReIssue Date (MM/DD/YYYY — leave blank if N/A)",
                 key="secr_reissue_date",
             )
-            m_code_suffix = st.number_input(
-                "SECR Number (3-digit suffix, e.g. 1 → M27001)",
-                min_value=1,
-                max_value=999,
-                value=1,
-                step=1,
-                key="secr_m_suffix",
+            secr_change_type = st.selectbox(
+                "SECR # Type",
+                options=["Miscellaneous", "Design Change"],
+                key="secr_change_type",
+            )
+
+            secr_number_preview = _build_secr_number_preview(
+                def_file.name,
+                secr_change_type,
+                sequence=1000,
+            )
+            st.text_input(
+                "SECR # Preview",
+                value=secr_number_preview,
+                disabled=True,
+                key="secr_number_preview",
+                help="Auto-generated as M/D + MY + PROGRAM + PHASE + _1000.",
             )
 
         generate_clicked = st.form_submit_button("Generate SECR", type="primary")
@@ -1079,7 +1114,7 @@ elif selected_tool == "Create SECR":
                     secr_bytes, meta = create_secr_bytes(
                         def_bytes=def_file.getvalue(),
                         def_filename=def_file.name,
-                        reason_for_change=reason_for_change,
+                        reason_for_change=subject,
                         secr_author=secr_author,
                         design_release_engineer=design_release_engineer,
                         change_requested_by=change_requested_by,
@@ -1088,7 +1123,7 @@ elif selected_tool == "Create SECR":
                         version=version,
                         phase_implemented=phase_implemented,
                         pull_ahead=pull_ahead,
-                        m_code_suffix=int(m_code_suffix),
+                        secr_change_type=secr_change_type,
                     )
                     base_meta = dict(meta)
                     st.session_state["secr_result_bytes"] = secr_bytes
