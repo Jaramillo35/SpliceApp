@@ -200,6 +200,9 @@ def create_secr_bytes(
     pull_ahead: str,
     secr_change_type: str = "Miscellaneous",
     secr_sequence: int = 1000,
+    secr_model_year: str = "",
+    secr_program: str = "",
+    secr_phase: str = "",
 ) -> Tuple[bytes, Dict[str, Any]]:
     """Create a SECR workbook from DEF compare bytes.
 
@@ -231,10 +234,16 @@ def create_secr_bytes(
     c11_value = vehicle_line
     f10_value = f"{code1}_{code2}"
     c12_value = pre_def_string
-    my_two = c10_value[-2:]
+
+    my_for_code = str(secr_model_year).strip() or c10_value
+    program_for_code = str(secr_program).strip() or c11_value
+    phase_for_code = str(secr_phase).strip() or f"{code1}{code2}"
+
+    my_two = my_for_code[-2:] if len(my_for_code) >= 2 else my_for_code
     type_prefix = "D" if str(secr_change_type).strip().lower().startswith("design") else "M"
-    phase = f"{code1}{code2}".replace("_", "")
-    m_code = f"{type_prefix}{my_two}{c11_value}{phase}_{int(secr_sequence)}"
+    phase = phase_for_code.replace("_", "").replace(" ", "").upper()
+    program_clean = program_for_code.replace(" ", "").upper()
+    m_code = f"{type_prefix}{my_two}{program_clean}{phase}_{int(secr_sequence)}"
 
     wb_template = openpyxl.load_workbook(str(TEMPLATE_PATH))
     wb_def = openpyxl.load_workbook(io.BytesIO(def_bytes), data_only=False)

@@ -140,28 +140,23 @@ def _auto_enrich_secr_if_requested(
 
 
 def _build_secr_number_preview(
-    def_filename: str,
+    model_year: str,
+    program: str,
+    phase: str,
     secr_type_label: str,
     sequence: int = 1000,
 ) -> str:
-    """Build SECR number preview from DEF filename and selected change type."""
-    stem = Path(def_filename).stem
-    parts = stem.split("_")
-    if len(parts) < 4:
-        return ""
+    """Build SECR number preview from form values and selected change type."""
+    my_clean = str(model_year or "").strip()
+    program_clean = str(program or "").strip().upper().replace(" ", "")
+    phase_clean = str(phase or "").strip().upper().replace(" ", "")
 
-    my_full = parts[0]
-    program = parts[1]
-    code1 = parts[2]
-    code2 = parts[3]
-
-    if not my_full:
+    if not my_clean or len(my_clean) < 2:
         return ""
 
     type_prefix = "D" if secr_type_label == "Design Change" else "M"
-    my_two = my_full[-2:]
-    phase = f"{code1}{code2}".replace("_", "")
-    return f"{type_prefix}{my_two}{program}{phase}_{sequence}"
+    my_two = my_clean[-2:]
+    return f"{type_prefix}{my_two}{program_clean}{phase_clean}_{sequence}"
 
 st.markdown(
     """
@@ -1054,6 +1049,35 @@ elif selected_tool == "Create SECR":
     with st.form("secr_details_form"):
         st.subheader("SECR Details")
 
+        # Defaults from DEF filename for convenience; user can override.
+        def_stem_parts = Path(def_file.name).stem.split("_")
+        default_my = def_stem_parts[0] if len(def_stem_parts) > 0 else ""
+        default_program = def_stem_parts[1] if len(def_stem_parts) > 1 else ""
+        default_phase = (
+            f"{def_stem_parts[2]}{def_stem_parts[3]}"
+            if len(def_stem_parts) > 3 else ""
+        )
+
+        num_col1, num_col2, num_col3 = st.columns(3)
+        with num_col1:
+            secr_model_year = st.text_input(
+                "MY",
+                value=default_my,
+                key="secr_number_my",
+            )
+        with num_col2:
+            secr_program = st.text_input(
+                "Program (Vehicle Line)",
+                value=default_program,
+                key="secr_number_program",
+            )
+        with num_col3:
+            secr_phase = st.text_input(
+                "Phase",
+                value=default_phase,
+                key="secr_number_phase",
+            )
+
         col_a, col_b = st.columns(2)
         with col_a:
             subject = st.text_area(
@@ -1088,7 +1112,9 @@ elif selected_tool == "Create SECR":
             )
 
             secr_number_preview = _build_secr_number_preview(
-                def_file.name,
+                secr_model_year,
+                secr_program,
+                secr_phase,
                 secr_change_type,
                 sequence=1000,
             )
@@ -1124,6 +1150,9 @@ elif selected_tool == "Create SECR":
                         phase_implemented=phase_implemented,
                         pull_ahead=pull_ahead,
                         secr_change_type=secr_change_type,
+                        secr_model_year=secr_model_year,
+                        secr_program=secr_program,
+                        secr_phase=secr_phase,
                     )
                     base_meta = dict(meta)
                     st.session_state["secr_result_bytes"] = secr_bytes
