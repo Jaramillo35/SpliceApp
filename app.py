@@ -71,6 +71,7 @@ TOOL_SCROLL_IDS = {
     "DTx Compare Report": "dtx-compare-section",
     "DTCR Matching Report": "dtcr-matching-section",
     "Create SECR": "create-secr-section",
+    "Update SECR": "update-secr-section",
     "VBOM Risk Matrix": "vbom-risk-section",
 }
 if LOGO_PATH.exists():
@@ -262,7 +263,15 @@ st.markdown(
 
 mode = st.radio(
     "Choose Tool",
-    ["Home", "Splice Generation", "DTx Compare Report", "Create SECR", "DTCR Matching Report", "VBOM Risk Matrix"],
+    [
+        "Home",
+        "Splice Generation",
+        "DTx Compare Report",
+        "Create SECR",
+        "Update SECR",
+        "DTCR Matching Report",
+        "VBOM Risk Matrix",
+    ],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -347,6 +356,10 @@ if mode == "Home":
                 <div class="tool-desc">
                     Generate a SECR workbook and enrich it with the Step 1 DTCR_Matching_Report output.
                 </div>
+                <div class="tool-desc" style="margin-top: 0.9rem; font-weight: 700; color: #0b5ea8;">Step 3: Update SECR</div>
+                <div class="tool-desc">
+                    Update a new SECR from a DEF compare and previous SECR baseline.
+                </div>
                 <span class="tool-badge">DEF Compare</span>
                 <span class="tool-badge">SECR Template</span>
                 <span class="tool-badge">Output Excel</span>
@@ -354,13 +367,16 @@ if mode == "Home":
             """,
             unsafe_allow_html=True,
         )
-        step1_btn, step2_btn = st.columns(2)
+        step1_btn, step2_btn, step3_btn = st.columns(3)
         with step1_btn:
             if st.button("Open DTCR Matching", key="go_dtcr", use_container_width=True):
                 open_tool("DTCR Matching Report")
         with step2_btn:
             if st.button("Open Create SECR", key="go_secr", use_container_width=True):
                 open_tool("Create SECR")
+        with step3_btn:
+            if st.button("Open Update SECR", key="go_update_secr", use_container_width=True):
+                open_tool("Update SECR")
 
     with row2[1]:
         st.markdown(
@@ -1270,5 +1286,17 @@ elif selected_tool == "Create SECR":
         )
         if st.session_state.get("secr_result_enriched"):
             st.success("SECR was auto-enriched from the uploaded DTCR_Matching_Report workbook.")
+
+elif selected_tool == "Update SECR":
+    render_tool_scroll_anchor("Update SECR")
+    st.title("Update SECR")
+    st.caption(
+        "Update SECR is now available in the desktop SECR Tracker app. "
+        "This web workflow entry is enabled so the action is visible in navigation."
+    )
+    st.info(
+        "Use the desktop flow for now: select new DEF-to-DEF compare + old SECR, "
+        "then apply version/reissue updates and comment carry-over."
+    )
 
 
