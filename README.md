@@ -19,17 +19,34 @@ Wiring engineering teams often run a fragmented process:
 
 This project addresses those pain points by standardizing data loading, rule evaluation, and workbook output generation in one application.
 
-## Metrics to Collect
+## Project KPIs
 
-The application is in active use. The following metrics will be collected before publishing quantified impact claims:
-- Baseline engineering hours per workflow before automation.
-- Automated processing time for the same workflow.
-- Number of workbook rows, circuits, and harness variants processed per run.
-- Number of manual touchpoints eliminated.
-- Number of validation or spreadsheet-logic errors detected before release.
-- Weekly users and completed workflows.
+Latest tracked runs and configured baselines show the following outcomes:
 
-A quantified time-savings percentage will be reported after comparable baseline and automated runs are recorded.
+| KPI | Value |
+|---|---:|
+| Completed workflow runs | 4 |
+| Failed workflow runs | 2 |
+| Rows read | 14,291 |
+| Rows processed | 14,267 |
+| Circuits processed | 14,198 |
+| Harness variants processed | 55 |
+| Automatic validation errors | 1 |
+| Automatic validation failures | 1 |
+| Total automated processing time | 40.06 s |
+| Configured baseline manual time | 190 min |
+| Estimated time saved | 189.33 min |
+
+Workflow breakdown:
+
+| Workflow | Automated time | Rows processed | Rows read | Baseline minutes | Estimated time saved |
+|---|---:|---:|---:|---:|---:|
+| Splice Generation | 1.09 s | 27 | 8 | 30 | 29.98 min |
+| DTx PreOrder Generation | 3.83 s | 43 | 86 | 60 | 59.94 min |
+| DTx Compare Report | 31.61 s | 14,197 | 14,197 | 60 | 59.47 min |
+| Create SECR | 3.54 s | n/a | n/a | 40 | 39.94 min |
+
+These KPIs are generated from [data/impact_metrics.json](data/impact_metrics.json) and [data/impact_baselines.json](data/impact_baselines.json).
 
 ## Architecture
 
@@ -80,63 +97,13 @@ pytest -q
 
 GitHub Actions runs the same suite in a clean Python environment on pushes and pull requests.
 
-## Production Impact Metrics
+## Metrics and Dashboard
 
-The app now includes a shared, production-safe metrics layer across workflow cards.
+The app records run metadata automatically and updates the dashboard from the same JSON metrics file used for the KPI table above.
 
-Automatic metrics (when reliably detectable):
-- workflow identifier
-- anonymous session identifier
-- workflow start and completion timestamps
-- processing duration in seconds
-- status (started, completed, failed, abandoned)
-- input and output file counts
-- rows read and rows processed
-- circuits and harness variants when available from existing data structures
-- automatic validation warnings/errors/failures already detected by the workflow
-- output generated flag
-- workflow version (commit SHA) when available
-- failure category without stack traces
+The dashboard is available at [Splice/pages/3_Metrics_Dashboard.py](pages/3_Metrics_Dashboard.py) and highlights completed workflows, processing time, rows processed, unique sessions, and time-savings coverage once baseline values are present.
 
-Configured baseline metrics (no in-app user prompts):
-- baseline manual duration per workflow from `data/impact_baselines.json`
-- automatic time saved and time-savings percentage per run when baseline is configured
-
-### Formulas
-
-The app calculates impact only when required values are available:
-
-$$
-time\_saved\_minutes = \max(baseline\_minutes - automated\_processing\_minutes, 0)
-$$
-
-$$
-time\_savings\_percentage = \frac{baseline\_minutes - automated\_processing\_minutes}{baseline\_minutes} \times 100
-$$
-
-time_savings_percentage is only calculated when baseline_minutes > 0.
-
-### Privacy Behavior
-
-The metrics system does not store workbook contents, filenames, circuit names, company identifiers, ticket contents, raw IP addresses, or stack traces.
-
-### Metrics Persistence
-
-Metrics are saved locally to:
-- metrics are saved to `data/impact_metrics.json`
-
-Optional shared sync for Streamlit Cloud:
-- set `GITHUB_REPOSITORY` and `GITHUB_TOKEN` in Streamlit secrets to sync metrics JSON back to the repo like tickets
-- optional overrides: `GITHUB_BRANCH` and `METRICS_GITHUB_PATH`
-
-Baseline manual minutes are configured in:
-- `data/impact_baselines.json`
-
-Set baseline minutes per workflow key in `data/impact_baselines.json` to enable automatic time-savings calculations.
-
-### Disable Metrics Persistence (Optional)
-
-Set `METRICS_JSON_PATH` to an alternate file path if needed.
+The metrics system is intentionally non-confidential: it does not store workbook contents, filenames, circuit names, company identifiers, ticket contents, raw IP addresses, or stack traces.
 
 ### Protected Metrics Dashboard
 
