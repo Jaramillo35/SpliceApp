@@ -56,7 +56,7 @@ from metrics.workflow_metrics import (
 )
 
 
-st.set_page_config(page_title="Automotive Wiring Automation", layout="wide")
+st.set_page_config(page_title="System Engineer Toolkit", layout="wide")
 
 metrics_tracker = MetricsTracker(build_metrics_storage())
 
@@ -185,7 +185,7 @@ st.markdown(
 st.markdown(
     """
     <div class="hero">
-        <h1 style="margin-bottom: 0.35rem; color: #10273a;">Automotive Wiring Automation</h1>
+        <h1 style="margin-bottom: 0.35rem; color: #10273a;">System Engineer Toolkit</h1>
         <p style="margin: 0; color: #2f4b62;">
             Select a workflow below to launch wiring splice generation, DTx report comparison, or SECR creation.
         </p>
