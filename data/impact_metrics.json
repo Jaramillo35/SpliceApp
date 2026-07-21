@@ -390,6 +390,29 @@
       "output_generated": true,
       "failure_category": null,
       "created_at": "2026-07-21T14:12:46.631789+00:00"
+    },
+    {
+      "id": "4498af02-4f4b-42b1-88b5-306b06199ce5",
+      "anonymous_user_id": null,
+      "anonymous_session_id": "7efa232d-6159-429b-91d2-1c7dd4c2d3d4",
+      "workflow_id": "vbom_risk_matrix",
+      "workflow_version": null,
+      "started_at": "2026-07-21T15:45:26.341181+00:00",
+      "completed_at": "2026-07-21T15:45:26.574265+00:00",
+      "status": "failed",
+      "processing_seconds": 0.23308746609836817,
+      "input_file_count": 4,
+      "output_file_count": null,
+      "rows_read": null,
+      "rows_processed": null,
+      "circuits_processed": null,
+      "harness_variants_processed": null,
+      "automatic_validation_errors": null,
+      "automatic_validation_warnings": null,
+      "automatic_validation_failures": null,
+      "output_generated": false,
+      "failure_category": "runtime_error",
+      "created_at": "2026-07-21T15:45:26.341181+00:00"
     }
   ],
   "workflow_feedback": [
