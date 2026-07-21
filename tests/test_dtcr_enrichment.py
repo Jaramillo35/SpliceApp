@@ -8,7 +8,12 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from secr_enrichment_engine import load_dtcr_matching_report, load_dtcr_report, match_dtcr_to_harness_family
+from secr_enrichment_engine import (
+    load_dtcr_matching_report,
+    load_dtcr_report,
+    load_dtx_circuits_report,
+    match_dtcr_to_harness_family,
+)
 
 
 def test_match_dtcr_to_harness_family_includes_cnum_column() -> None:
@@ -74,3 +79,26 @@ def test_load_dtcr_matching_report_accepts_exported_workbook() -> None:
     assert result.loc[0, "DTCR#"] == "50311"
     assert result.loc[0, "Harness Family"] == "HF-1"
     assert result.loc[0, "Match Method"] == "Device Name"
+
+
+def test_load_dtx_circuits_report_preserves_cnum_column() -> None:
+    source_df = pd.DataFrame(
+        [
+            {
+                "Device Control Number": "123456",
+                "Device Name": "SWITCH BANK LEFT",
+                "Connector No": "C123",
+                "Suffix": "A",
+                "Harness Family": "HF-1",
+            }
+        ]
+    )
+
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        source_df.to_excel(writer, index=False)
+
+    result = load_dtx_circuits_report(buffer.getvalue())
+
+    assert "CNUM" in result.columns
+    assert result.loc[0, "CNUM"] == "C123"

@@ -163,6 +163,7 @@ def load_dtx_circuits_report(file_bytes: bytes) -> pd.DataFrame:
     """Load DTx Circuits Report from Excel bytes with auto header-row detection."""
     keyword_sets = [["control number", "device control", "dcn"],
                     ["device name", "name"],
+                    ["cnum", "connector", "connector number", "connector no"],
                     ["suffix"],
                     ["harness family", "harness", "family"]]
     header_row = _find_header_row(file_bytes, keyword_sets)
@@ -172,6 +173,7 @@ def load_dtx_circuits_report(file_bytes: bytes) -> pd.DataFrame:
     mappings = {
         "Device Control Number": ["device control number", "control number", "dcn", "device control"],
         "Device Name":           ["device name", "device nm"],
+        "CNUM":                  ["cnum", "connector number", "connector no", "connector"],
         "Suffix":                ["suffix"],
         "Harness Family":        ["harness family", "harnfamily", "harness fam", "family"],
     }
@@ -184,7 +186,11 @@ def load_dtx_circuits_report(file_bytes: bytes) -> pd.DataFrame:
             f"DTx Circuits Report missing columns: {missing}. "
             f"Detected columns: {list(df.columns[:20])}"
         )
-    df = df[required].dropna(how="all").reset_index(drop=True)
+    if "CNUM" not in df.columns:
+        df["CNUM"] = ""
+
+    keep_cols = required + ["CNUM"]
+    df = df[keep_cols].dropna(how="all").reset_index(drop=True)
     return df
 
 
@@ -287,7 +293,14 @@ def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) ->
                 matched_dtx_row = matching_rows.iloc[0]
                 harness_family = matched_dtx_row["Harness Family"]
                 matched_dtx_value = extracted_dcn
-                cnum = matched_dtx_row.get("CNUM")
+                cnum_values = (
+                    matching_rows.get("CNUM", pd.Series(dtype=str))
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+                cnum_list = [value for value in cnum_values.tolist() if value]
+                cnum = ", ".join(dict.fromkeys(cnum_list))
                 match_method = "Device Control Number"
 
         # Step 2: Match by Device Name (if no DCN match)

@@ -259,14 +259,15 @@ def _build_connector_grouped_frame(data_frame: pd.DataFrame) -> pd.DataFrame:
 
     aggregation = {
         "Device Control Number": _first_non_empty,
+        "Device Name": _collapse_to_unique_connector_values,
+        "Suffix": _collapse_to_unique_connector_values,
         "Number of Cavities": _first_non_empty,
         "Connector PN": _collapse_to_unique_connector_values,
-        "Harness Family": _collapse_to_unique_connector_values,
     }
     grouped_frame = (
-        grouped_frame.groupby(["CNUM", "Device Name", "Suffix"], dropna=False, as_index=False)
+        grouped_frame.groupby(["CNUM", "Harness Family"], dropna=False, as_index=False)
         .agg(aggregation)
-        .sort_values(["CNUM", "Device Name", "Suffix"])
+        .sort_values(["Harness Family", "CNUM"])
         .reset_index(drop=True)
     )
     return grouped_frame
@@ -331,6 +332,16 @@ def _apply_preorder_workbook_styles(workbook_bytes: bytes) -> bytes:
                             cell.fill = yellow_fill
 
         worksheet.freeze_panes = "A7"
+        if worksheet.title == "Connector Changes":
+            widths = {"A": 42, "B": 14, "C": 18, "D": 30, "E": 42, "F": 24, "G": 22,
+                      "H": 42, "I": 14, "J": 18, "K": 30}
+        else:
+            widths = {"A": 14, "B": 42, "C": 24, "D": 22}
+        for column_letter, width in widths.items():
+            worksheet.column_dimensions[column_letter].width = width
+        worksheet.row_dimensions[6].height = 34
+        for cell in worksheet[6]:
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     output_buffer = BytesIO()
     workbook.save(output_buffer)
@@ -350,7 +361,10 @@ def generate_preorder_generation_workbook(
     old_grouped = _build_connector_grouped_frame(old_df)
     new_grouped = _build_connector_grouped_frame(new_df)
 
-    key_columns = ["CNUM", "Device Name", "Suffix"]
+    # A physical connector is identified by CNUM within its harness family.
+    # Device Name and Suffix are descriptive and may legitimately change between
+    # releases; using them as keys creates false Deleted + Added pairs.
+    key_columns = ["CNUM", "Harness Family"]
     old_grouped_keys = old_grouped[key_columns].drop_duplicates()
     new_grouped_keys = new_grouped[key_columns].drop_duplicates()
 
@@ -367,15 +381,15 @@ def generate_preorder_generation_workbook(
     changed_connector_pn_df = merged.loc[connector_pn_mask, [
         "CNUM",
         "Device Control Number_old",
-        "Device Name",
-        "Suffix",
+        "Device Name_old",
+        "Suffix_old",
         "Number of Cavities_old",
-        "Harness Family_old",
+        "Harness Family",
         "Connector PN_old",
         "Device Control Number_new",
-        "Device Name",
+        "Device Name_new",
+        "Suffix_new",
         "Number of Cavities_new",
-        "Harness Family_new",
         "Connector PN_new",
     ]].copy()
     changed_connector_pn_df.insert(0, "Change Type", "Connector PN Change")
@@ -427,10 +441,10 @@ def generate_preorder_generation_workbook(
 
     for _, row in changed_connector_pn_df.iterrows():
         old_identifier = (
-            f"{row['CNUM']}_{row['Device Name']}-{row['Suffix']} ({row['Device Control Number_old']})"
+            f"{row['CNUM']}_{row['Device Name_old']}-{row['Suffix_old']} ({row['Device Control Number_old']})"
         )
         new_identifier = (
-            f"{row['CNUM']}_{row['Device Name']}-{row['Suffix']} ({row['Device Control Number_new']})"
+            f"{row['CNUM']}_{row['Device Name_new']}-{row['Suffix_new']} ({row['Device Control Number_new']})"
         )
         old_connector_pn = normalize_value(row["Connector PN_old"])
         new_connector_pn = normalize_value(row["Connector PN_new"])
@@ -441,7 +455,7 @@ def generate_preorder_generation_workbook(
                 row["Number of Cavities_old"],
                 old_connector_pn,
                 f"{old_connector_pn} >> {new_connector_pn}",
-                row["Harness Family_old"],
+                row["Harness Family"],
                 "Connector PN Change",
                 new_identifier,
                 row["CNUM"],
@@ -453,7 +467,7 @@ def generate_preorder_generation_workbook(
             [
                 row["CNUM"],
                 f"{old_connector_pn} >> {new_connector_pn}",
-                row["Harness Family_old"],
+                row["Harness Family"],
                 "Connector PN Change",
             ]
         )

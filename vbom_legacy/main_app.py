@@ -1256,6 +1256,8 @@ def _format_stats_sheets(wb_path: str):
 # Build Selections + AllCandidates
 # ====================================
 def compute_status_score(req_cnt, matched, extra, missing):
+    if req_cnt == 0:
+        return "NOT APPLICABLE", None
     if missing == 0 and extra == 0:
         status = "EXACT"
     elif missing == 0 and extra > 0:
@@ -1264,6 +1266,20 @@ def compute_status_score(req_cnt, matched, extra, missing):
         status = "INCOMPLETE"
     score = matched - extra - 100 * missing
     return status, score
+
+def _family_standard_codes(fam: dict) -> set:
+    """Return codes present on 100% of the family's current PNs.
+
+    Standard is deliberately family-local: the same sales code may be standard
+    for one harness family and optional (therefore rankable) for another.  A G
+    cell means the code is present and participates in the coverage test.
+    """
+    pns = fam.get("pns", [])
+    if not pns:
+        return set()
+    present_sets = [set(codes) | set(giveaway_codes)
+                    for _pn, codes, giveaway_codes in pns]
+    return set.intersection(*present_sets) if present_sets else set()
 
 def _variant_base_family(name: str):
     """Normalize family name to group Pacifica/Voyager variants."""
@@ -1275,6 +1291,10 @@ def _variant_base_family(name: str):
     # Normalize whitespace
     s = re.sub(r'[\s_]+', '_', s).strip().rstrip('_')
     return s
+
+def _is_trailer_tow_family(name: str) -> bool:
+    normalized = re.sub(r"[^A-Z0-9]+", "_", str(name).upper()).strip("_")
+    return "TRAILER_TOW" in normalized
 
 def build_outputs(vin_matrix_df: pd.DataFrame,
                   per_file_complexity: list):
@@ -1307,8 +1327,35 @@ def build_outputs(vin_matrix_df: pd.DataFrame,
 
             for fam in fam_list:
                 family_name = fam["family"]
-                fam_codes = fam["header_codes"]
-                vin_required_for_family = vin_codes & fam_codes
+                is_trailer_tow = _is_trailer_tow_family(family_name)
+                fam_codes = set(fam["header_codes"])
+                if is_trailer_tow:
+                    # AHT and HEY are equivalent positive applicability signals
+                    # for the optional Trailer Tow harness.  Keep both aliases
+                    # available even when a legacy matrix exposes only one.
+                    fam_codes.update({"AHT", "HEY"})
+                # Codes present on every current PN cannot distinguish one PN
+                # from another. Exclude them only for this family; the same code
+                # remains rankable in any other family where coverage is <100%.
+                # 501 is always non-rankable, even in malformed legacy inputs.
+                standard_codes = _family_standard_codes(fam) | {"501"}
+                if is_trailer_tow:
+                    standard_codes.update({"AHT", "HEY"})
+                applicable_family_codes = set(fam_codes) - {"501"}
+                rankable_family_codes = applicable_family_codes - standard_codes
+                vin_required_for_family = vin_codes & applicable_family_codes
+                vin_rankable_for_family = vin_required_for_family & rankable_family_codes
+
+                # Applicability is a hard gate, not a weak score.  If the VIN
+                # has no required signal for this family, do not rank or assign
+                # any of its PNs.  A grouped family may still be applicable via
+                # another Pacifica/Voyager variant.
+                if is_trailer_tow:
+                    family_is_applicable = bool(vin_codes & {"AHT", "HEY"})
+                else:
+                    family_is_applicable = bool(vin_required_for_family)
+                if not family_is_applicable:
+                    continue
 
                 # evaluate all PNs for this family
                 best_key = None
@@ -1317,17 +1364,32 @@ def build_outputs(vin_matrix_df: pd.DataFrame,
 
                 pn_evals = []
                 for pn, pn_codes, pn_giveaway_codes in fam["pns"]:
-                    # Treat both X and G as present for matching semantics.
+                    # G (giveaway) can satisfy a required signal, but an extra
+                    # giveaway must not penalize or lower a candidate's score.
                     effective_pn_codes = set(pn_codes) | set(pn_giveaway_codes)
+                    if is_trailer_tow:
+                        effective_pn_codes.update({"AHT", "HEY"})
 
+                    # Standard signals still establish applicability and remain
+                    # visible in the reported match counts. Ranking uses only
+                    # the non-standard subset, so a family-standard code gives
+                    # every PN zero advantage and zero penalty.
                     matched_codes = vin_required_for_family & effective_pn_codes
                     missing_codes = vin_required_for_family - effective_pn_codes
-                    extra_codes = effective_pn_codes - vin_required_for_family
+                    extra_codes = (set(pn_codes) & rankable_family_codes) - vin_required_for_family
 
                     matched = len(matched_codes)
                     missing = len(missing_codes)
                     extra = len(extra_codes)
-                    status, score = compute_status_score(len(vin_required_for_family), matched, extra, missing)
+                    rank_matched = len(vin_rankable_for_family & effective_pn_codes)
+                    rank_missing = len(vin_rankable_for_family - effective_pn_codes)
+                    if missing == 0 and extra == 0:
+                        status = "EXACT"
+                    elif missing == 0:
+                        status = "OVERBUILT"
+                    else:
+                        status = "INCOMPLETE"
+                    score = rank_matched - extra - 100 * rank_missing
 
                     # sorting key for "best"
                     key = (score, matched, -missing, -extra, -len(extra_codes), pn)
@@ -1364,6 +1426,21 @@ def build_outputs(vin_matrix_df: pd.DataFrame,
                         group_best = (best_key, family_name, best_pn, best_info)
 
             if group_best is None:
+                not_applicable_family = fam_list[0]["family"] if len(fam_list) == 1 else _base
+                selections_rows.append({
+                    "VIN": vin,
+                    "HarnessFamily": not_applicable_family,
+                    "SelectedHarnessPN": None,
+                    "MatchStatus": "NOT APPLICABLE",
+                    "RequiredCount": 0,
+                    "MatchedCount": 0,
+                    "MissingCount": 0,
+                    "ExtraCount": 0,
+                    "Giveaway": None,
+                    "MissingSalesCodes": None,
+                    "ExtraSalesCodes": None,
+                    "Score": None,
+                })
                 continue
 
             # mark best in AllCandidates for the selected family/pn

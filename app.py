@@ -16,6 +16,7 @@ import streamlit.components.v1 as components
 
 from dtx_compare_engine import generate_dtx_change_report, launch_preorder_generation_tool
 from secr_engine import create_secr_bytes, update_secr_bytes
+import secr_db
 from secr_enrichment_engine import (
     load_dtcr_report,
     load_dtcr_matching_report,
@@ -1230,6 +1231,7 @@ elif selected_tool == "Create SECR":
                     st.session_state["secr_result_meta"] = base_meta
                     st.session_state["secr_result_enriched"] = False
                     enrichment_summary_df = None
+                    db_dtcr_df = None
                     if dtcr_matching_file is not None:
                         try:
                             secr_bytes, meta, dtcr_mapping_df, summary_df, secr_harness_family = _auto_enrich_secr_if_requested(
@@ -1245,8 +1247,25 @@ elif selected_tool == "Create SECR":
                             st.session_state["secr_result_meta"] = base_meta
                             st.session_state["secr_result_bytes"] = secr_bytes
                             st.session_state["secr_result_enriched"] = True
+                            db_dtcr_df = dtcr_mapping_df
                         except Exception as enrich_exc:
                             st.warning(f"DTCR matching workbook was uploaded but could not be applied: {enrich_exc}")
+
+                    # Persist to the SECR database (never blocks generation)
+                    try:
+                        db_record = secr_db.record_from_workbook(
+                            st.session_state["secr_result_bytes"],
+                            action="create",
+                            source_def_filename=def_file.name,
+                            filename=st.session_state.get("secr_result_filename", ""),
+                            change_type=secr_change_type,
+                            enriched=bool(st.session_state.get("secr_result_enriched")),
+                            dtcr_mapping_df=db_dtcr_df,
+                        )
+                        st.session_state["secr_db_saved_id"] = secr_db.save_secr(db_record)
+                    except Exception as db_exc:
+                        st.session_state["secr_db_saved_id"] = None
+                        st.warning(f"SECR was generated, but saving to the SECR database failed: {db_exc}")
 
                 counts = create_secr_counts(
                     def_file_uploaded=def_file is not None,
@@ -1286,6 +1305,8 @@ elif selected_tool == "Create SECR":
         )
         if st.session_state.get("secr_result_enriched"):
             st.success("SECR was auto-enriched from the uploaded DTCR_Matching_Report workbook.")
+        if st.session_state.get("secr_db_saved_id"):
+            st.caption(f"Saved to SECR database (record #{st.session_state['secr_db_saved_id']}).")
 
 elif selected_tool == "Update SECR":
     render_tool_scroll_anchor("Update SECR")
@@ -1426,11 +1447,30 @@ elif selected_tool == "Update SECR":
                 "Updated_SECR.xlsx",
             )
             st.success("Updated SECR workbook created successfully.")
+
+            # Persist to the SECR database (never blocks generation)
+            try:
+                db_record = secr_db.record_from_workbook(
+                    update_bytes,
+                    action="update",
+                    source_def_filename=update_def_file.name,
+                    filename=st.session_state["update_secr_result_filename"],
+                    change_type=update_secr_change_type,
+                    parent_secr_number=secr_db.read_secr_number(
+                        update_old_secr_file.getvalue()
+                    ),
+                )
+                st.session_state["update_secr_db_saved_id"] = secr_db.save_secr(db_record)
+            except Exception as db_exc:
+                st.session_state["update_secr_db_saved_id"] = None
+                st.warning(f"Updated SECR was generated, but saving to the SECR database failed: {db_exc}")
         except Exception as exc:
             st.error(f"Update SECR failed: {exc}")
 
     update_result = st.session_state.get("update_secr_result_bytes")
     if update_result is not None:
+        if st.session_state.get("update_secr_db_saved_id"):
+            st.caption(f"Saved to SECR database (record #{st.session_state['update_secr_db_saved_id']}).")
         update_meta = st.session_state.get("update_secr_result_meta", {})
         mcol1, mcol2, mcol3 = st.columns(3)
         mcol1.metric("SECR #", update_meta.get("I2", ""))

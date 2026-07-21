@@ -21,6 +21,11 @@ venv/
 dist/
 !assets/downloads/ispeed-dtcr-downloader.zip
 
+# SECR database (local persistence — back up separately)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
 # Generated outputs
 Wiring_Harness_Output.xlsx
 Test_Output*.xlsx

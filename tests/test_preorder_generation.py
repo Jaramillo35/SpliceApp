@@ -313,3 +313,38 @@ def test_generate_preorder_generation_workbook_requires_valid_input_files(tmp_pa
             old_file_name=old_path.name,
             new_file_name=new_path.name,
         )
+
+
+def test_preorder_uses_cnum_within_harness_as_connector_identity(tmp_path: Path) -> None:
+    old_path = tmp_path / "old.xlsx"
+    new_path = tmp_path / "new.xlsx"
+
+    def row(cnum: str, suffix: str, connector_pn: str) -> dict[str, object]:
+        values = {column: "" for column in REQUIRED_COLUMNS}
+        values.update({
+            "Device Control Number": f"DCN-{cnum}",
+            "Device Name": "Old Label" if suffix == "OLD" else "New Label",
+            "Suffix": suffix,
+            "CNUM": cnum,
+            "Number of Cavities": "4",
+            "Connector PN": connector_pn,
+            "Harness Family": "DASH",
+            "Pin Number": "1",
+        })
+        return values
+
+    _write_dtx_excel(old_path, [row("D3821C", "OLD", "PN-SAME"), row("Y200A", "OLD", "PN-OLD")])
+    _write_dtx_excel(new_path, [row("D3821C", "NEW", "PN-SAME"), row("Y200A", "NEW", "PN-NEW")])
+
+    result = generate_preorder_generation_workbook(
+        old_file_bytes=old_path.read_bytes(),
+        new_file_bytes=new_path.read_bytes(),
+        old_file_name=old_path.name,
+        new_file_name=new_path.name,
+    )
+
+    assert "D3821C" not in set(result["summary_df"]["CNUM"])
+    y200 = result["summary_df"].loc[result["summary_df"]["CNUM"] == "Y200A"]
+    assert len(y200) == 1
+    assert y200.iloc[0]["Change Type"] == "Connector PN Change"
+    assert y200.iloc[0]["Connector PN Change"] == "PN-OLD >> PN-NEW"
