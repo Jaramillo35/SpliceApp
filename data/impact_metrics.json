@@ -321,6 +321,29 @@
       "output_generated": true,
       "failure_category": null,
       "created_at": "2026-07-21T12:43:11.240673+00:00"
+    },
+    {
+      "id": "956b29a2-c532-463f-9626-d37e7b5601a3",
+      "anonymous_user_id": null,
+      "anonymous_session_id": "76e109aa-6ff8-430c-9030-fa5d07a6c573",
+      "workflow_id": "dtx_compare_report",
+      "workflow_version": null,
+      "started_at": "2026-07-21T13:13:42.925112+00:00",
+      "completed_at": "2026-07-21T13:14:14.210111+00:00",
+      "status": "completed",
+      "processing_seconds": 31.284997940063477,
+      "input_file_count": 2,
+      "output_file_count": 1,
+      "rows_read": 12074,
+      "rows_processed": 12074,
+      "circuits_processed": 12074,
+      "harness_variants_processed": null,
+      "automatic_validation_errors": 0,
+      "automatic_validation_warnings": 0,
+      "automatic_validation_failures": 0,
+      "output_generated": true,
+      "failure_category": null,
+      "created_at": "2026-07-21T13:13:42.925112+00:00"
     }
   ],
   "workflow_feedback": [
@@ -515,6 +538,22 @@
       "time_saved_minutes": 59.61674476541812,
       "time_savings_percentage": 99.36124127569687,
       "created_at": "2026-07-21T12:43:34.238893+00:00"
+    },
+    {
+      "id": "f96b09d3-8008-4e72-87b1-c75bd05cab8f",
+      "workflow_run_id": "956b29a2-c532-463f-9626-d37e7b5601a3",
+      "workflow_id": "dtx_compare_report",
+      "anonymous_session_id": "76e109aa-6ff8-430c-9030-fa5d07a6c573",
+      "baseline_minutes": 60,
+      "baseline_manual_touchpoints": null,
+      "remaining_manual_touchpoints": null,
+      "manual_touchpoints_eliminated": null,
+      "user_reported_errors_prevented": null,
+      "usefulness_rating": null,
+      "non_confidential_feedback": null,
+      "time_saved_minutes": 59.47858336766561,
+      "time_savings_percentage": 99.13097227944267,
+      "created_at": "2026-07-21T13:14:14.212348+00:00"
     }
   ]
 }
