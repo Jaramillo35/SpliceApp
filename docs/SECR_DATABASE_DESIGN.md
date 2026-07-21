@@ -44,6 +44,7 @@ This is the per-DTCR source of affected **devices** (Device Transmittal / Matche
 - FR7: A DB save failure must **not** break workbook generation — the user still gets their download; show a warning instead.
 - FR8: Duplicate protection: same SECR # + version is upserted (re-clicking Generate doesn't create duplicate rows).
 - FR9 (phase 2): A "SECR Database" page in the app to browse/search records and re-derive the next sequence number.
+- FR10: Sequence ranges are reserved per program: `_1000`–`_1999` for **RU**, `_2000`–`_2999` for **DT** (extend the map as programs are added). `next_sequence()` must start from the program's base and never cross into another program's range.
 
 ### Non-functional
 
