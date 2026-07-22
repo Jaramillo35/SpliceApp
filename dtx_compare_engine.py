@@ -47,6 +47,121 @@ STATUS_COLORS = {
 }
 
 
+def _split_delimited_values(value: object) -> list[str]:
+    tokens: list[str] = []
+    for part in re.split(r"[,;|\n]+", normalize_value(value)):
+        token = normalize_value(part)
+        if token:
+            tokens.append(token)
+    return tokens
+
+
+def _extract_transmittal_number(device_transmittal: object) -> str:
+    match = re.match(r"^(\d+)", normalize_value(device_transmittal))
+    return match.group(1) if match else ""
+
+
+def _build_dtcr_lookup_by_cnum(
+    old_df: pd.DataFrame,
+    new_df: pd.DataFrame,
+    dtcr_df: pd.DataFrame,
+) -> dict[str, list[str]]:
+    required_columns = {"DTCR#", "Device Transmittal"}
+    if not required_columns.issubset(set(dtcr_df.columns)):
+        raise ValueError("DTCR report must include DTCR# and Device Transmittal columns.")
+
+    dcn_to_dtcr: dict[str, list[str]] = {}
+    for _, row in dtcr_df.iterrows():
+        dtcr_number = normalize_value(row.get("DTCR#"))
+        dcn = _extract_transmittal_number(row.get("Device Transmittal", ""))
+        if not dtcr_number or not dcn:
+            continue
+        if dcn not in dcn_to_dtcr:
+            dcn_to_dtcr[dcn] = []
+        if dtcr_number not in dcn_to_dtcr[dcn]:
+            dcn_to_dtcr[dcn].append(dtcr_number)
+
+    cnum_to_dtcr: dict[str, list[str]] = {}
+    combined = pd.concat([old_df, new_df], ignore_index=True)
+    for _, row in combined.iterrows():
+        cnum = normalize_value(row.get("CNUM", ""))
+        if not cnum:
+            continue
+        dcn_values = _split_delimited_values(row.get("Device Control Number", ""))
+        if cnum not in cnum_to_dtcr:
+            cnum_to_dtcr[cnum] = []
+        for dcn in dcn_values:
+            for dtcr_number in dcn_to_dtcr.get(dcn, []):
+                if dtcr_number not in cnum_to_dtcr[cnum]:
+                    cnum_to_dtcr[cnum].append(dtcr_number)
+
+    return cnum_to_dtcr
+
+
+def _insert_dtcr_column(data_frame: pd.DataFrame, values: list[str]) -> pd.DataFrame:
+    annotated = data_frame.copy()
+    if "DTCR#" in annotated.columns:
+        annotated = annotated.drop(columns=["DTCR#"])
+
+    insert_at = 1 if "CNUM" in annotated.columns else len(annotated.columns)
+    annotated.insert(insert_at, "DTCR#", values)
+    return annotated
+
+
+def _match_dtcr_numbers_for_row(row: pd.Series, dtcr_by_cnum: dict[str, list[str]]) -> str:
+    matched: list[str] = []
+
+    cnum_values = _split_delimited_values(row.get("CNUM", ""))
+    for cnum in cnum_values:
+        for dtcr_number in dtcr_by_cnum.get(cnum, []):
+            if dtcr_number not in matched:
+                matched.append(dtcr_number)
+
+    return ", ".join(matched)
+
+
+def _annotate_results_with_dtcr(
+    results: dict[str, object],
+    dtcr_by_cnum: dict[str, list[str]],
+) -> dict[str, object]:
+    tables_to_annotate = [
+        "added_cnums_df",
+        "removed_cnums_df",
+        "added_circuits_df",
+        "removed_circuits_df",
+        "modified_circuits_df",
+        "change_log_df",
+        "cnum_summary_df",
+    ]
+
+    for table_name in tables_to_annotate:
+        data_frame = results.get(table_name)
+        if not isinstance(data_frame, pd.DataFrame):
+            continue
+        if data_frame.empty:
+            results[table_name] = _insert_dtcr_column(data_frame, [])
+            continue
+
+        dtcr_values = [
+            _match_dtcr_numbers_for_row(row, dtcr_by_cnum)
+            for _, row in data_frame.iterrows()
+        ]
+        results[table_name] = _insert_dtcr_column(data_frame, dtcr_values)
+
+    if isinstance(results.get("top_20_cnums_df"), pd.DataFrame):
+        top_df = results["top_20_cnums_df"]
+        if top_df.empty:
+            results["top_20_cnums_df"] = _insert_dtcr_column(top_df, [])
+        else:
+            top_dtcr_values = [
+                _match_dtcr_numbers_for_row(row, dtcr_by_cnum)
+                for _, row in top_df.iterrows()
+            ]
+            results["top_20_cnums_df"] = _insert_dtcr_column(top_df, top_dtcr_values)
+
+    return results
+
+
 def get_preorder_generation_exe_path() -> Path:
     """Resolve PreOrder tool path from env var or a local assets fallback."""
     env_path = os.getenv("PREORDER_GENERATION_EXE_PATH")
@@ -677,6 +792,14 @@ def build_modified_views(
         new_row = new_indexed.loc[key]
         changed_fields: list[str] = []
 
+        old_harness_family = normalize_cell(old_row.get("Harness Family", ""))
+        new_harness_family = normalize_cell(new_row.get("Harness Family", ""))
+        harness_family_value = (
+            old_harness_family
+            if old_harness_family == new_harness_family
+            else f"{old_harness_family} >> {new_harness_family}"
+        )
+
         row_record: dict[str, object] = {
             "CNUM": key[0],
             "Pin Number": key[1],
@@ -697,6 +820,7 @@ def build_modified_views(
                         "CNUM": key[0],
                         "Pin Number": key[1],
                         "Change Type": "Modified",
+                        "Harness Family": harness_family_value,
                         "Field": column,
                         "Old Value": old_value,
                         "New Value": new_value,
@@ -1093,11 +1217,15 @@ def generate_dtx_change_report(
     new_file_bytes: bytes,
     old_file_name: str,
     new_file_name: str,
+    dtcr_df: pd.DataFrame | None = None,
 ) -> dict[str, object]:
     old_df, old_layout = load_dtx_report(old_file_bytes, old_file_name)
     new_df, new_layout = load_dtx_report(new_file_bytes, new_file_name)
 
     results = compare_reports(old_df, new_df)
+    if dtcr_df is not None:
+        dtcr_by_cnum = _build_dtcr_lookup_by_cnum(old_df, new_df, dtcr_df)
+        results = _annotate_results_with_dtcr(results, dtcr_by_cnum)
     output_bytes = write_report_to_bytes(old_file_name, new_file_name, old_layout, new_layout, results)
 
     return {

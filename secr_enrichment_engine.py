@@ -221,7 +221,7 @@ def load_dtcr_matching_report(file_bytes: bytes) -> pd.DataFrame:
     if "Bulletin" not in df.columns:
         df["Bulletin"] = df["Reason for change"].map(extract_bulletin_number)
     else:
-        df["Bulletin"] = df["Bulletin"].fillna("").astype(str).str.strip()
+        df["Bulletin"] = df["Bulletin"].map(extract_bulletin_number)
 
     ordered = [
         "DTCR#",
@@ -272,12 +272,22 @@ def extract_bulletin_number(text: object) -> str:
     if not value:
         return ""
 
+    # Handles formats such as:
+    # - Bulletin 318898
+    # - Bulletin: 318898-02
+    # - Bulletin_ 318898_02
     match = re.search(
-        r"\bbulletin\b(?:\s*no\.?)?\s*[:#-]?\s*([A-Za-z0-9-]+)",
+        r"\bbulletin(?:\b|_)[\s_:#-]*(?:no\.?[\s_:#-]*)?([A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*)",
         value,
         flags=re.IGNORECASE,
     )
-    return match.group(1).strip() if match else ""
+    if match:
+        return match.group(1).strip()
+
+    if re.fullmatch(r"[A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*", value.strip()):
+        return value.strip()
+
+    return ""
 
 
 # ---------------------------------------------------------------------------

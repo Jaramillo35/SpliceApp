@@ -782,6 +782,12 @@ elif selected_tool == "DTx Compare Report":
     with col_new:
         new_file = st.file_uploader("NEW DTx report", type=["xlsx", "xls", "xlsm"], key="dtx_new_file")
 
+    dtx_dtcr_report_file = st.file_uploader(
+        "Optional: DTCR Report (to populate DTCR# and generate DTCR Matching Report)",
+        type=["xlsx", "xls", "xlsm", "csv"],
+        key="dtx_dtcr_report_file",
+    )
+
     if old_file is None or new_file is None:
         st.info("Upload both OLD and NEW DTx reports to continue.")
         st.stop()
@@ -848,15 +854,46 @@ elif selected_tool == "DTx Compare Report":
             with metrics_tracker.track_workflow(
                 "dtx_compare_report",
                 event_key=event_key,
-                input_file_count=2,
+                input_file_count=2 + (1 if dtx_dtcr_report_file is not None else 0),
             ) as tracked_run:
                 with st.spinner("Comparing reports and building workbook..."):
+                    parsed_dtcr_df = None
+                    dtcr_mapping_compare_df = None
+                    dtcr_map_bytes = None
+
+                    if dtx_dtcr_report_file is not None:
+                        parsed_dtcr_df = load_dtcr_report(
+                            dtx_dtcr_report_file.getvalue(),
+                            dtx_dtcr_report_file.name,
+                        )
+                        old_dtx_match_df = load_dtx_circuits_report(old_file.getvalue())
+                        new_dtx_match_df = load_dtx_circuits_report(new_file.getvalue())
+                        combined_dtx_match_df = pd.concat(
+                            [old_dtx_match_df, new_dtx_match_df],
+                            ignore_index=True,
+                        ).drop_duplicates().reset_index(drop=True)
+                        dtcr_mapping_compare_df = match_dtcr_to_harness_family(
+                            parsed_dtcr_df,
+                            combined_dtx_match_df,
+                        )
+                        dtcr_map_bytes = export_dtcr_mapping_styled(dtcr_mapping_compare_df)
+
                     dtx_result = generate_dtx_change_report(
                         old_file_bytes=old_file.getvalue(),
                         new_file_bytes=new_file.getvalue(),
                         old_file_name=old_file.name,
                         new_file_name=new_file.name,
+                        dtcr_df=parsed_dtcr_df,
                     )
+
+                if dtcr_map_bytes is not None and dtcr_mapping_compare_df is not None:
+                    st.session_state["dtx_compare_dtcr_matching_report_bytes"] = dtcr_map_bytes
+                    st.session_state["dtx_compare_dtcr_matching_report_df"] = dtcr_mapping_compare_df
+                    st.session_state["dtx_compare_dtcr_matching_report_name"] = "DTCR_Matching_Report.xlsx"
+                else:
+                    st.session_state.pop("dtx_compare_dtcr_matching_report_bytes", None)
+                    st.session_state.pop("dtx_compare_dtcr_matching_report_df", None)
+                    st.session_state.pop("dtx_compare_dtcr_matching_report_name", None)
 
                 compare_counts = dtx_compare_counts(dtx_result)
                 tracked_run.record_counts(
@@ -918,6 +955,25 @@ elif selected_tool == "DTx Compare Report":
         file_name=dtx_result["output_file_name"],
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+    dtcr_matching_report_bytes = st.session_state.get("dtx_compare_dtcr_matching_report_bytes")
+    if dtcr_matching_report_bytes is not None:
+        st.download_button(
+            label="Download DTCR Matching Report",
+            data=dtcr_matching_report_bytes,
+            file_name=st.session_state.get(
+                "dtx_compare_dtcr_matching_report_name",
+                "DTCR_Matching_Report.xlsx",
+            ),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_dtx_compare_dtcr_matching_report",
+            use_container_width=True,
+        )
+        with st.expander("DTCR Matching Report Preview", expanded=False):
+            st.dataframe(
+                st.session_state.get("dtx_compare_dtcr_matching_report_df", pd.DataFrame()),
+                use_container_width=True,
+            )
 
 elif selected_tool == "DTCR Matching Report":
     render_tool_scroll_anchor("DTCR Matching Report")
