@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iSpeed DTCR Downloader</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div class="brand-row">
+        <img class="brand-logo" src="assets/logo.png" alt="Versigent">
+        <p class="eyebrow">ISPEED AUTOMATION</p>
+      </div>
+      <h1>DTCR Attachment Downloader</h1>
+      <p class="intro">Download attachments from the currently filtered iSpeed results and create a reason-for-change summary.</p>
+    </header>
+
+    <section class="card setup" aria-labelledby="setup-title">
+      <div>
+        <h2 id="setup-title">1. Confirm the source</h2>
+        <p id="source-status" class="muted">Checking the iSpeed tab…</p>
+      </div>
+      <button id="rescan-button" class="secondary" type="button">Refresh source</button>
+    </section>
+
+    <section class="card setup" aria-labelledby="folder-title">
+      <div>
+        <h2 id="folder-title">2. Choose a destination</h2>
+        <p id="folder-status" class="muted">No folder selected</p>
+      </div>
+      <button id="folder-button" class="secondary" type="button">Choose folder</button>
+    </section>
+
+    <section class="card run-card" aria-labelledby="run-title">
+      <div class="run-heading">
+        <div>
+          <h2 id="run-title">3. Run</h2>
+          <p id="run-summary" class="muted">Ready when the source and folder are set.</p>
+        </div>
+        <div class="actions">
+          <button id="stop-button" class="danger" type="button" disabled>Stop</button>
+          <button id="start-button" class="primary" type="button" disabled>Start download</button>
+        </div>
+      </div>
+
+      <div class="progress-track" role="progressbar" aria-label="Download progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div id="progress-bar"></div>
+      </div>
+
+      <div class="stats" aria-live="polite">
+        <div><span id="stat-total">0</span><small>Eligible</small></div>
+        <div><span id="stat-complete">0</span><small>Processed</small></div>
+        <div><span id="stat-files">0</span><small>Files</small></div>
+        <div><span id="stat-errors">0</span><small>Errors</small></div>
+      </div>
+    </section>
+
+    <section class="card log-card" aria-labelledby="log-title">
+      <div class="log-heading">
+        <h2 id="log-title">Activity</h2>
+        <button id="clear-log-button" class="text-button" type="button">Clear</button>
+      </div>
+      <ol id="activity-log" aria-live="polite"></ol>
+    </section>
+
+    <p class="footnote">Deleted, canceled, cancelled, and rejected DTCRs are skipped. DTCRs already present in the selected folder are skipped so only missing DTCRs are downloaded.</p>
+  </main>
+  <script src="shared.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

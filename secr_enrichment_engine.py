@@ -218,7 +218,21 @@ def load_dtcr_matching_report(file_bytes: bytes) -> pd.DataFrame:
 
     df = df.dropna(subset=["DTCR#"]).reset_index(drop=True)
     df["DTCR#"] = df["DTCR#"].astype(str).str.strip()
-    return df[required + [c for c in df.columns if c not in required]]
+    if "Bulletin" not in df.columns:
+        df["Bulletin"] = df["Reason for change"].map(extract_bulletin_number)
+    else:
+        df["Bulletin"] = df["Bulletin"].fillna("").astype(str).str.strip()
+
+    ordered = [
+        "DTCR#",
+        "Device Transmittal",
+        "Reason for change",
+        "Status",
+        "Bulletin",
+        "Match Method",
+        "Harness Family",
+    ]
+    return df[ordered + [c for c in df.columns if c not in ordered]]
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +263,23 @@ def extract_device_control_number(device_transmittal: str) -> Optional[str]:
     return None
 
 
+def extract_bulletin_number(text: object) -> str:
+    """Extract the first bulletin identifier after the word 'Bulletin'."""
+    if text is None or pd.isna(text):
+        return ""
+
+    value = str(text).strip()
+    if not value:
+        return ""
+
+    match = re.search(
+        r"\bbulletin\b(?:\s*no\.?)?\s*[:#-]?\s*([A-Za-z0-9-]+)",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return match.group(1).strip() if match else ""
+
+
 # ---------------------------------------------------------------------------
 # Matching Logic
 # ---------------------------------------------------------------------------
@@ -267,6 +298,7 @@ def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) ->
     - Extracted Device Control Number
     - Reason for change
     - Status
+    - Bulletin
     - Match Method
     - Matched DTx Value
     - CNUM
@@ -279,6 +311,7 @@ def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) ->
         device_transmittal = row["Device Transmittal"]
         reason = row["Reason for change"]
         status = row["Status"]
+        bulletin = extract_bulletin_number(reason)
 
         extracted_dcn = extract_device_control_number(device_transmittal)
         match_method = "No Match"
@@ -325,6 +358,7 @@ def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) ->
             "Extracted Device Control Number": extracted_dcn or "",
             "Reason for change": reason,
             "Status": status,
+            "Bulletin": bulletin,
             "Match Method": match_method,
             "Matched DTx Value": matched_dtx_value or "",
             "CNUM": cnum or "",
@@ -442,6 +476,21 @@ def update_secr_dtcr_numbers(
         raise RuntimeError(f"Failed to update DTCR numbers near {dtcr_label_cell_ref}: {e}")
 
 
+def update_secr_bulletin_numbers(
+    secr_workbook: openpyxl.Workbook,
+    bulletin_numbers_text: str,
+) -> None:
+    """Write bulletin numbers to Summary!G14."""
+    try:
+        ws = secr_workbook["Summary"]
+        target_cell = ws["G14"]
+        target_cell.value = bulletin_numbers_text
+        target_cell.alignment = Alignment(wrap_text=True, vertical="top")
+        _autosize_cell_for_text(ws, target_cell.row, target_cell.column, bulletin_numbers_text)
+    except Exception as e:
+        raise RuntimeError(f"Failed to update Bulletin numbers in Summary!G14: {e}")
+
+
 # ---------------------------------------------------------------------------
 # SECR Enrichment Logic
 # ---------------------------------------------------------------------------
@@ -484,6 +533,30 @@ def build_dtcr_numbers_for_secr(
         matching["DTCR#"].astype(str).str.strip().dropna().drop_duplicates().tolist()
     )
     return ", ".join(dtcr_values)
+
+
+def build_bulletin_numbers_for_secr(
+    secr_harness_family: str,
+    dtcr_mapping_df: pd.DataFrame,
+) -> str:
+    """Build comma-separated bulletin numbers matching the SECR Harness Family."""
+    matching = dtcr_mapping_df[dtcr_mapping_df["Harness Family"] == secr_harness_family].copy()
+    if matching.empty:
+        return ""
+
+    bulletins: list[str] = []
+    seen: set[str] = set()
+
+    for _, row in matching.iterrows():
+        bulletin_value = row.get("Bulletin", "")
+        bulletin = extract_bulletin_number(bulletin_value) or extract_bulletin_number(
+            row.get("Reason for change", "")
+        )
+        if bulletin and bulletin not in seen:
+            seen.add(bulletin)
+            bulletins.append(bulletin)
+
+    return ", ".join(bulletins)
 
 
 def _style_dtcr_mapping_sheet(ws: openpyxl.worksheet.worksheet.Worksheet) -> None:

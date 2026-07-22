@@ -28,8 +28,10 @@ from secr_enrichment_engine import (
     find_dtcr_number_label_cell,
     update_secr_reason_for_change,
     update_secr_dtcr_numbers,
+    update_secr_bulletin_numbers,
     build_reason_for_change_for_secr,
     build_dtcr_numbers_for_secr,
+    build_bulletin_numbers_for_secr,
     build_enrichment_summary,
     export_dtcr_mapping_styled,
     export_secr_enriched_output,
@@ -73,6 +75,7 @@ TOOL_SCROLL_IDS = {
     "DTCR Matching Report": "dtcr-matching-section",
     "Create SECR": "create-secr-section",
     "Update SECR": "update-secr-section",
+    "SECR Database": "secr-database-section",
     "VBOM Risk Matrix": "vbom-risk-section",
 }
 if LOGO_PATH.exists():
@@ -132,6 +135,10 @@ def _auto_enrich_secr_if_requested(
         _, dtcr_label_ref = dtcr_label_info
         dtcr_numbers_text = build_dtcr_numbers_for_secr(secr_harness_family, dtcr_mapping_df)
         update_secr_dtcr_numbers(secr_wb, dtcr_label_ref, dtcr_numbers_text)
+
+    bulletin_numbers_text = build_bulletin_numbers_for_secr(secr_harness_family, dtcr_mapping_df)
+    if bulletin_numbers_text:
+        update_secr_bulletin_numbers(secr_wb, bulletin_numbers_text)
 
     enriched_bytes, export_meta = export_secr_enriched_output(
         secr_wb,
@@ -270,6 +277,7 @@ mode = st.radio(
         "DTx Compare Report",
         "Create SECR",
         "Update SECR",
+        "SECR Database",
         "DTCR Matching Report",
         "VBOM Risk Matrix",
     ],
@@ -368,7 +376,7 @@ if mode == "Home":
             """,
             unsafe_allow_html=True,
         )
-        step1_btn, step2_btn, step3_btn = st.columns(3)
+        step1_btn, step2_btn, step3_btn, step4_btn = st.columns(4)
         with step1_btn:
             if st.button("Open DTCR Matching", key="go_dtcr", use_container_width=True):
                 open_tool("DTCR Matching Report")
@@ -378,6 +386,9 @@ if mode == "Home":
         with step3_btn:
             if st.button("Open Update SECR", key="go_update_secr", use_container_width=True):
                 open_tool("Update SECR")
+        with step4_btn:
+            if st.button("Open SECR Database", key="go_secr_db", use_container_width=True):
+                open_tool("SECR Database")
 
     with row2[1]:
         st.markdown(
@@ -1483,5 +1494,142 @@ elif selected_tool == "Update SECR":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="update_secr_dl_btn",
         )
+
+elif selected_tool == "SECR Database":
+    render_tool_scroll_anchor("SECR Database")
+    st.title("SECR Database")
+    st.caption(
+        "Browse and search every SECR saved automatically by the Create SECR and Update SECR tools."
+    )
+
+    secr_db.init_db()
+    all_records = secr_db.list_secrs()
+
+    if not all_records:
+        st.info(
+            "No SECRs in the database yet. Generate one with Create SECR or Update SECR "
+            "and it will appear here automatically."
+        )
+        st.stop()
+
+    records_df = pd.DataFrame(all_records)
+
+    def _filter_options(col: str) -> list:
+        vals = sorted({str(v) for v in records_df[col].dropna() if str(v).strip()})
+        return ["All"] + vals
+
+    fcol1, fcol2, fcol3, fcol4, fcol5 = st.columns([1, 1, 1, 1, 2])
+    with fcol1:
+        f_my = st.selectbox("Model Year", _filter_options("model_year"), key="secrdb_my")
+    with fcol2:
+        f_prog = st.selectbox("Program", _filter_options("program"), key="secrdb_prog")
+    with fcol3:
+        f_phase = st.selectbox("Phase", _filter_options("phase"), key="secrdb_phase")
+    with fcol4:
+        f_family = st.selectbox(
+            "Harness Family", _filter_options("harness_family"), key="secrdb_family"
+        )
+    with fcol5:
+        f_search = st.text_input(
+            "Search DTCR # / circuit / device / part number",
+            key="secrdb_search",
+            placeholder="e.g. 49754, A111, D2784J",
+        )
+
+    filtered = records_df
+    for col, val in (
+        ("model_year", f_my),
+        ("program", f_prog),
+        ("phase", f_phase),
+        ("harness_family", f_family),
+    ):
+        if val != "All":
+            filtered = filtered[filtered[col].astype(str) == val]
+
+    if f_search.strip():
+        term = f_search.strip()
+        hit_ids = {r["id"] for r in secr_db.find_by_dtcr(term)}
+        hit_ids |= {r["id"] for r in secr_db.find_by_item(term)}
+        filtered = filtered[filtered["id"].isin(hit_ids)]
+        if filtered.empty:
+            st.warning(f"No SECR references '{term}' as a DTCR #, circuit, device, or part number.")
+
+    st.caption(f"Showing {len(filtered)} of {len(records_df)} SECR record(s)")
+
+    display_cols = [
+        "secr_number", "version", "model_year", "program", "phase",
+        "harness_family", "subject", "secr_author", "action", "enriched",
+        "created_at", "filename",
+    ]
+    nice_names = {
+        "secr_number": "SECR #", "version": "Ver", "model_year": "MY",
+        "program": "Program", "phase": "Phase", "harness_family": "Family",
+        "subject": "Subject", "secr_author": "Author", "action": "Action",
+        "enriched": "DTCR-Enriched", "created_at": "Saved At", "filename": "File",
+    }
+    show_df = filtered[display_cols].rename(columns=nice_names)
+    st.dataframe(show_df, use_container_width=True, hide_index=True)
+
+    st.download_button(
+        "Download results as CSV",
+        data=show_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="secr_database_export.csv",
+        mime="text/csv",
+        key="secrdb_csv",
+    )
+
+    if not filtered.empty:
+        st.divider()
+        st.subheader("SECR detail")
+
+        label_to_id = {}
+        for _, row in filtered.iterrows():
+            subject_part = (str(row.get("subject") or "")[:40]).strip()
+            label = f"{row['secr_number']}  v{row['version']}" + (f" — {subject_part}" if subject_part else "")
+            label_to_id[label] = int(row["id"])
+        detail_label = st.selectbox("Select a SECR", list(label_to_id.keys()), key="secrdb_detail")
+        detail = secr_db.get_secr(label_to_id[detail_label])
+
+        if detail:
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("SECR #", detail["secr_number"])
+            m2.metric("Version", detail["version"])
+            m3.metric("Affected items", len(detail["affected_items"]))
+            m4.metric("DTCR records", len(detail["dtcrs"]))
+            st.caption(
+                f"Saved {detail['created_at']} by {detail.get('created_by') or 'unknown'} "
+                f"({detail['action']}) · Source DEF: {detail.get('source_def_filename') or 'n/a'}"
+            )
+
+            dcol1, dcol2 = st.columns(2)
+            with dcol1:
+                st.markdown("**Affected items**")
+                if detail["affected_items"]:
+                    items_df = pd.DataFrame(detail["affected_items"]).rename(
+                        columns={"category": "Category", "action": "Action", "item": "Item"}
+                    )
+                    st.dataframe(items_df, use_container_width=True, hide_index=True, height=280)
+                else:
+                    st.caption("None recorded.")
+            with dcol2:
+                st.markdown("**DTCR detail** (from the matching report used at creation)")
+                if detail["dtcrs"]:
+                    dtcr_df = pd.DataFrame(detail["dtcrs"])[
+                        ["dtcr_number", "device_transmittal", "reason_for_change", "status", "cnum"]
+                    ].rename(columns={
+                        "dtcr_number": "DTCR #", "device_transmittal": "Device Transmittal",
+                        "reason_for_change": "Reason", "status": "Status", "cnum": "Circuits (CNUM)",
+                    })
+                    st.dataframe(dtcr_df, use_container_width=True, hide_index=True, height=280)
+                else:
+                    st.caption("No DTCR enrichment data stored for this SECR.")
+
+            chain = secr_db.get_revision_chain(detail["id"])
+            if len(chain) > 1:
+                st.markdown("**Revision chain** (newest first)")
+                chain_text = "  →  ".join(
+                    f"{c['secr_number']} v{c['version']} ({c['created_at'][:10]})" for c in chain
+                )
+                st.caption(chain_text)
 
 
