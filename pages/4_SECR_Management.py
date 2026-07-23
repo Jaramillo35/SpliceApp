@@ -11,5 +11,4 @@ if str(APP_DIR) not in sys.path:
 
 from ui.pages.secr_management import render
 
-st.set_page_config(page_title="SECR Management", layout="wide")
 render()

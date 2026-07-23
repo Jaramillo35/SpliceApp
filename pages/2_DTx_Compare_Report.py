@@ -19,8 +19,6 @@ from splice.dtx_compare import (
 from feedback_system import FeedbackStore, render_feedback_widget
 
 
-st.set_page_config(page_title="DTx Compare Report", layout="wide")
-
 st.title("DTx Compare Report")
 st.caption("Upload OLD and NEW DTx files to generate an engineering change workbook.")
 
