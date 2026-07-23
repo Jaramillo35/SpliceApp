@@ -10,6 +10,9 @@ import pandas as pd
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from splice.common.text import extract_bulletin_number as _canonical_extract_bulletin_number
+from splice.dtcr import match_dtcr_to_harness_family as _canonical_match_dtcr_to_harness_family
+
 
 # ---------------------------------------------------------------------------
 # File Loaders
@@ -264,30 +267,13 @@ def extract_device_control_number(device_transmittal: str) -> Optional[str]:
 
 
 def extract_bulletin_number(text: object) -> str:
-    """Extract the first bulletin identifier after the word 'Bulletin'."""
-    if text is None or pd.isna(text):
-        return ""
+    """Extract the first bulletin identifier after the word 'Bulletin'.
 
-    value = str(text).strip()
-    if not value:
-        return ""
-
-    # Handles formats such as:
-    # - Bulletin 318898
-    # - Bulletin: 318898-02
-    # - Bulletin_ 318898_02
-    match = re.search(
-        r"\bbulletin(?:\b|_)[\s_:#-]*(?:no\.?[\s_:#-]*)?([A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*)",
-        value,
-        flags=re.IGNORECASE,
-    )
-    if match:
-        return match.group(1).strip()
-
-    if re.fullmatch(r"[A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*", value.strip()):
-        return value.strip()
-
-    return ""
+    Delegates to the canonical, stricter implementation in
+    :mod:`splice.common.text`. Unlike the previous version here, a bare token
+    such as ``"Routing"`` is no longer misclassified as a bulletin number.
+    """
+    return _canonical_extract_bulletin_number(text)
 
 
 # ---------------------------------------------------------------------------
@@ -295,87 +281,18 @@ def extract_bulletin_number(text: object) -> str:
 # ---------------------------------------------------------------------------
 
 def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) -> pd.DataFrame:
-    """Match each DTCR to a Harness Family using strict priority logic.
+    """Match each DTCR to CNUM / Harness Family.
 
-    Priority:
-    1) Device Control Number
-    2) Device Name
-    No suffix matching is performed.
-    
-    Returns a DataFrame with columns:
-    - DTCR#
-    - Device Transmittal
-    - Extracted Device Control Number
-    - Reason for change
-    - Status
-    - Bulletin
-    - Match Method
-    - Matched DTx Value
-    - CNUM
-    - Harness Family
+    Delegates to the single canonical implementation in :mod:`splice.dtcr`.
+    Compared with the previous copy that lived here, this canonical version:
+
+    * splits delimited Device Control Number cells and aggregates every
+      matching harness family (not just the first), and
+    * uses strict bulletin extraction (see :func:`extract_bulletin_number`).
+
+    See :func:`splice.dtcr.matching.match_dtcr_to_harness_family` for details.
     """
-    results = []
-
-    for _, row in dtcr_df.iterrows():
-        dtcr_num = row["DTCR#"]
-        device_transmittal = row["Device Transmittal"]
-        reason = row["Reason for change"]
-        status = row["Status"]
-        bulletin = extract_bulletin_number(reason)
-
-        extracted_dcn = extract_device_control_number(device_transmittal)
-        match_method = "No Match"
-        matched_dtx_value = None
-        harness_family = None
-        cnum = None
-
-        # Step 1: Match by Device Control Number
-        if extracted_dcn:
-            matching_rows = dtx_df[dtx_df["Device Control Number"].astype(str).str.strip() == extracted_dcn.strip()]
-            if not matching_rows.empty:
-                matched_dtx_row = matching_rows.iloc[0]
-                harness_family = matched_dtx_row["Harness Family"]
-                matched_dtx_value = extracted_dcn
-                cnum_values = (
-                    matching_rows.get("CNUM", pd.Series(dtype=str))
-                    .fillna("")
-                    .astype(str)
-                    .str.strip()
-                )
-                cnum_list = [value for value in cnum_values.tolist() if value]
-                cnum = ", ".join(dict.fromkeys(cnum_list))
-                match_method = "Device Control Number"
-
-        # Step 2: Match by Device Name (if no DCN match)
-        if match_method == "No Match" and device_transmittal:
-            normalized_transmittal = normalize_text(device_transmittal)
-
-            # Try Device Name matching
-            for _, dtx_row in dtx_df.iterrows():
-                device_name = dtx_row.get("Device Name")
-                if device_name:
-                    normalized_name = normalize_text(device_name)
-                    if normalized_name and normalized_name in normalized_transmittal:
-                        harness_family = dtx_row["Harness Family"]
-                        matched_dtx_value = device_name
-                        cnum = dtx_row.get("CNUM")
-                        match_method = "Device Name"
-                        break
-
-        results.append({
-            "DTCR#": dtcr_num,
-            "Device Transmittal": device_transmittal,
-            "Extracted Device Control Number": extracted_dcn or "",
-            "Reason for change": reason,
-            "Status": status,
-            "Bulletin": bulletin,
-            "Match Method": match_method,
-            "Matched DTx Value": matched_dtx_value or "",
-            "CNUM": cnum or "",
-            "Harness Family": harness_family or "",
-        })
-
-    return pd.DataFrame(results)
+    return _canonical_match_dtcr_to_harness_family(dtcr_df, dtx_df)
 
 
 # ---------------------------------------------------------------------------

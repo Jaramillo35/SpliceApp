@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "splice"
+version = "0.1.0"
+description = "Streamlit-independent core engines for the DTx/SECR wiring-engineering toolkit."
+requires-python = ">=3.11"
+# Runtime dependencies are managed in requirements.txt (pinned for the server).
+# Listed here too so `pip install -e .` pulls them for library/agent use.
+dependencies = [
+    "pandas==3.0.3",
+    "openpyxl==3.1.5",
+    "xlsxwriter==3.2.9",
+    "sympy==1.14.0",
+    "xlrd==2.0.2",
+]
+
+[project.optional-dependencies]
+# Streamlit UI layer. Kept optional so the core can be imported/driven headless.
+ui = ["streamlit==1.58.0"]
+
+[tool.setuptools]
+# Only the importable core package ships; the Streamlit ui/ layer and the
+# legacy desktop module are app entry points, not library code.
+packages = ["splice", "splice.common", "splice.dtcr"]
