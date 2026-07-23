@@ -11,7 +11,11 @@ APP_DIR = CURRENT_DIR.parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from dtx_compare_engine import generate_dtx_change_report, launch_preorder_generation_tool
+from dtx_compare_engine import (
+    generate_dtx_change_report,
+    launch_preorder_generation_tool,
+    load_dtcr_report,
+)
 from feedback_system import FeedbackStore, render_feedback_widget
 
 
@@ -23,14 +27,21 @@ st.caption("Upload OLD and NEW DTx files to generate an engineering change workb
 feedback_store = FeedbackStore()
 render_feedback_widget(workflow="DTx Compare Report", area="DTx Compare Report", store=feedback_store, key_prefix="dtx_feedback")
 
-col_old, col_new = st.columns(2)
+col_old, col_new, col_dtcr = st.columns(3)
 with col_old:
     old_file = st.file_uploader("OLD DTx report", type=["xlsx", "xls", "xlsm"], key="dtx_old_file")
 with col_new:
     new_file = st.file_uploader("NEW DTx report", type=["xlsx", "xls", "xlsm"], key="dtx_new_file")
+with col_dtcr:
+    dtcr_file = st.file_uploader(
+        "DTCR report (optional)",
+        type=["xlsx", "xls", "xlsm"],
+        key="dtx_dtcr_file",
+        help="If provided, every change is tagged with its DTCR# via the Device Transmittal mapping.",
+    )
 
 if old_file is None or new_file is None:
-    st.info("Upload both OLD and NEW DTx reports to continue.")
+    st.info("Upload both OLD and NEW DTx reports to continue. Optionally add a DTCR report to tag changes with DTCR#.")
     st.stop()
 
 st.subheader("PreOrder Generation List")
@@ -66,12 +77,16 @@ if preorder_result is not None:
 
 if st.button("Generate Compare Report", type="primary"):
     try:
+        dtcr_df = None
+        if dtcr_file is not None:
+            dtcr_df = load_dtcr_report(dtcr_file.getvalue(), dtcr_file.name)
         with st.spinner("Comparing reports and building workbook..."):
             result = generate_dtx_change_report(
                 old_file_bytes=old_file.getvalue(),
                 new_file_bytes=new_file.getvalue(),
                 old_file_name=old_file.name,
                 new_file_name=new_file.name,
+                dtcr_df=dtcr_df,
             )
         st.session_state["dtx_compare_result"] = result
         st.session_state["dtx_old_name"] = old_file.name
@@ -99,21 +114,74 @@ new_layout = result["new_layout"]
 layout_left.info(f"OLD: sheet '{old_layout.sheet_name}', header row {old_layout.header_row + 1}")
 layout_right.info(f"NEW: sheet '{new_layout.sheet_name}', header row {new_layout.header_row + 1}")
 
+st.subheader("Changes by Harness Family")
+family_summary_df = result.get("harness_family_summary_df")
+all_changes_df = result.get("all_changes_df")
+
+if family_summary_df is not None and not family_summary_df.empty:
+    st.dataframe(family_summary_df, use_container_width=True)
+    st.bar_chart(
+        family_summary_df.set_index("Harness Family")[
+            ["Added Circuits", "Removed Circuits", "Modified Circuits"]
+        ]
+    )
+
+if all_changes_df is not None and not all_changes_df.empty:
+    st.subheader("All Changes")
+    filter_col1, filter_col2 = st.columns(2)
+    with filter_col1:
+        family_filter = st.multiselect(
+            "Filter by Harness Family",
+            options=sorted(all_changes_df["Harness Family"].unique()),
+            key="dtx_family_filter",
+        )
+    with filter_col2:
+        type_filter = st.multiselect(
+            "Filter by Change Type",
+            options=list(all_changes_df["Change Type"].unique()),
+            key="dtx_type_filter",
+        )
+    filtered = all_changes_df
+    if family_filter:
+        filtered = filtered[filtered["Harness Family"].isin(family_filter)]
+    if type_filter:
+        filtered = filtered[filtered["Change Type"].isin(type_filter)]
+    st.caption(f"{len(filtered):,} of {len(all_changes_df):,} changes shown")
+    st.dataframe(filtered, use_container_width=True)
+
 st.subheader("Preview Tables")
 with st.expander("Added Circuits", expanded=False):
     st.dataframe(result["added_circuits_df"], use_container_width=True)
 with st.expander("Removed Circuits", expanded=False):
     st.dataframe(result["removed_circuits_df"], use_container_width=True)
-with st.expander("Modified Circuits", expanded=True):
+with st.expander("Modified Circuits", expanded=False):
     st.dataframe(result["modified_circuits_df"], use_container_width=True)
 with st.expander("CNUM Summary", expanded=False):
     st.dataframe(result["cnum_summary_df"], use_container_width=True)
 with st.expander("Field Change Frequency", expanded=False):
     st.dataframe(result["field_change_frequency_df"], use_container_width=True)
 
-st.download_button(
-    label="Download DTx Compare Workbook",
-    data=result["output_excel_bytes"],
-    file_name=result["output_file_name"],
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
+download_col1, download_col2 = st.columns(2)
+with download_col1:
+    st.download_button(
+        label="Download DTx Compare Workbook",
+        data=result["output_excel_bytes"],
+        file_name=result["output_file_name"],
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+dtcr_matching_bytes = result.get("dtcr_matching_bytes")
+if dtcr_matching_bytes is not None:
+    with download_col2:
+        st.download_button(
+            label="Download DTCR Matching Report",
+            data=dtcr_matching_bytes,
+            file_name=result.get("dtcr_matching_file_name", "DTCR_Matching_Report.xlsx"),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    with st.expander("DTCR Matching Report (built from BOTH DTx reports)", expanded=False):
+        matching_df = result.get("dtcr_matching_df")
+        if matching_df is not None:
+            matched = int((matching_df["Match Method"] != "No Match").sum())
+            st.caption(f"{matched} of {len(matching_df)} DTCRs matched to a CNUM / Harness Family")
+            st.dataframe(matching_df, use_container_width=True)

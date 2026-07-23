@@ -44,6 +44,52 @@ STATUS_COLORS = {
     "Removed": "#FFC7CE",
     "Modified": "#FFEB9C",
     "Unchanged": "#D9D9D9",
+    "New CNUM": "#A9D08E",
+    "Removed CNUM": "#F1948A",
+    "Added Circuit": "#C6EFCE",
+    "Removed Circuit": "#FFC7CE",
+}
+
+UNASSIGNED_FAMILY = "(No Harness Family)"
+
+ALL_CHANGES_COLUMNS = [
+    "DTCR#",
+    "Harness Family",
+    "Change Type",
+    "Device Control Number",
+    "Connector PN",
+    "Device Name",
+    "CNUM",
+    "Pin Number",
+    "Circuit Name",
+    "Circuit Function",
+    "Wire Gauge",
+    "Wire Type",
+    "Sales Code",
+    "Changed Fields",
+    "Change Detail",
+]
+
+# Comparison columns shown directly in All Changes: a modification in one of these
+# is rendered inline in its own cell as "old --> new". Anything else goes to Change Detail.
+ALL_CHANGES_INLINE_COLUMNS = [
+    "Harness Family",
+    "Device Control Number",
+    "Connector PN",
+    "Device Name",
+    "Circuit Name",
+    "Circuit Function",
+    "Wire Gauge",
+    "Wire Type",
+    "Sales Code",
+]
+
+CHANGE_TYPE_ORDER = {
+    "New CNUM": 0,
+    "Removed CNUM": 1,
+    "Added Circuit": 2,
+    "Removed Circuit": 3,
+    "Modified": 4,
 }
 
 
@@ -268,6 +314,397 @@ def load_dtx_report(file_bytes: bytes, file_name: str) -> tuple[pd.DataFrame, Wo
     )
 
     return data_frame, layout
+
+
+def load_dtcr_report(file_bytes: bytes, file_name: str) -> pd.DataFrame:
+    """Load a DTCR search report, auto-detecting the header row."""
+    required = {"DTCR#", "Device Transmittal"}
+    excel_file = pd.ExcelFile(BytesIO(file_bytes))
+
+    for sheet_name in excel_file.sheet_names:
+        preview = pd.read_excel(
+            BytesIO(file_bytes),
+            sheet_name=sheet_name,
+            header=None,
+            nrows=MAX_HEADER_SCAN_ROWS,
+        )
+        for header_row, row in preview.iterrows():
+            row_values = {normalize_value(value) for value in row.tolist() if normalize_value(value)}
+            if required.issubset(row_values):
+                data_frame = pd.read_excel(
+                    BytesIO(file_bytes),
+                    sheet_name=sheet_name,
+                    header=header_row,
+                    dtype=object,
+                )
+                data_frame.columns = [normalize_value(column) for column in data_frame.columns]
+                return data_frame
+
+    raise ValueError(
+        f"Could not find the DTCR header row in {file_name}. Expected columns: DTCR#, Device Transmittal."
+    )
+
+
+# ---------------------------------------------------------------------------
+# DTCR Matching Report (same format as SECR Step 1, built from BOTH DTx files)
+# ---------------------------------------------------------------------------
+
+DTCR_MATCHING_COLUMNS = [
+    "DTCR#",
+    "Device Transmittal",
+    "Extracted Device Control Number",
+    "Reason for change",
+    "Status",
+    "Bulletin",
+    "Match Method",
+    "Matched DTx Value",
+    "CNUM",
+    "Harness Family",
+]
+
+
+def _normalize_match_text(value: object) -> str:
+    """Uppercase, strip special characters, collapse spaces (for name matching)."""
+    text = normalize_value(value)
+    if not text:
+        return ""
+    text = re.sub(r"[^\w\s]", " ", text.upper())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _extract_bulletin_number(text: object) -> str:
+    """Extract the first bulletin identifier after the word 'Bulletin'."""
+    value = normalize_value(text)
+    if not value:
+        return ""
+    match = re.search(
+        r"\bbulletin(?:\b|_)[\s_:#-]*(?:no\.?[\s_:#-]*)?([A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*)",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return match.group(1).strip()
+    return ""
+
+
+def _prepare_dtcr_for_matching(dtcr_df: pd.DataFrame) -> pd.DataFrame:
+    """Map DTCR report columns to the canonical names used by the matching report."""
+    mappings = {
+        "DTCR#": ["dtcr#", "dtcr #", "dtcr number", "dtcr no", "dtcr"],
+        "Device Transmittal": ["device transmittal", "transmittal", "device trans"],
+        "Reason for change": ["reason for change", "reason for", "reason"],
+        "Status": ["status", "request action", "action"],
+    }
+    lower_columns = {str(column).strip().lower(): column for column in dtcr_df.columns}
+
+    resolved: dict[str, str | None] = {}
+    for canonical, variants in mappings.items():
+        resolved[canonical] = None
+        for variant in variants:
+            if variant in lower_columns:
+                resolved[canonical] = lower_columns[variant]
+                break
+
+    if resolved["DTCR#"] is None or resolved["Device Transmittal"] is None:
+        raise ValueError("DTCR report must include DTCR# and Device Transmittal columns.")
+
+    prepared = pd.DataFrame()
+    for canonical in mappings:
+        source = resolved[canonical]
+        prepared[canonical] = (
+            dtcr_df[source].map(normalize_value) if source is not None else ""
+        )
+    prepared = prepared[prepared["DTCR#"] != ""].reset_index(drop=True)
+    return prepared
+
+
+def _build_combined_dtx_frame(old_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFrame:
+    """Combine OLD + NEW DTx rows (NEW first) into one dedup'd matching frame."""
+    columns = ["Device Control Number", "Device Name", "Suffix", "Harness Family", "CNUM"]
+    combined = pd.concat([new_df[columns], old_df[columns]], ignore_index=True)
+    combined = combined.map(normalize_cell).astype(str)
+    return combined.drop_duplicates().reset_index(drop=True)
+
+
+def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) -> pd.DataFrame:
+    """Match each DTCR to CNUM / Harness Family (priority: Device Control Number, then Device Name)."""
+    prepared = _prepare_dtcr_for_matching(dtcr_df)
+
+    dcn_index: dict[str, list[int]] = {}
+    for row_position, value in enumerate(dtx_df["Device Control Number"].tolist()):
+        for token in _split_delimited_values(value):
+            dcn_index.setdefault(token, []).append(row_position)
+
+    name_frame = dtx_df.drop_duplicates(subset=["Device Name"]).reset_index(drop=True)
+
+    results: list[dict[str, object]] = []
+    for _, row in prepared.iterrows():
+        dtcr_num = row["DTCR#"]
+        device_transmittal = row["Device Transmittal"]
+        reason = row["Reason for change"]
+        status = row["Status"]
+        bulletin = _extract_bulletin_number(reason)
+        extracted_dcn = _extract_transmittal_number(device_transmittal)
+
+        match_method = "No Match"
+        matched_dtx_value = ""
+        harness_family = ""
+        cnum = ""
+
+        if extracted_dcn and extracted_dcn in dcn_index:
+            matching_rows = dtx_df.iloc[dcn_index[extracted_dcn]]
+            cnum_values = [
+                value for value in matching_rows["CNUM"].map(normalize_value).tolist() if value
+            ]
+            family_values = [
+                value
+                for value in matching_rows["Harness Family"].map(normalize_value).tolist()
+                if value
+            ]
+            cnum = ", ".join(dict.fromkeys(cnum_values))
+            harness_family = ", ".join(dict.fromkeys(family_values))
+            matched_dtx_value = extracted_dcn
+            match_method = "Device Control Number"
+
+        if match_method == "No Match" and device_transmittal:
+            normalized_transmittal = _normalize_match_text(device_transmittal)
+            for _, dtx_row in name_frame.iterrows():
+                device_name = normalize_value(dtx_row.get("Device Name", ""))
+                if not device_name:
+                    continue
+                normalized_name = _normalize_match_text(device_name)
+                if normalized_name and normalized_name in normalized_transmittal:
+                    harness_family = normalize_value(dtx_row.get("Harness Family", ""))
+                    matched_dtx_value = device_name
+                    cnum = normalize_value(dtx_row.get("CNUM", ""))
+                    match_method = "Device Name"
+                    break
+
+        results.append(
+            {
+                "DTCR#": dtcr_num,
+                "Device Transmittal": device_transmittal,
+                "Extracted Device Control Number": extracted_dcn or "",
+                "Reason for change": reason,
+                "Status": status,
+                "Bulletin": bulletin,
+                "Match Method": match_method,
+                "Matched DTx Value": matched_dtx_value,
+                "CNUM": cnum,
+                "Harness Family": harness_family,
+            }
+        )
+
+    return pd.DataFrame(results, columns=DTCR_MATCHING_COLUMNS)
+
+
+def export_dtcr_matching_report(mapping_df: pd.DataFrame) -> bytes:
+    """Export the DTCR mapping as a styled standalone workbook (same format as SECR Step 1)."""
+    from openpyxl import Workbook
+    from openpyxl.utils import get_column_letter
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "DTCR_Harness_Family_Mapping"
+
+    for row_index, row in enumerate([mapping_df.columns.tolist()] + mapping_df.values.tolist(), 1):
+        for column_index, value in enumerate(row, 1):
+            worksheet.cell(row=row_index, column=column_index, value=value)
+
+    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+    for cell in worksheet[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    stripe_fill = PatternFill(start_color="EAF2FA", end_color="EAF2FA", fill_type="solid")
+    for row_index in range(2, worksheet.max_row + 1):
+        for column_index in range(1, worksheet.max_column + 1):
+            cell = worksheet.cell(row=row_index, column=column_index)
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            if row_index % 2 == 0:
+                cell.fill = stripe_fill
+
+    worksheet.auto_filter.ref = worksheet.dimensions
+    worksheet.freeze_panes = "A2"
+
+    for column_index in range(1, worksheet.max_column + 1):
+        column_letter = get_column_letter(column_index)
+        max_length = 0
+        for row_index in range(1, worksheet.max_row + 1):
+            value = worksheet.cell(row=row_index, column=column_index).value
+            if value is not None:
+                max_length = max(max_length, len(str(value)))
+        worksheet.column_dimensions[column_letter].width = min(max(max_length + 2, 12), 120)
+
+    for row_index in range(2, worksheet.max_row + 1):
+        max_lines = 1
+        for column_index in range(1, worksheet.max_column + 1):
+            value = worksheet.cell(row=row_index, column=column_index).value
+            if value is not None:
+                max_lines = max(max_lines, str(value).count("\n") + 1)
+        worksheet.row_dimensions[row_index].height = min(max(max_lines * 15, 18), 120)
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def generate_dtcr_matching_report(
+    old_file_bytes: bytes,
+    new_file_bytes: bytes,
+    old_file_name: str,
+    new_file_name: str,
+    dtcr_df: pd.DataFrame,
+) -> dict[str, object]:
+    """Build the DTCR_Matching_Report using BOTH DTx reports (old + new)."""
+    old_rows = _read_dtx_report_rows(old_file_bytes, old_file_name)
+    new_rows = _read_dtx_report_rows(new_file_bytes, new_file_name)
+    combined = _build_combined_dtx_frame(old_rows, new_rows)
+    mapping_df = match_dtcr_to_harness_family(dtcr_df, combined)
+    return {
+        "dtcr_matching_df": mapping_df,
+        "dtcr_matching_bytes": export_dtcr_matching_report(mapping_df),
+        "dtcr_matching_file_name": "DTCR_Matching_Report.xlsx",
+    }
+
+
+def _all_changes_record(row: pd.Series, change_type: str) -> dict[str, object]:
+    return {
+        "DTCR#": normalize_value(row.get("DTCR#", "")),
+        "Harness Family": normalize_value(row.get("Harness Family", "")) or UNASSIGNED_FAMILY,
+        "Change Type": change_type,
+        "Device Control Number": row.get("Device Control Number", ""),
+        "Connector PN": row.get("Connector PN", ""),
+        "Device Name": row.get("Device Name", ""),
+        "CNUM": row.get("CNUM", ""),
+        "Pin Number": row.get("Pin Number", ""),
+        "Circuit Name": row.get("Circuit Name", ""),
+        "Circuit Function": row.get("Circuit Function", ""),
+        "Wire Gauge": row.get("Wire Gauge", ""),
+        "Wire Type": row.get("Wire Type", ""),
+        "Sales Code": row.get("Sales Code", ""),
+        "Changed Fields": "",
+        "Change Detail": "",
+    }
+
+
+def _pick_new_or_old(row: pd.Series, column: str) -> str:
+    return normalize_value(row.get(f"{column}_new", "")) or normalize_value(row.get(f"{column}_old", ""))
+
+
+def build_all_changes_df(results: dict[str, object]) -> pd.DataFrame:
+    """Combine every change (CNUM-level, circuit-level, modifications) into one table."""
+    records: list[dict[str, object]] = []
+
+    for table_name, change_type in (
+        ("added_cnums_df", "New CNUM"),
+        ("removed_cnums_df", "Removed CNUM"),
+        ("added_circuits_df", "Added Circuit"),
+        ("removed_circuits_df", "Removed Circuit"),
+    ):
+        data_frame = results.get(table_name)
+        if isinstance(data_frame, pd.DataFrame) and not data_frame.empty:
+            for _, row in data_frame.iterrows():
+                records.append(_all_changes_record(row, change_type))
+
+    modified_df = results.get("modified_circuits_df")
+    if isinstance(modified_df, pd.DataFrame) and not modified_df.empty:
+        for _, row in modified_df.iterrows():
+            changed_fields = normalize_value(row.get("Changed Fields", ""))
+            changed_set = {field.strip() for field in changed_fields.split(",") if field.strip()}
+
+            record: dict[str, object] = {
+                "DTCR#": normalize_value(row.get("DTCR#", "")),
+                "Change Type": "Modified",
+                "CNUM": row.get("CNUM", ""),
+                "Pin Number": row.get("Pin Number", ""),
+                "Changed Fields": changed_fields,
+            }
+
+            # Displayed comparison columns: show the change inline as "old --> new".
+            for column in ALL_CHANGES_INLINE_COLUMNS:
+                old_value = normalize_value(row.get(f"{column}_old", ""))
+                new_value = normalize_value(row.get(f"{column}_new", ""))
+                if column in changed_set:
+                    record[column] = f"{old_value or '(blank)'} --> {new_value or '(blank)'}"
+                else:
+                    record[column] = new_value or old_value
+            if not record["Harness Family"]:
+                record["Harness Family"] = UNASSIGNED_FAMILY
+
+            # Everything else that changed goes to Change Detail.
+            details: list[str] = []
+            for column in sorted(changed_set - set(ALL_CHANGES_INLINE_COLUMNS)):
+                old_value = normalize_value(row.get(f"{column}_old", ""))
+                new_value = normalize_value(row.get(f"{column}_new", ""))
+                details.append(f"{column}: {old_value or '(blank)'} --> {new_value or '(blank)'}")
+            record["Change Detail"] = "; ".join(details)
+
+            records.append(record)
+
+    all_changes = pd.DataFrame(records, columns=ALL_CHANGES_COLUMNS)
+    if all_changes.empty:
+        return all_changes
+
+    all_changes["_type_order"] = all_changes["Change Type"].map(CHANGE_TYPE_ORDER).fillna(9)
+    all_changes = (
+        all_changes.sort_values(["Harness Family", "_type_order", "CNUM", "Pin Number"])
+        .drop(columns=["_type_order"])
+        .reset_index(drop=True)
+    )
+    return all_changes
+
+
+FAMILY_SUMMARY_COLUMNS = [
+    "Harness Family",
+    "New CNUM Circuits",
+    "Removed CNUM Circuits",
+    "Added Circuits",
+    "Removed Circuits",
+    "Modified Circuits",
+    "Total Changes",
+    "Affected CNUMs",
+    "DTCR#s",
+]
+
+
+def build_family_summary_df(all_changes_df: pd.DataFrame) -> pd.DataFrame:
+    """Roll up the All Changes table into one row per Harness Family."""
+    if all_changes_df.empty:
+        return pd.DataFrame(columns=FAMILY_SUMMARY_COLUMNS)
+
+    label_map = {
+        "New CNUM": "New CNUM Circuits",
+        "Removed CNUM": "Removed CNUM Circuits",
+        "Added Circuit": "Added Circuits",
+        "Removed Circuit": "Removed Circuits",
+        "Modified": "Modified Circuits",
+    }
+
+    rows: list[dict[str, object]] = []
+    for family, group in all_changes_df.groupby("Harness Family", dropna=False):
+        counts = group["Change Type"].value_counts()
+        record: dict[str, object] = {"Harness Family": family}
+        for change_type, column_name in label_map.items():
+            record[column_name] = int(counts.get(change_type, 0))
+        record["Total Changes"] = int(len(group))
+        record["Affected CNUMs"] = int(group["CNUM"].nunique())
+
+        dtcr_numbers: list[str] = []
+        for value in group["DTCR#"].tolist():
+            for token in _split_delimited_values(value):
+                if token not in dtcr_numbers:
+                    dtcr_numbers.append(token)
+        record["DTCR#s"] = ", ".join(dtcr_numbers)
+        rows.append(record)
+
+    summary = pd.DataFrame(rows, columns=FAMILY_SUMMARY_COLUMNS)
+    return summary.sort_values(
+        ["Total Changes", "Harness Family"], ascending=[False, True]
+    ).reset_index(drop=True)
 
 
 def _collapse_to_unique_connector_values(values: pd.Series) -> str:
@@ -800,17 +1237,12 @@ def build_modified_views(
             else f"{old_harness_family} >> {new_harness_family}"
         )
 
-        row_record: dict[str, object] = {
-            "CNUM": key[0],
-            "Pin Number": key[1],
-            "Change Type": "Modified",
-        }
-
+        pair_values: dict[str, object] = {}
         for column in COMPARISON_COLUMNS:
             old_value = normalize_cell(old_row[column])
             new_value = normalize_cell(new_row[column])
-            row_record[f"{column}_old"] = old_value
-            row_record[f"{column}_new"] = new_value
+            pair_values[f"{column}_old"] = old_value
+            pair_values[f"{column}_new"] = new_value
 
             if old_value != new_value:
                 changed_fields.append(column)
@@ -828,8 +1260,15 @@ def build_modified_views(
                 )
 
         if changed_fields:
-            row_record["Changed Fields"] = ", ".join(changed_fields)
-            row_record["Change Count"] = len(changed_fields)
+            row_record: dict[str, object] = {
+                "CNUM": key[0],
+                "Pin Number": key[1],
+                "Change Type": "Modified",
+                "Harness Family": harness_family_value,
+                "Changed Fields": ", ".join(changed_fields),
+                "Change Count": len(changed_fields),
+                **pair_values,
+            }
             modified_rows.append(row_record)
 
     modified_df = pd.DataFrame(modified_rows)
@@ -919,6 +1358,21 @@ def compare_reports(old_df: pd.DataFrame, new_df: pd.DataFrame) -> dict[str, obj
     cnum_summary = cnum_summary.fillna(0)
     for column in ["Added Circuits", "Removed Circuits", "Modified Circuits"]:
         cnum_summary[column] = cnum_summary[column].astype(int)
+
+    cnum_to_family: dict[str, str] = {}
+    for source_df in (new_df, old_df):
+        pairs = source_df[["CNUM", "Harness Family"]].drop_duplicates()
+        for cnum, family in pairs.itertuples(index=False):
+            cnum_key = normalize_value(cnum)
+            family_value = normalize_value(family)
+            if cnum_key and family_value and cnum_key not in cnum_to_family:
+                cnum_to_family[cnum_key] = family_value
+    cnum_summary.insert(
+        1,
+        "Harness Family",
+        [cnum_to_family.get(normalize_value(cnum), "") for cnum in cnum_summary["CNUM"]],
+    )
+
     cnum_summary["Total Changes"] = (
         cnum_summary["Added Circuits"]
         + cnum_summary["Removed Circuits"]
@@ -1026,87 +1480,103 @@ def write_table(
             )
 
 
-def build_dashboard_sheet(writer: pd.ExcelWriter, results: dict[str, object], workbook, formats: dict[str, object]) -> None:
+def build_dashboard_sheet(
+    writer: pd.ExcelWriter,
+    results: dict[str, object],
+    workbook,
+    formats: dict[str, object],
+    old_name: str = "",
+    new_name: str = "",
+) -> None:
     dashboard = workbook.add_worksheet("Dashboard")
     writer.sheets["Dashboard"] = dashboard
 
-    dashboard.freeze_panes(1, 0)
+    dashboard.hide_gridlines(2)
     dashboard.set_column("A:A", 28)
-    dashboard.set_column("B:B", 14)
-    dashboard.set_column("D:E", 20)
-    dashboard.set_column("G:H", 24)
+    dashboard.set_column("B:B", 12)
+    dashboard.set_column("C:C", 3)
+    dashboard.set_column("D:D", 22)
+    dashboard.set_column("E:E", 10)
+    dashboard.set_column("F:F", 3)
+    dashboard.set_column("G:G", 26)
+    dashboard.set_column("H:M", 12)
 
-    dashboard.write("A1", "Metric", formats["header"])
-    dashboard.write("B1", "Value", formats["header"])
+    # --- Title block ---
+    dashboard.merge_range("A1:M1", "DTx Engineering Change Report", formats["title"])
+    dashboard.write("A2", f"OLD: {old_name}", formats["meta"])
+    dashboard.write("A3", f"NEW: {new_name}", formats["meta"])
+    dashboard.write("A4", f"Generated: {datetime.now().strftime('%b-%d-%Y %I:%M %p')}", formats["meta"])
 
+    # --- Key metrics (A6:B16) ---
+    dashboard.write("A6", "Metric", formats["header"])
+    dashboard.write("B6", "Value", formats["header"])
     metrics = [
-        ("TOTAL CNUMS OLD", results["old_total_cnums"], formats["default"]),
-        ("TOTAL CNUMS NEW", results["new_total_cnums"], formats["default"]),
-        ("ADDED CNUMS", results["added_cnum_count"], formats["added"]),
-        ("REMOVED CNUMS", results["removed_cnum_count"], formats["removed"]),
-        ("TOTAL CIRCUITS OLD", results["old_total_circuits"], formats["default"]),
-        ("TOTAL CIRCUITS NEW", results["new_total_circuits"], formats["default"]),
-        ("ADDED CIRCUITS", results["added_circuit_count"], formats["added"]),
-        ("REMOVED CIRCUITS", results["removed_circuit_count"], formats["removed"]),
-        ("MODIFIED CIRCUITS", results["modified_circuit_count"], formats["modified"]),
-        ("UNCHANGED CIRCUITS", results["unchanged_circuit_count"], formats["unchanged"]),
+        ("Total CNUMs (old)", results["old_total_cnums"], formats["default"]),
+        ("Total CNUMs (new)", results["new_total_cnums"], formats["default"]),
+        ("Added CNUMs", results["added_cnum_count"], formats["added"]),
+        ("Removed CNUMs", results["removed_cnum_count"], formats["removed"]),
+        ("Total circuits (old)", results["old_total_circuits"], formats["default"]),
+        ("Total circuits (new)", results["new_total_circuits"], formats["default"]),
+        ("Added circuits", results["added_circuit_count"], formats["added"]),
+        ("Removed circuits", results["removed_circuit_count"], formats["removed"]),
+        ("Modified circuits", results["modified_circuit_count"], formats["modified"]),
+        ("Unchanged circuits", results["unchanged_circuit_count"], formats["unchanged"]),
     ]
-
-    for row_index, (label, value, cell_format) in enumerate(metrics, start=1):
+    for row_index, (label, value, cell_format) in enumerate(metrics, start=6):
         dashboard.write(row_index, 0, label, cell_format)
         dashboard.write_number(row_index, 1, int(value), cell_format)
 
-    dashboard.write("D1", "CNUM Change Type", formats["header"])
-    dashboard.write("E1", "Count", formats["header"])
-    dashboard.write("D2", "Added CNUMs", formats["added"])
-    dashboard.write_number("E2", int(results["added_cnum_count"]), formats["added"])
-    dashboard.write("D3", "Removed CNUMs", formats["removed"])
-    dashboard.write_number("E3", int(results["removed_cnum_count"]), formats["removed"])
-
+    # --- Circuit change type counts (D6:E10) ---
     dashboard.write("D6", "Circuit Change Type", formats["header"])
     dashboard.write("E6", "Count", formats["header"])
     circuit_rows = [
-        ("Added Circuits", results["added_circuit_count"], formats["added"]),
-        ("Removed Circuits", results["removed_circuit_count"], formats["removed"]),
-        ("Modified Circuits", results["modified_circuit_count"], formats["modified"]),
-        ("Unchanged Circuits", results["unchanged_circuit_count"], formats["unchanged"]),
+        ("Added", results["added_circuit_count"], formats["added"]),
+        ("Removed", results["removed_circuit_count"], formats["removed"]),
+        ("Modified", results["modified_circuit_count"], formats["modified"]),
+        ("Unchanged", results["unchanged_circuit_count"], formats["unchanged"]),
     ]
-    for offset, (label, value, cell_format) in enumerate(circuit_rows, start=6):
-        dashboard.write(offset, 3, label, cell_format)
-        dashboard.write_number(offset, 4, int(value), cell_format)
+    for row_index, (label, value, cell_format) in enumerate(circuit_rows, start=6):
+        dashboard.write(row_index, 3, label, cell_format)
+        dashboard.write_number(row_index, 4, int(value), cell_format)
 
-    dashboard.write("G1", "Program Impact Ranking", formats["header"])
-    dashboard.write("G2", "CNUM", formats["header"])
-    dashboard.write("H2", "Total Changes", formats["header"])
-    top_20 = results["top_20_cnums_df"]
-    for row_index, (_, row) in enumerate(top_20.iterrows(), start=2):
-        dashboard.write(row_index, 6, row["CNUM"], formats["default"])
-        dashboard.write_number(row_index, 7, int(row["Total Changes"]), formats["default"])
+    # --- CNUM change type counts (D13:E15) ---
+    dashboard.write("D13", "CNUM Change Type", formats["header"])
+    dashboard.write("E13", "Count", formats["header"])
+    dashboard.write("D14", "Added CNUMs", formats["added"])
+    dashboard.write_number("E14", int(results["added_cnum_count"]), formats["added"])
+    dashboard.write("D15", "Removed CNUMs", formats["removed"])
+    dashboard.write_number("E15", int(results["removed_cnum_count"]), formats["removed"])
 
-    dashboard.write("G25", "Field Change Frequency", formats["header"])
-    dashboard.write("G26", "Field Name", formats["header"])
-    dashboard.write("H26", "Number of Changes", formats["header"])
-    field_frequency = results["field_change_frequency_df"]
-    for row_index, (_, row) in enumerate(field_frequency.iterrows(), start=26):
-        dashboard.write(row_index, 6, row["Field Name"], formats["default"])
-        dashboard.write_number(row_index, 7, int(row["Number of Changes"]), formats["default"])
+    # --- Harness Family impact table (G6:M...) ---
+    family_summary = results.get("harness_family_summary_df")
+    family_rows_written = 0
+    family_data_start = 8  # zero-based row index of first family data row
+    if isinstance(family_summary, pd.DataFrame) and not family_summary.empty:
+        top_families = family_summary.head(15)
+        dashboard.merge_range("G6:M6", "Harness Family Impact (Top 15 by Total Changes)", formats["subheader"])
+        family_headers = [
+            "Harness Family",
+            "New CNUM",
+            "Removed CNUM",
+            "Added",
+            "Removed",
+            "Modified",
+            "Total",
+        ]
+        for col_offset, header in enumerate(family_headers):
+            dashboard.write(6, 6 + col_offset, header, formats["header"])
+        for row_offset, (_, row) in enumerate(top_families.iterrows()):
+            row_index = family_data_start + row_offset - 1
+            dashboard.write(row_index, 6, row["Harness Family"], formats["default"])
+            dashboard.write_number(row_index, 7, int(row["New CNUM Circuits"]), formats["added"])
+            dashboard.write_number(row_index, 8, int(row["Removed CNUM Circuits"]), formats["removed"])
+            dashboard.write_number(row_index, 9, int(row["Added Circuits"]), formats["added"])
+            dashboard.write_number(row_index, 10, int(row["Removed Circuits"]), formats["removed"])
+            dashboard.write_number(row_index, 11, int(row["Modified Circuits"]), formats["modified"])
+            dashboard.write_number(row_index, 12, int(row["Total Changes"]), formats["default"])
+            family_rows_written += 1
 
-    cnum_chart = workbook.add_chart({"type": "column"})
-    cnum_chart.add_series(
-        {
-            "name": "CNUM Changes",
-            "categories": ["Dashboard", 1, 3, 2, 3],
-            "values": ["Dashboard", 1, 4, 2, 4],
-            "points": [
-                {"fill": {"color": STATUS_COLORS["Added"]}},
-                {"fill": {"color": STATUS_COLORS["Removed"]}},
-            ],
-        }
-    )
-    cnum_chart.set_title({"name": "CNUM Changes"})
-    cnum_chart.set_legend({"none": True})
-    dashboard.insert_chart("J2", cnum_chart, {"x_scale": 1.1, "y_scale": 1.1})
-
+    # --- Charts ---
     circuit_chart = workbook.add_chart({"type": "column"})
     circuit_chart.add_series(
         {
@@ -1121,9 +1591,57 @@ def build_dashboard_sheet(writer: pd.ExcelWriter, results: dict[str, object], wo
             ],
         }
     )
-    circuit_chart.set_title({"name": "Circuit Changes"})
+    circuit_chart.set_title({"name": "Circuit Changes", "name_font": {"size": 12}})
     circuit_chart.set_legend({"none": True})
-    dashboard.insert_chart("J18", circuit_chart, {"x_scale": 1.1, "y_scale": 1.1})
+    dashboard.insert_chart("A19", circuit_chart, {"x_scale": 1.0, "y_scale": 1.0})
+
+    if family_rows_written:
+        first_data_row = family_data_start - 1
+        last_data_row = first_data_row + family_rows_written - 1
+        family_chart = workbook.add_chart({"type": "bar", "subtype": "stacked"})
+        series_specs = [
+            ("New CNUM", 7, "#70AD47"),
+            ("Removed CNUM", 8, "#C00000"),
+            ("Added", 9, STATUS_COLORS["Added"]),
+            ("Removed", 10, STATUS_COLORS["Removed"]),
+            ("Modified", 11, STATUS_COLORS["Modified"]),
+        ]
+        for series_name, column_index, color in series_specs:
+            family_chart.add_series(
+                {
+                    "name": series_name,
+                    "categories": ["Dashboard", first_data_row, 6, last_data_row, 6],
+                    "values": ["Dashboard", first_data_row, column_index, last_data_row, column_index],
+                    "fill": {"color": color},
+                }
+            )
+        family_chart.set_title({"name": "Changes by Harness Family", "name_font": {"size": 12}})
+        family_chart.set_legend({"position": "bottom"})
+        family_chart.set_y_axis({"reverse": True})
+        dashboard.insert_chart("G25", family_chart, {"x_scale": 1.9, "y_scale": 1.6})
+
+    # --- Top 20 CNUMs (A36) ---
+    top_table_header_row = 35
+    dashboard.write(top_table_header_row, 0, "CNUM", formats["header"])
+    dashboard.write(top_table_header_row, 1, "Total Changes", formats["header"])
+    dashboard.merge_range("A35:B35", "Top 20 CNUMs by Changes", formats["subheader"])
+    top_20 = results["top_20_cnums_df"]
+    for row_offset, (_, row) in enumerate(top_20.iterrows(), start=1):
+        dashboard.write(top_table_header_row + row_offset, 0, row["CNUM"], formats["default"])
+        dashboard.write_number(
+            top_table_header_row + row_offset, 1, int(row["Total Changes"]), formats["default"]
+        )
+
+    # --- Field change frequency (D36) ---
+    dashboard.merge_range("D35:E35", "Field Change Frequency", formats["subheader"])
+    dashboard.write(top_table_header_row, 3, "Field Name", formats["header"])
+    dashboard.write(top_table_header_row, 4, "Changes", formats["header"])
+    field_frequency = results["field_change_frequency_df"]
+    for row_offset, (_, row) in enumerate(field_frequency.iterrows(), start=1):
+        dashboard.write(top_table_header_row + row_offset, 3, row["Field Name"], formats["default"])
+        dashboard.write_number(
+            top_table_header_row + row_offset, 4, int(row["Number of Changes"]), formats["default"]
+        )
 
     top_count = min(10, len(field_frequency))
     if top_count:
@@ -1131,14 +1649,15 @@ def build_dashboard_sheet(writer: pd.ExcelWriter, results: dict[str, object], wo
         field_chart.add_series(
             {
                 "name": "Top 10 Most Changed Fields",
-                "categories": ["Dashboard", 26, 6, 25 + top_count, 6],
-                "values": ["Dashboard", 26, 7, 25 + top_count, 7],
+                "categories": ["Dashboard", top_table_header_row + 1, 3, top_table_header_row + top_count, 3],
+                "values": ["Dashboard", top_table_header_row + 1, 4, top_table_header_row + top_count, 4],
                 "fill": {"color": STATUS_COLORS["Modified"]},
             }
         )
-        field_chart.set_title({"name": "Top 10 Most Changed Fields"})
+        field_chart.set_title({"name": "Top 10 Most Changed Fields", "name_font": {"size": 12}})
         field_chart.set_legend({"none": True})
-        dashboard.insert_chart("J34", field_chart, {"x_scale": 1.2, "y_scale": 1.2})
+        field_chart.set_y_axis({"reverse": True})
+        dashboard.insert_chart("G60", field_chart, {"x_scale": 1.4, "y_scale": 1.2})
 
 
 def write_report_to_bytes(
@@ -1172,9 +1691,31 @@ def write_report_to_bytes(
             "removed": workbook.add_format({"border": 1, "bg_color": STATUS_COLORS["Removed"]}),
             "modified": workbook.add_format({"border": 1, "bg_color": STATUS_COLORS["Modified"]}),
             "unchanged": workbook.add_format({"border": 1, "bg_color": STATUS_COLORS["Unchanged"]}),
+            "title": workbook.add_format({"bold": True, "font_size": 16, "font_color": "#1F4E78"}),
+            "meta": workbook.add_format({"italic": True, "font_color": "#595959"}),
+            "subheader": workbook.add_format(
+                {"bold": True, "bg_color": "#DDEBF7", "font_color": "#1F4E78", "border": 1}
+            ),
+            "family_banner": workbook.add_format(
+                {
+                    "bold": True,
+                    "bg_color": "#1F4E78",
+                    "font_color": "#FFFFFF",
+                    "border": 1,
+                    "font_size": 11,
+                }
+            ),
         }
 
-        build_dashboard_sheet(writer, results, workbook, formats)
+        build_dashboard_sheet(writer, results, workbook, formats, old_name=old_name, new_name=new_name)
+
+        all_changes_df = results.get("all_changes_df")
+        family_summary_df = results.get("harness_family_summary_df")
+        if isinstance(family_summary_df, pd.DataFrame):
+            write_table(writer, "Harness Family Summary", family_summary_df, workbook, formats)
+        if isinstance(all_changes_df, pd.DataFrame):
+            write_table(writer, "All Changes", all_changes_df, workbook, formats)
+
         write_table(writer, "Added CNUMs", results["added_cnums_df"], workbook, formats)
         write_table(writer, "Removed CNUMs", results["removed_cnums_df"], workbook, formats)
         write_table(writer, "Added Circuits", results["added_circuits_df"], workbook, formats)
@@ -1226,6 +1767,21 @@ def generate_dtx_change_report(
     if dtcr_df is not None:
         dtcr_by_cnum = _build_dtcr_lookup_by_cnum(old_df, new_df, dtcr_df)
         results = _annotate_results_with_dtcr(results, dtcr_by_cnum)
+        # Second output: DTCR_Matching_Report built from BOTH DTx reports.
+        results.update(
+            generate_dtcr_matching_report(
+                old_file_bytes=old_file_bytes,
+                new_file_bytes=new_file_bytes,
+                old_file_name=old_file_name,
+                new_file_name=new_file_name,
+                dtcr_df=dtcr_df,
+            )
+        )
+
+    all_changes_df = build_all_changes_df(results)
+    results["all_changes_df"] = all_changes_df
+    results["harness_family_summary_df"] = build_family_summary_df(all_changes_df)
+
     output_bytes = write_report_to_bytes(old_file_name, new_file_name, old_layout, new_layout, results)
 
     return {
