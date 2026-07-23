@@ -36,6 +36,11 @@ from splice.secr.enrich import (
     export_dtcr_mapping_styled,
     export_secr_enriched_output,
 )
+from splice.secr.numbering import (
+    auto_enrich_secr as _auto_enrich_secr_if_requested,
+    build_secr_number_preview as _build_secr_number_preview,
+    extract_secr_number_inputs_from_def as _extract_secr_number_inputs_from_def,
+)
 from splice.splice_gen import (
     evaluate_expression_against_all_pns,
     generate_sales_code_expression,
@@ -104,114 +109,6 @@ def render_tool_scroll_anchor(tool_name: str) -> None:
             height=0,
         )
 
-
-def _auto_enrich_secr_if_requested(
-    secr_bytes: bytes,
-    dtcr_matching_bytes: bytes,
-    output_filename: str,
-) -> tuple[bytes, dict, pd.DataFrame, pd.DataFrame, str]:
-    dtcr_mapping_df = load_dtcr_matching_report(dtcr_matching_bytes)
-    dtcr_mapping_df = dtcr_mapping_df[
-        dtcr_mapping_df["Status"].astype(str).str.strip().isin(["Complete", "Draft"])
-    ]
-
-    secr_wb = load_generated_secr_workbook(secr_bytes)
-    secr_harness_family = get_secr_harness_family_from_c12(secr_wb)
-    if dtcr_mapping_df.empty:
-        raise ValueError("DTCR Matching Report is empty after filtering.")
-    if not secr_harness_family:
-        raise ValueError("SECR cell C12 is empty or invalid.")
-
-    reason_text = build_reason_for_change_for_secr(secr_harness_family, dtcr_mapping_df)
-    summary_df = build_enrichment_summary(dtcr_mapping_df, secr_harness_family, reason_text)
-
-    reason_cell_info = find_reason_for_change_cell(secr_wb)
-    if reason_cell_info:
-        _, cell_ref = reason_cell_info
-        update_secr_reason_for_change(secr_wb, cell_ref, reason_text)
-
-    dtcr_label_info = find_dtcr_number_label_cell(secr_wb)
-    if dtcr_label_info:
-        _, dtcr_label_ref = dtcr_label_info
-        dtcr_numbers_text = build_dtcr_numbers_for_secr(secr_harness_family, dtcr_mapping_df)
-        update_secr_dtcr_numbers(secr_wb, dtcr_label_ref, dtcr_numbers_text)
-
-    bulletin_numbers_text = build_bulletin_numbers_for_secr(secr_harness_family, dtcr_mapping_df)
-    if bulletin_numbers_text:
-        update_secr_bulletin_numbers(secr_wb, bulletin_numbers_text)
-
-    enriched_bytes, export_meta = export_secr_enriched_output(
-        secr_wb,
-        dtcr_mapping_df,
-        dtcr_mapping_df,
-        summary_df,
-        output_filename=output_filename,
-    )
-    return enriched_bytes, export_meta, dtcr_mapping_df, summary_df, secr_harness_family
-
-
-def _build_secr_number_preview(
-    model_year: str,
-    program: str,
-    phase: str,
-    secr_type_label: str,
-    sequence: int = 1000,
-) -> str:
-    """Build SECR number preview from form values and selected change type."""
-    my_clean = str(model_year or "").strip()
-    program_clean = str(program or "").strip().upper().replace(" ", "")
-    phase_clean = str(phase or "").strip().upper().replace(" ", "")
-
-    if not my_clean or len(my_clean) < 2:
-        return ""
-
-    type_prefix = "D" if secr_type_label == "Design Change" else "M"
-    my_two = my_clean[-2:]
-    return f"{type_prefix}{my_two}{program_clean}{phase_clean}_{sequence}"
-
-
-def _extract_secr_number_inputs_from_def(def_bytes: bytes) -> tuple[str, str, str]:
-    """Extract MY, Program(Vehicle Line), and Phase from DEF_DEF_Summary identifier.
-
-    Expected snippet in workbook: "DEF_New (Identifier) := 2028 RU X1_A ..."
-    """
-    try:
-        wb = openpyxl.load_workbook(io.BytesIO(def_bytes), data_only=True, read_only=True)
-    except Exception:
-        return "", "", ""
-
-    try:
-        if "DEF_DEF_Summary" not in wb.sheetnames:
-            return "", "", ""
-
-        ws = wb["DEF_DEF_Summary"]
-        identifier_text = ""
-
-        for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row or 1, 120), min_col=1, max_col=min(ws.max_column or 1, 12), values_only=True):
-            for value in row:
-                if not value:
-                    continue
-                text = str(value)
-                if "DEF_New" in text and "Identifier" in text:
-                    identifier_text = text
-                    break
-            if identifier_text:
-                break
-
-        if not identifier_text:
-            return "", "", ""
-
-        # Match: 2028 RU X1_A
-        match = re.search(r"(\d{4})\s+([A-Za-z0-9]+)\s+([A-Za-z0-9]+_[A-Za-z0-9]+)", identifier_text)
-        if not match:
-            return "", "", ""
-
-        my = match.group(1)
-        program = match.group(2).upper()
-        phase = match.group(3).replace("_", "").upper()
-        return my, program, phase
-    finally:
-        wb.close()
 
 st.markdown(
     """
