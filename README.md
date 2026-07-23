@@ -89,15 +89,17 @@ chmod +x run_app.sh
 ./run_app.sh
 ~~~
 
-## Tests
+## Verification
 
-Run unit tests locally:
+This repository does not currently ship an automated test suite or CI workflow.
+Verify changes by running the app (`./run_app.sh`) and exercising the affected
+workflow against known-good input files, confirming the generated workbook
+matches expectations before relying on it downstream.
 
-~~~bash
-pytest -q
-~~~
-
-GitHub Actions runs the same suite in a clean Python environment on pushes and pull requests.
+Because every engine in `splice/` is Streamlit-independent, an area can also be
+driven directly from a Python shell (for example
+`from splice.dtx_compare import generate_dtx_change_report`) to check its output
+without going through the UI.
 
 ## Metrics and Dashboard
 
@@ -123,10 +125,10 @@ Every workflow in this app is exposed as a pure Python function before it ever t
 
 | Workflow | Engine module | Key entry points | What an agent can do with it |
 |---|---|---|---|
-| Splice Generation | `wiring_harness_processor.py` | `run_analysis()`, `run_analysis_from_option_df()`, `validate_generated_expression()`, `validate_results()`, `export_excel()` | Watch a drop folder for new Complexity/OptionPerCkt workbooks, run analysis automatically, and only surface a file to the engineer once validation passes — flagging failures instead of silently forwarding bad data. |
-| DTx Compare | `dtx_compare_engine.py` | `generate_dtx_change_report()`, `launch_preorder_generation_tool()`, `compare_reports()` | Take a before/after pair of DTx exports, generate the change and PreOrder workbooks unattended, and draft a plain-English summary of what was added, removed, or modified for the engineer to approve. |
-| SECR Creation & Enrichment | `secr_engine.py`, `secr_enrichment_engine.py` | `create_secr_bytes()`, `update_secr_bytes()`, `match_dtcr_to_harness_family()`, `update_secr_reason_for_change()`, `update_secr_dtcr_numbers()` | Match incoming DTCR records to the correct harness family and pre-fill "Reason for Change" and DTCR numbers on the SECR, so the engineer verifies a draft instead of transcribing it by hand. |
-| VBOM Risk Matrix | `vbom_streamlit_engine.py` | `run_vbom_workflow()`, `format_workbook_output()` | Orchestrate the VBOM engine end-to-end on a schedule or on file arrival, and hand back a formatted workbook plus a risk summary. |
+| Splice Generation | `splice/splice_gen/` | `run_analysis()`, `run_analysis_from_option_df()`, `validate_generated_expression()`, `validate_results()`, `export_excel()` | Watch a drop folder for new Complexity/OptionPerCkt workbooks, run analysis automatically, and only surface a file to the engineer once validation passes — flagging failures instead of silently forwarding bad data. |
+| DTx Compare | `splice/dtx_compare/` | `generate_dtx_change_report()`, `launch_preorder_generation_tool()`, `compare_reports()` | Take a before/after pair of DTx exports, generate the change and PreOrder workbooks unattended, and draft a plain-English summary of what was added, removed, or modified for the engineer to approve. |
+| SECR Creation & Enrichment | `splice/secr/` (+ `splice/dtcr/`) | `create_secr_bytes()`, `update_secr_bytes()`, `match_dtcr_to_harness_family()`, `update_secr_reason_for_change()`, `update_secr_dtcr_numbers()` | Match incoming DTCR records to the correct harness family and pre-fill "Reason for Change" and DTCR numbers on the SECR, so the engineer verifies a draft instead of transcribing it by hand. |
+| VBOM Risk Matrix | `splice/vbom/` | `run_vbom_workflow()`, `format_workbook_output()` | Orchestrate the VBOM engine end-to-end on a schedule or on file arrival, and hand back a formatted workbook plus a risk summary. |
 | Feedback & Metrics | `feedback_system.py`, `data/impact_metrics.json`, `data/tickets.json` | `FeedbackStore`, metrics JSON files | Read submitted tickets and run metrics to generate a weekly digest of what broke, what got faster, and what's still fragile — without exposing any workbook contents, since the metrics store is designed to be non-confidential. |
 
 Practical integration patterns:
