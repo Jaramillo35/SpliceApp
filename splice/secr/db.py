@@ -19,7 +19,8 @@ from typing import Any, Dict, List, Optional
 
 import openpyxl
 
-DB_PATH = Path(__file__).resolve().parent / "data" / "secr_database.db"
+from splice.config import SECR_DB_PATH as DB_PATH
+
 SCHEMA_VERSION = 1
 
 _SCHEMA = """

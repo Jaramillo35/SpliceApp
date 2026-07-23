@@ -242,30 +242,6 @@ def load_dtcr_matching_report(file_bytes: bytes) -> pd.DataFrame:
 # Text Processing
 # ---------------------------------------------------------------------------
 
-def normalize_text(value: Optional[str]) -> str:
-    """Normalize text: uppercase, remove special chars, collapse spaces."""
-    if not value:
-        return ""
-    s = str(value).upper().strip()
-    s = re.sub(r"[^\w\s]", " ", s)  # Replace special chars with space
-    s = re.sub(r"\s+", " ", s)  # Collapse multiple spaces
-    return s
-
-
-def extract_device_control_number(device_transmittal: str) -> Optional[str]:
-    """Extract Device Control Number from Device Transmittal string.
-    
-    Example: "123456 - SWITCH BANK LEFT" -> "123456"
-    """
-    if not device_transmittal:
-        return None
-    # Look for leading digits before dash or space
-    match = re.match(r"^(\d+)", str(device_transmittal).strip())
-    if match:
-        return match.group(1)
-    return None
-
-
 def extract_bulletin_number(text: object) -> str:
     """Extract the first bulletin identifier after the word 'Bulletin'.
 

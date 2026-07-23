@@ -11,7 +11,7 @@ import openpyxl
 import pandas as pd
 from openpyxl.cell import MergedCell
 
-TEMPLATE_PATH = Path(__file__).resolve().parent / "assets" / "SECR_TEMPLATE.xlsx"
+from splice.config import SECR_TEMPLATE_PATH as TEMPLATE_PATH
 
 SUMMARY_SHEET = "Summary"
 DEF_DEF_SUMMARY_SHEET = "DEF_DEF_Summary"

@@ -15,9 +15,9 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from dtx_compare_engine import generate_dtx_change_report, launch_preorder_generation_tool
-from secr_engine import create_secr_bytes, update_secr_bytes
-import secr_db
-from secr_enrichment_engine import (
+from splice.secr.generate import create_secr_bytes, update_secr_bytes
+from splice.secr import db as secr_db
+from splice.secr.enrich import (
     load_dtcr_report,
     load_dtcr_matching_report,
     load_dtx_circuits_report,
