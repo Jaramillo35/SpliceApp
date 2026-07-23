@@ -61,22 +61,27 @@ if uploaded_file is None:
     st.info("Upload Input.xlsx (or equivalent) to begin analysis.")
     st.stop()
 
+st.subheader("Splice Configuration Options")
+can_mode = st.checkbox(
+    "Apply CAN splice rules: maximum 3 ends per splice",
+    key="splice_can_mode",
+    help="When enabled, splices are limited to three ends, matching CAN topology rules.",
+)
+
 with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as temp_file:
     temp_file.write(uploaded_file.getbuffer())
     temp_path = temp_file.name
 
-try:
-    result = run_analysis(temp_path)
-except Exception as exc:
-    st.error(f"Analysis failed: {exc}")
-    st.stop()
-
-if "analysis_result" not in st.session_state:
+# Re-run analysis when the file OR the CAN-mode toggle changes.
+analysis_signature = f"{uploaded_file.name}:{uploaded_file.size}:{int(can_mode)}"
+if st.session_state.get("analysis_signature") != analysis_signature:
+    try:
+        result = run_analysis(temp_path, can_mode=can_mode)
+    except Exception as exc:
+        st.error(f"Analysis failed: {exc}")
+        st.stop()
     st.session_state["analysis_result"] = result
-else:
-    prev_name = st.session_state.get("uploaded_file_name")
-    if prev_name != uploaded_file.name:
-        st.session_state["analysis_result"] = result
+    st.session_state["analysis_signature"] = analysis_signature
 
 st.session_state["uploaded_file_name"] = uploaded_file.name
 result = st.session_state["analysis_result"]
