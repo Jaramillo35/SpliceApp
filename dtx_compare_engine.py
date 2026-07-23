@@ -13,7 +13,20 @@ from typing import Iterable
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from pandas.api.types import is_scalar
+
+from splice.common.text import (
+    normalize_value,
+    normalize_cell,
+    normalize_match_text as _normalize_match_text,
+    split_delimited_values as _split_delimited_values,
+    extract_transmittal_number as _extract_transmittal_number,
+    extract_bulletin_number as _extract_bulletin_number,
+)
+from splice.dtcr.matching import (
+    DTCR_MATCHING_COLUMNS,
+    prepare_dtcr_for_matching as _prepare_dtcr_for_matching,
+    match_dtcr_to_harness_family,
+)
 
 
 REQUIRED_COLUMNS = [
@@ -91,20 +104,6 @@ CHANGE_TYPE_ORDER = {
     "Removed Circuit": 3,
     "Modified": 4,
 }
-
-
-def _split_delimited_values(value: object) -> list[str]:
-    tokens: list[str] = []
-    for part in re.split(r"[,;|\n]+", normalize_value(value)):
-        token = normalize_value(part)
-        if token:
-            tokens.append(token)
-    return tokens
-
-
-def _extract_transmittal_number(device_transmittal: object) -> str:
-    match = re.match(r"^(\d+)", normalize_value(device_transmittal))
-    return match.group(1) if match else ""
 
 
 def _build_dtcr_lookup_by_cnum(
@@ -222,28 +221,6 @@ class WorkbookLayout:
     header_row: int
 
 
-def normalize_value(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value.strip()
-    if pd.isna(value):
-        return ""
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value).strip()
-
-
-def normalize_cell(value: object) -> object:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value.strip()
-    if is_scalar(value) and pd.isna(value):
-        return ""
-    return value
-
-
 def collapse_values(values: pd.Series) -> str:
     unique_values = []
     seen = set()
@@ -349,153 +326,12 @@ def load_dtcr_report(file_bytes: bytes, file_name: str) -> pd.DataFrame:
 # DTCR Matching Report (same format as SECR Step 1, built from BOTH DTx files)
 # ---------------------------------------------------------------------------
 
-DTCR_MATCHING_COLUMNS = [
-    "DTCR#",
-    "Device Transmittal",
-    "Extracted Device Control Number",
-    "Reason for change",
-    "Status",
-    "Bulletin",
-    "Match Method",
-    "Matched DTx Value",
-    "CNUM",
-    "Harness Family",
-]
-
-
-def _normalize_match_text(value: object) -> str:
-    """Uppercase, strip special characters, collapse spaces (for name matching)."""
-    text = normalize_value(value)
-    if not text:
-        return ""
-    text = re.sub(r"[^\w\s]", " ", text.upper())
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _extract_bulletin_number(text: object) -> str:
-    """Extract the first bulletin identifier after the word 'Bulletin'."""
-    value = normalize_value(text)
-    if not value:
-        return ""
-    match = re.search(
-        r"\bbulletin(?:\b|_)[\s_:#-]*(?:no\.?[\s_:#-]*)?([A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*)",
-        value,
-        flags=re.IGNORECASE,
-    )
-    if match:
-        return match.group(1).strip()
-    return ""
-
-
-def _prepare_dtcr_for_matching(dtcr_df: pd.DataFrame) -> pd.DataFrame:
-    """Map DTCR report columns to the canonical names used by the matching report."""
-    mappings = {
-        "DTCR#": ["dtcr#", "dtcr #", "dtcr number", "dtcr no", "dtcr"],
-        "Device Transmittal": ["device transmittal", "transmittal", "device trans"],
-        "Reason for change": ["reason for change", "reason for", "reason"],
-        "Status": ["status", "request action", "action"],
-    }
-    lower_columns = {str(column).strip().lower(): column for column in dtcr_df.columns}
-
-    resolved: dict[str, str | None] = {}
-    for canonical, variants in mappings.items():
-        resolved[canonical] = None
-        for variant in variants:
-            if variant in lower_columns:
-                resolved[canonical] = lower_columns[variant]
-                break
-
-    if resolved["DTCR#"] is None or resolved["Device Transmittal"] is None:
-        raise ValueError("DTCR report must include DTCR# and Device Transmittal columns.")
-
-    prepared = pd.DataFrame()
-    for canonical in mappings:
-        source = resolved[canonical]
-        prepared[canonical] = (
-            dtcr_df[source].map(normalize_value) if source is not None else ""
-        )
-    prepared = prepared[prepared["DTCR#"] != ""].reset_index(drop=True)
-    return prepared
-
-
 def _build_combined_dtx_frame(old_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFrame:
     """Combine OLD + NEW DTx rows (NEW first) into one dedup'd matching frame."""
     columns = ["Device Control Number", "Device Name", "Suffix", "Harness Family", "CNUM"]
     combined = pd.concat([new_df[columns], old_df[columns]], ignore_index=True)
     combined = combined.map(normalize_cell).astype(str)
     return combined.drop_duplicates().reset_index(drop=True)
-
-
-def match_dtcr_to_harness_family(dtcr_df: pd.DataFrame, dtx_df: pd.DataFrame) -> pd.DataFrame:
-    """Match each DTCR to CNUM / Harness Family (priority: Device Control Number, then Device Name)."""
-    prepared = _prepare_dtcr_for_matching(dtcr_df)
-
-    dcn_index: dict[str, list[int]] = {}
-    for row_position, value in enumerate(dtx_df["Device Control Number"].tolist()):
-        for token in _split_delimited_values(value):
-            dcn_index.setdefault(token, []).append(row_position)
-
-    name_frame = dtx_df.drop_duplicates(subset=["Device Name"]).reset_index(drop=True)
-
-    results: list[dict[str, object]] = []
-    for _, row in prepared.iterrows():
-        dtcr_num = row["DTCR#"]
-        device_transmittal = row["Device Transmittal"]
-        reason = row["Reason for change"]
-        status = row["Status"]
-        bulletin = _extract_bulletin_number(reason)
-        extracted_dcn = _extract_transmittal_number(device_transmittal)
-
-        match_method = "No Match"
-        matched_dtx_value = ""
-        harness_family = ""
-        cnum = ""
-
-        if extracted_dcn and extracted_dcn in dcn_index:
-            matching_rows = dtx_df.iloc[dcn_index[extracted_dcn]]
-            cnum_values = [
-                value for value in matching_rows["CNUM"].map(normalize_value).tolist() if value
-            ]
-            family_values = [
-                value
-                for value in matching_rows["Harness Family"].map(normalize_value).tolist()
-                if value
-            ]
-            cnum = ", ".join(dict.fromkeys(cnum_values))
-            harness_family = ", ".join(dict.fromkeys(family_values))
-            matched_dtx_value = extracted_dcn
-            match_method = "Device Control Number"
-
-        if match_method == "No Match" and device_transmittal:
-            normalized_transmittal = _normalize_match_text(device_transmittal)
-            for _, dtx_row in name_frame.iterrows():
-                device_name = normalize_value(dtx_row.get("Device Name", ""))
-                if not device_name:
-                    continue
-                normalized_name = _normalize_match_text(device_name)
-                if normalized_name and normalized_name in normalized_transmittal:
-                    harness_family = normalize_value(dtx_row.get("Harness Family", ""))
-                    matched_dtx_value = device_name
-                    cnum = normalize_value(dtx_row.get("CNUM", ""))
-                    match_method = "Device Name"
-                    break
-
-        results.append(
-            {
-                "DTCR#": dtcr_num,
-                "Device Transmittal": device_transmittal,
-                "Extracted Device Control Number": extracted_dcn or "",
-                "Reason for change": reason,
-                "Status": status,
-                "Bulletin": bulletin,
-                "Match Method": match_method,
-                "Matched DTx Value": matched_dtx_value,
-                "CNUM": cnum,
-                "Harness Family": harness_family,
-            }
-        )
-
-    return pd.DataFrame(results, columns=DTCR_MATCHING_COLUMNS)
 
 
 def export_dtcr_matching_report(mapping_df: pd.DataFrame) -> bytes:
