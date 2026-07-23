@@ -1,6 +1,14 @@
-streamlit>=1.32
-pandas>=2.0
-openpyxl>=3.1
-xlsxwriter>=3.1
-sympy>=1.12
-xlrd>=2.0.1
+# Splice — runtime dependencies (pinned for reproducible production installs).
+# Versions match the known-good environment the app currently runs on.
+# Runtime: Python 3.11+ (dev/devcontainer on 3.11; verified locally on 3.12).
+#
+# Optional desktop-GUI deps for vbom_legacy/main_app.py (tkinterdnd2, cairosvg,
+# pillow) are intentionally NOT listed: they are imported under try/except and
+# are only needed for the standalone desktop UI, not the Streamlit server.
+
+streamlit==1.58.0
+pandas==3.0.3
+openpyxl==3.1.5
+xlsxwriter==3.2.9
+sympy==1.14.0
+xlrd==2.0.2
