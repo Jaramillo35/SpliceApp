@@ -93,16 +93,12 @@ def format_workbook_output(path: str | os.PathLike[str]) -> str:
 
 
 def _resolve_vbom_root() -> Path:
-    candidates = [
-        Path(__file__).resolve().parent / "vbom_legacy",
-        Path(__file__).resolve().parent.parent / "VBOMxRISKMATRIX 2",
-        Path(__file__).resolve().parent.parent / "VBOMxRISKMATRIX 2" / "VBOMxRISKMATRIX 2",
-        Path("/mount/src/VBOMxRISKMATRIX 2"),
-    ]
-    for candidate in candidates:
+    from splice.config import VBOM_ROOT_CANDIDATES
+
+    for candidate in VBOM_ROOT_CANDIDATES:
         if (candidate / "main_app.py").exists():
             return candidate
-    return candidates[0]
+    return VBOM_ROOT_CANDIDATES[0]
 
 
 def _load_vbom_module():

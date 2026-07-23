@@ -13,7 +13,7 @@ SPLICE_SAMPLE_INPUT_PATH = APP_DIR / "assets" / "downloads" / "Z913_example_inpu
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from wiring_harness_processor import (
+from splice.splice_gen import (
     evaluate_expression_against_all_pns,
     generate_sales_code_expression,
     generate_expression_for_selected_pns,

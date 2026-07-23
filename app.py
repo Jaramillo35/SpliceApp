@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from dtx_compare_engine import generate_dtx_change_report, launch_preorder_generation_tool
+from splice.dtx_compare import generate_dtx_change_report, launch_preorder_generation_tool
 from splice.secr.generate import create_secr_bytes, update_secr_bytes
 from splice.secr import db as secr_db
 from splice.secr.enrich import (
@@ -36,7 +36,7 @@ from splice.secr.enrich import (
     export_dtcr_mapping_styled,
     export_secr_enriched_output,
 )
-from wiring_harness_processor import (
+from splice.splice_gen import (
     evaluate_expression_against_all_pns,
     generate_sales_code_expression,
     generate_expression_for_selected_pns,
@@ -47,7 +47,7 @@ from wiring_harness_processor import (
     simplify_expression_for_display,
     validate_generated_expression,
 )
-from vbom_streamlit_engine import run_vbom_workflow
+from splice.vbom import run_vbom_workflow
 from feedback_system import FeedbackStore, render_feedback_widget
 from metrics.storage import build_metrics_storage
 from metrics.tracker import MetricsTracker

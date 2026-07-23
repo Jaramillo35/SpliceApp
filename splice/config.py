@@ -32,6 +32,20 @@ ASSETS_DIR = _path_from_env("SPLICE_ASSETS_DIR", PROJECT_ROOT / "assets")
 # --- Files -----------------------------------------------------------------
 SECR_DB_PATH = _path_from_env("SPLICE_SECR_DB_PATH", DATA_DIR / "secr_database.db")
 SECR_TEMPLATE_PATH = _path_from_env("SPLICE_SECR_TEMPLATE", ASSETS_DIR / "SECR_TEMPLATE.xlsx")
+TICKETS_PATH = _path_from_env("SPLICE_TICKETS_PATH", DATA_DIR / "tickets.json")
+PREORDER_EXE_PATH = _path_from_env(
+    "PREORDER_GENERATION_EXE_PATH", ASSETS_DIR / "downloads" / "PreOrderListGen.exe"
+)
+
+# Legacy VBOM desktop module, loaded dynamically by splice.vbom. Kept at the
+# project root; the alternate candidates preserve the previous lookup order.
+VBOM_LEGACY_DIR = _path_from_env("SPLICE_VBOM_LEGACY_DIR", PROJECT_ROOT / "vbom_legacy")
+VBOM_ROOT_CANDIDATES = [
+    VBOM_LEGACY_DIR,
+    PROJECT_ROOT.parent / "VBOMxRISKMATRIX 2",
+    PROJECT_ROOT.parent / "VBOMxRISKMATRIX 2" / "VBOMxRISKMATRIX 2",
+    Path("/mount/src/VBOMxRISKMATRIX 2"),
+]
 
 
 def get_secret(*keys: str, default: str | None = None) -> str | None:

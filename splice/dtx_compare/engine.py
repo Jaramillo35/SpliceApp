@@ -208,11 +208,10 @@ def _annotate_results_with_dtcr(
 
 
 def get_preorder_generation_exe_path() -> Path:
-    """Resolve PreOrder tool path from env var or a local assets fallback."""
-    env_path = os.getenv("PREORDER_GENERATION_EXE_PATH")
-    if env_path:
-        return Path(env_path).expanduser()
-    return Path(__file__).resolve().parent / "assets" / "downloads" / "PreOrderListGen.exe"
+    """Resolve the PreOrder tool path (env override or bundled assets fallback)."""
+    from splice.config import PREORDER_EXE_PATH
+
+    return PREORDER_EXE_PATH
 
 
 @dataclass(frozen=True)

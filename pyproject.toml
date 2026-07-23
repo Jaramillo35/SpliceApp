@@ -24,4 +24,12 @@ ui = ["streamlit==1.58.0"]
 [tool.setuptools]
 # Only the importable core package ships; the Streamlit ui/ layer and the
 # legacy desktop module are app entry points, not library code.
-packages = ["splice", "splice.common", "splice.dtcr", "splice.secr"]
+packages = [
+    "splice",
+    "splice.common",
+    "splice.dtcr",
+    "splice.secr",
+    "splice.splice_gen",
+    "splice.dtx_compare",
+    "splice.vbom",
+]

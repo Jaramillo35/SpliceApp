@@ -11,7 +11,7 @@ APP_DIR = CURRENT_DIR.parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from dtx_compare_engine import (
+from splice.dtx_compare import (
     generate_dtx_change_report,
     launch_preorder_generation_tool,
     load_dtcr_report,
