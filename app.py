@@ -26,7 +26,6 @@ pages = [
     st.Page("pages/2_DTx_Compare_Report.py", title="DTx Compare Report", icon="📑"),
     st.Page("pages/4_SECR_Management.py", title="SECR Management", icon="🗂️"),
     st.Page("pages/5_VBOM_Risk_Matrix.py", title="VBOM Risk Matrix", icon="🧮"),
-    st.Page("pages/3_Metrics_Dashboard.py", title="Metrics Dashboard", icon="📊"),
 ]
 
 st.navigation(pages).run()
