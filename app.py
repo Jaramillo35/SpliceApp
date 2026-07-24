@@ -12,7 +12,10 @@ from pathlib import Path
 
 import streamlit as st
 
+from splice.common.logging import configure as configure_logging
+
 st.set_page_config(page_title="System Engineer Toolkit", layout="wide")
+configure_logging()
 
 APP_DIR = Path(__file__).resolve().parent
 LOGO_PATH = APP_DIR / "assets" / "versigent_logo_horizontal.jpg"

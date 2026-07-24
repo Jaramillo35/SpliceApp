@@ -10,8 +10,13 @@ import pandas as pd
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from splice.common.errors import SpliceInputError
+from splice.common.logging import get_logger
 from splice.common.text import extract_bulletin_number as _canonical_extract_bulletin_number
+from splice.common.validation import ensure_non_empty_upload, require_columns
 from splice.dtcr import match_dtcr_to_harness_family as _canonical_match_dtcr_to_harness_family
+
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +91,12 @@ def _derive_device_transmittal_from_attachments(value: object) -> str:
 
 def _load_dtcr_summary_csv(file_bytes: bytes) -> pd.DataFrame:
     """Load DTCR_Summary.csv from the Chrome extension."""
-    df = pd.read_csv(io.BytesIO(file_bytes), dtype=str)
+    ensure_non_empty_upload(file_bytes, name="DTCR Summary CSV")
+    try:
+        df = pd.read_csv(io.BytesIO(file_bytes), dtype=str)
+    except Exception as exc:  # pragma: no cover - pandas parse errors vary
+        logger.warning("Failed to parse DTCR Summary CSV: %s", exc)
+        raise SpliceInputError(f"Could not read the DTCR Summary CSV: {exc}") from exc
     df.columns = [str(c).strip() for c in df.columns]
 
     mappings = {
@@ -98,13 +108,7 @@ def _load_dtcr_summary_csv(file_bytes: bytes) -> pd.DataFrame:
     }
     df = _map_columns(df, mappings)
 
-    required = ["DTCR#", "Reason for change"]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(
-            f"DTCR Summary CSV missing columns: {missing}. "
-            f"Detected columns: {list(df.columns[:20])}"
-        )
+    require_columns(df, ["DTCR#", "Reason for change"], context="DTCR Summary CSV")
 
     if "Device Transmittal" not in df.columns:
         if "Attachments" in df.columns:
@@ -123,14 +127,18 @@ def _load_dtcr_summary_csv(file_bytes: bytes) -> pd.DataFrame:
 
 
 def load_dtcr_report(file_bytes: bytes, file_name: str | None = None) -> pd.DataFrame:
-    """Load a DTCR report from Excel or DTCR_Summary.csv bytes."""
+    """Load a DTCR report from Excel or DTCR_Summary.csv bytes (auto header-row)."""
+    ensure_non_empty_upload(file_bytes, name="DTCR report")
     if file_name and file_name.lower().endswith(".csv"):
         return _load_dtcr_summary_csv(file_bytes)
 
-    """Load DTCR Report from Excel bytes with auto header-row detection."""
     keyword_sets = [["dtcr"], ["transmittal"], ["reason"], ["status"]]
     header_row = _find_header_row(file_bytes, keyword_sets)
-    df = pd.read_excel(io.BytesIO(file_bytes), header=header_row, dtype=str)
+    try:
+        df = pd.read_excel(io.BytesIO(file_bytes), header=header_row, dtype=str)
+    except Exception as exc:  # pragma: no cover - pandas/openpyxl parse errors vary
+        logger.warning("Failed to parse DTCR report '%s': %s", file_name, exc)
+        raise SpliceInputError(f"Could not read the DTCR report workbook: {exc}") from exc
     df.columns = [str(c).strip() for c in df.columns]
 
     mappings = {
@@ -141,13 +149,10 @@ def load_dtcr_report(file_bytes: bytes, file_name: str | None = None) -> pd.Data
     }
     df = _map_columns(df, mappings)
 
+    require_columns(
+        df, ["DTCR#", "Device Transmittal", "Reason for change"], context="DTCR report"
+    )
     required = ["DTCR#", "Device Transmittal", "Reason for change"]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(
-            f"DTCR Report missing columns: {missing}. "
-            f"Detected columns: {list(df.columns[:20])}"
-        )
     # Status is optional — fall back to empty string if not present
     if "Status" not in df.columns:
         df["Status"] = ""
@@ -164,13 +169,18 @@ def load_dtcr_report(file_bytes: bytes, file_name: str | None = None) -> pd.Data
 
 def load_dtx_circuits_report(file_bytes: bytes) -> pd.DataFrame:
     """Load DTx Circuits Report from Excel bytes with auto header-row detection."""
+    ensure_non_empty_upload(file_bytes, name="DTx circuits report")
     keyword_sets = [["control number", "device control", "dcn"],
                     ["device name", "name"],
                     ["cnum", "connector", "connector number", "connector no"],
                     ["suffix"],
                     ["harness family", "harness", "family"]]
     header_row = _find_header_row(file_bytes, keyword_sets)
-    df = pd.read_excel(io.BytesIO(file_bytes), header=header_row, dtype=str)
+    try:
+        df = pd.read_excel(io.BytesIO(file_bytes), header=header_row, dtype=str)
+    except Exception as exc:  # pragma: no cover - pandas/openpyxl parse errors vary
+        logger.warning("Failed to parse DTx circuits report: %s", exc)
+        raise SpliceInputError(f"Could not read the DTx circuits report: {exc}") from exc
     df.columns = [str(c).strip() for c in df.columns]
 
     mappings = {
@@ -183,12 +193,7 @@ def load_dtx_circuits_report(file_bytes: bytes) -> pd.DataFrame:
     df = _map_columns(df, mappings)
 
     required = ["Device Control Number", "Device Name", "Suffix", "Harness Family"]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(
-            f"DTx Circuits Report missing columns: {missing}. "
-            f"Detected columns: {list(df.columns[:20])}"
-        )
+    require_columns(df, required, context="DTx circuits report")
     if "CNUM" not in df.columns:
         df["CNUM"] = ""
 
@@ -199,25 +204,26 @@ def load_dtx_circuits_report(file_bytes: bytes) -> pd.DataFrame:
 
 def load_generated_secr_workbook(file_bytes: bytes) -> openpyxl.Workbook:
     """Load the generated SECR workbook from bytes."""
+    ensure_non_empty_upload(file_bytes, name="SECR workbook")
     try:
-        wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
-        return wb
-    except Exception as e:
-        raise ValueError(f"Failed to load SECR workbook: {e}")
+        return openpyxl.load_workbook(io.BytesIO(file_bytes))
+    except Exception as exc:
+        logger.warning("Failed to load SECR workbook: %s", exc)
+        raise SpliceInputError(f"Could not read the SECR workbook: {exc}") from exc
 
 
 def load_dtcr_matching_report(file_bytes: bytes) -> pd.DataFrame:
     """Load a DTCR matching report workbook exported by DTCR Matching Report."""
-    df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
+    ensure_non_empty_upload(file_bytes, name="DTCR Matching Report")
+    try:
+        df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
+    except Exception as exc:  # pragma: no cover - pandas/openpyxl parse errors vary
+        logger.warning("Failed to parse DTCR Matching Report: %s", exc)
+        raise SpliceInputError(f"Could not read the DTCR Matching Report: {exc}") from exc
     df.columns = [str(c).strip() for c in df.columns]
 
     required = ["DTCR#", "Device Transmittal", "Reason for change", "Status", "Match Method", "Harness Family"]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(
-            f"DTCR Matching Report missing columns: {missing}. "
-            f"Detected columns: {list(df.columns[:20])}"
-        )
+    require_columns(df, required, context="DTCR Matching Report")
 
     df = df.dropna(subset=["DTCR#"]).reset_index(drop=True)
     df["DTCR#"] = df["DTCR#"].astype(str).str.strip()
