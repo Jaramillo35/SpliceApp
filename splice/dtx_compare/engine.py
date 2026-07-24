@@ -14,6 +14,8 @@ import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
+from splice.common.errors import SpliceInputError
+from splice.common.logging import get_logger
 from splice.common.text import (
     normalize_value,
     normalize_cell,
@@ -22,6 +24,9 @@ from splice.common.text import (
     extract_transmittal_number as _extract_transmittal_number,
     extract_bulletin_number as _extract_bulletin_number,
 )
+from splice.common.validation import ensure_non_empty_upload, require_columns
+
+logger = get_logger(__name__)
 from splice.dtcr.matching import (
     DTCR_MATCHING_COLUMNS,
     prepare_dtcr_for_matching as _prepare_dtcr_for_matching,
@@ -262,18 +267,21 @@ def detect_layout(file_bytes: bytes, file_name: str) -> WorkbookLayout:
 
 
 def load_dtx_report(file_bytes: bytes, file_name: str) -> tuple[pd.DataFrame, WorkbookLayout]:
+    ensure_non_empty_upload(file_bytes, name=f"DTx report '{file_name}'")
     layout = detect_layout(file_bytes, file_name)
-    data_frame = pd.read_excel(
-        BytesIO(file_bytes),
-        sheet_name=layout.sheet_name,
-        header=layout.header_row,
-        dtype=object,
-    )
+    try:
+        data_frame = pd.read_excel(
+            BytesIO(file_bytes),
+            sheet_name=layout.sheet_name,
+            header=layout.header_row,
+            dtype=object,
+        )
+    except Exception as exc:  # pragma: no cover - pandas/openpyxl parse errors vary
+        logger.warning("Failed to parse DTx report '%s': %s", file_name, exc)
+        raise SpliceInputError(f"Could not read the DTx report '{file_name}': {exc}") from exc
     data_frame.columns = [normalize_value(column) for column in data_frame.columns]
 
-    missing_columns = [column for column in REQUIRED_COLUMNS if column not in data_frame.columns]
-    if missing_columns:
-        raise ValueError(f"{file_name} is missing required columns: {', '.join(missing_columns)}")
+    require_columns(data_frame, REQUIRED_COLUMNS, context=f"DTx report '{file_name}'")
 
     data_frame = data_frame[REQUIRED_COLUMNS].copy()
     data_frame = data_frame.map(normalize_cell)
@@ -294,8 +302,13 @@ def load_dtx_report(file_bytes: bytes, file_name: str) -> tuple[pd.DataFrame, Wo
 
 def load_dtcr_report(file_bytes: bytes, file_name: str) -> pd.DataFrame:
     """Load a DTCR search report, auto-detecting the header row."""
+    ensure_non_empty_upload(file_bytes, name=f"DTCR report '{file_name}'")
     required = {"DTCR#", "Device Transmittal"}
-    excel_file = pd.ExcelFile(BytesIO(file_bytes))
+    try:
+        excel_file = pd.ExcelFile(BytesIO(file_bytes))
+    except Exception as exc:  # pragma: no cover - pandas/openpyxl parse errors vary
+        logger.warning("Failed to open DTCR report '%s': %s", file_name, exc)
+        raise SpliceInputError(f"Could not read the DTCR report '{file_name}': {exc}") from exc
 
     for sheet_name in excel_file.sheet_names:
         preview = pd.read_excel(
