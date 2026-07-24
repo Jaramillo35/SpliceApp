@@ -19,13 +19,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from splice.dtcr import match_dtcr_to_harness_family
+from splice.dtx_compare import generate_dtcr_matching_report, load_dtcr_report
 from splice.secr import db as secr_db
-from splice.secr.enrich import (
-    export_dtcr_mapping_styled,
-    load_dtcr_report,
-    load_dtx_circuits_report,
-)
 from splice.secr.generate import create_secr_bytes, update_secr_bytes
 from splice.secr.numbering import (
     auto_enrich_secr,
@@ -97,32 +92,46 @@ def render() -> None:
 def _step_dtcr_matching() -> None:
     st.subheader("Step 1 · DTCR Report Matching")
     st.markdown(
-        "Map each DTCR record to a harness family. Upload the **DTCR report** "
-        "(Excel or the extension's `DTCR_Summary.csv`) and the **DTx circuits "
-        "report**. The result is the *DTCR Matching Report* used to enrich a SECR."
+        "Map each DTCR record to a harness family using the **same logic as DTx "
+        "Compare** — the DTCRs are matched against the combined OLD + NEW DTx data. "
+        "Upload the **DTCR report** plus the **OLD** and **NEW** DTx reports. The "
+        "result is the *DTCR Matching Report* used to enrich a SECR (no compare "
+        "workbook is produced here)."
     )
 
-    col_dtcr, col_dtx = st.columns(2)
-    with col_dtcr:
-        dtcr_file = st.file_uploader(
-            "DTCR report", type=["xlsx", "xlsm", "xls", "csv"], key=_k("match_dtcr_file")
+    dtcr_file = st.file_uploader(
+        "DTCR report",
+        type=["xlsx", "xlsm", "xls"],
+        key=_k("match_dtcr_file"),
+        help="The DTCR search-results workbook (must include DTCR# and Device Transmittal).",
+    )
+    col_old, col_new = st.columns(2)
+    with col_old:
+        old_dtx = st.file_uploader(
+            "OLD DTx report", type=["xlsx", "xlsm", "xls"], key=_k("match_old_dtx")
         )
-    with col_dtx:
-        dtx_file = st.file_uploader(
-            "DTx circuits report", type=["xlsx", "xlsm", "xls"], key=_k("match_dtx_file")
+    with col_new:
+        new_dtx = st.file_uploader(
+            "NEW DTx report", type=["xlsx", "xlsm", "xls"], key=_k("match_new_dtx")
         )
 
-    if dtcr_file is None or dtx_file is None:
-        st.info("Upload both files to generate the DTCR Matching Report.")
+    if dtcr_file is None or old_dtx is None or new_dtx is None:
+        st.info("Upload the DTCR report and both OLD and NEW DTx reports to continue.")
         return
 
     if st.button("Generate DTCR Matching Report", type="primary", key=_k("match_run")):
         try:
             with st.spinner("Matching DTCRs to harness families..."):
                 dtcr_df = load_dtcr_report(dtcr_file.getvalue(), dtcr_file.name)
-                dtx_df = load_dtx_circuits_report(dtx_file.getvalue())
-                mapping_df = match_dtcr_to_harness_family(dtcr_df, dtx_df)
-                mapping_bytes = export_dtcr_mapping_styled(mapping_df)
+                result = generate_dtcr_matching_report(
+                    old_dtx.getvalue(),
+                    new_dtx.getvalue(),
+                    old_dtx.name,
+                    new_dtx.name,
+                    dtcr_df,
+                )
+            mapping_df = result["dtcr_matching_df"]
+            mapping_bytes = result["dtcr_matching_bytes"]
         except ValueError as exc:
             st.error(f"Could not build the matching report: {exc}")
             return
