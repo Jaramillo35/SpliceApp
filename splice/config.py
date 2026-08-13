@@ -33,9 +33,6 @@ ASSETS_DIR = _path_from_env("SPLICE_ASSETS_DIR", PROJECT_ROOT / "assets")
 SECR_DB_PATH = _path_from_env("SPLICE_SECR_DB_PATH", DATA_DIR / "secr_database.db")
 SECR_TEMPLATE_PATH = _path_from_env("SPLICE_SECR_TEMPLATE", ASSETS_DIR / "SECR_TEMPLATE.xlsx")
 TICKETS_PATH = _path_from_env("SPLICE_TICKETS_PATH", DATA_DIR / "tickets.json")
-PREORDER_EXE_PATH = _path_from_env(
-    "PREORDER_GENERATION_EXE_PATH", ASSETS_DIR / "downloads" / "PreOrderListGen.exe"
-)
 
 # Legacy VBOM desktop module, loaded dynamically by splice.vbom. Kept at the
 # project root; the alternate candidates preserve the previous lookup order.

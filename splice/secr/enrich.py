@@ -404,6 +404,43 @@ def update_secr_bulletin_numbers(
 # SECR Enrichment Logic
 # ---------------------------------------------------------------------------
 
+_HARNESS_FAMILY_SEPARATOR_RE = re.compile(r"\s*(?:,|;|/|\||&|\+|>>|\n)\s*")
+
+
+def harness_family_matches(value: object, target_family: object) -> bool:
+    """Return whether a delimited Harness Family cell contains the target.
+
+    Matching is case-insensitive and token-based, so ``"IP, Body"`` matches
+    ``"IP"`` without incorrectly treating ``"IP JUMPER"`` as an IP match.
+    """
+    value_text = "" if value is None or pd.isna(value) else str(value).strip()
+    target_text = (
+        "" if target_family is None or pd.isna(target_family) else str(target_family).strip()
+    )
+    if not value_text or not target_text:
+        return False
+
+    target_key = target_text.casefold()
+    return any(
+        token.strip().casefold() == target_key
+        for token in _HARNESS_FAMILY_SEPARATOR_RE.split(value_text)
+        if token.strip()
+    )
+
+
+def filter_dtcr_mapping_for_family(
+    dtcr_mapping_df: pd.DataFrame,
+    secr_harness_family: str,
+) -> pd.DataFrame:
+    """Return DTCR mapping rows whose family list contains the SECR family."""
+    if "Harness Family" not in dtcr_mapping_df.columns:
+        return dtcr_mapping_df.iloc[0:0].copy()
+    mask = dtcr_mapping_df["Harness Family"].map(
+        lambda value: harness_family_matches(value, secr_harness_family)
+    )
+    return dtcr_mapping_df.loc[mask].copy()
+
+
 def build_reason_for_change_for_secr(
     secr_harness_family: str,
     dtcr_mapping_df: pd.DataFrame,
@@ -414,8 +451,7 @@ def build_reason_for_change_for_secr(
     DTCR#: reason
     DTCR#: reason
     """
-    # Filter DTCRs matching the SECR Harness Family
-    matching = dtcr_mapping_df[dtcr_mapping_df["Harness Family"] == secr_harness_family].copy()
+    matching = filter_dtcr_mapping_for_family(dtcr_mapping_df, secr_harness_family)
 
     if matching.empty:
         return ""
@@ -435,7 +471,7 @@ def build_dtcr_numbers_for_secr(
     dtcr_mapping_df: pd.DataFrame,
 ) -> str:
     """Build comma-separated DTCR numbers matching the SECR Harness Family."""
-    matching = dtcr_mapping_df[dtcr_mapping_df["Harness Family"] == secr_harness_family].copy()
+    matching = filter_dtcr_mapping_for_family(dtcr_mapping_df, secr_harness_family)
     if matching.empty:
         return ""
     dtcr_values = (
@@ -449,7 +485,7 @@ def build_bulletin_numbers_for_secr(
     dtcr_mapping_df: pd.DataFrame,
 ) -> str:
     """Build comma-separated bulletin numbers matching the SECR Harness Family."""
-    matching = dtcr_mapping_df[dtcr_mapping_df["Harness Family"] == secr_harness_family].copy()
+    matching = filter_dtcr_mapping_for_family(dtcr_mapping_df, secr_harness_family)
     if matching.empty:
         return ""
 
@@ -584,7 +620,7 @@ def build_enrichment_summary(
     """Build a summary DataFrame of the enrichment process."""
     total_processed = len(dtcr_mapping_df)
     total_matched = len(dtcr_mapping_df[dtcr_mapping_df["Match Method"] != "No Match"])
-    matched_to_secr = len(dtcr_mapping_df[dtcr_mapping_df["Harness Family"] == secr_harness_family])
+    matched_to_secr = len(filter_dtcr_mapping_for_family(dtcr_mapping_df, secr_harness_family))
     matched_by_dcn = len(dtcr_mapping_df[dtcr_mapping_df["Match Method"] == "Device Control Number"])
     matched_by_name = len(dtcr_mapping_df[dtcr_mapping_df["Match Method"] == "Device Name"])
     matched_by_suffix = len(dtcr_mapping_df[dtcr_mapping_df["Match Method"] == "Suffix"])

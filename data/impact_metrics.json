@@ -574,6 +574,29 @@
       "output_generated": true,
       "failure_category": null,
       "created_at": "2026-07-21T19:35:03.864379+00:00"
+    },
+    {
+      "id": "bb4ba127-0a09-47ff-8f75-e09f141f7b97",
+      "anonymous_user_id": null,
+      "anonymous_session_id": "777f1285-5b65-4173-aa88-3400982f83b0",
+      "workflow_id": "create_secr",
+      "workflow_version": null,
+      "started_at": "2026-07-23T23:19:52.072363+00:00",
+      "completed_at": "2026-07-23T23:19:56.866743+00:00",
+      "status": "completed",
+      "processing_seconds": 4.794332166959066,
+      "input_file_count": 2,
+      "output_file_count": 1,
+      "rows_read": null,
+      "rows_processed": null,
+      "circuits_processed": null,
+      "harness_variants_processed": null,
+      "automatic_validation_errors": 0,
+      "automatic_validation_warnings": 16,
+      "automatic_validation_failures": 0,
+      "output_generated": true,
+      "failure_category": null,
+      "created_at": "2026-07-23T23:19:52.072363+00:00"
     }
   ],
   "workflow_feedback": [
@@ -928,6 +951,22 @@
       "time_saved_minutes": 59.932094680564475,
       "time_savings_percentage": 99.88682446760745,
       "created_at": "2026-07-21T19:35:07.940715+00:00"
+    },
+    {
+      "id": "281ebbcc-b6d5-4b3f-8f13-76eb28d36e00",
+      "workflow_run_id": "bb4ba127-0a09-47ff-8f75-e09f141f7b97",
+      "workflow_id": "create_secr",
+      "anonymous_session_id": "777f1285-5b65-4173-aa88-3400982f83b0",
+      "baseline_minutes": 40,
+      "baseline_manual_touchpoints": null,
+      "remaining_manual_touchpoints": null,
+      "manual_touchpoints_eliminated": null,
+      "user_reported_errors_prevented": null,
+      "usefulness_rating": null,
+      "non_confidential_feedback": null,
+      "time_saved_minutes": 39.92009446388401,
+      "time_savings_percentage": 99.80023615971004,
+      "created_at": "2026-07-23T23:19:56.867636+00:00"
     }
   ]
 }

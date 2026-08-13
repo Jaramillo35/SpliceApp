@@ -52,43 +52,56 @@ if generate_clicked:
     else:
         try:
             with st.spinner("Generating VBOM outputs..."):
-                result = run_vbom_workflow(
-                    my=my,
-                    program=program,
-                    source_type=source_type,
-                    input_upload=input_upload,
-                    complexity_uploads=complexity_uploads,
-                    output_dir=Path(tempfile.gettempdir()) / "splice_vbom_outputs",
-                )
-            st.session_state["vbom_result"] = result
+                with tempfile.TemporaryDirectory(prefix="splice_vbom_") as output_dir:
+                    result = run_vbom_workflow(
+                        my=my,
+                        program=program,
+                        source_type=source_type,
+                        input_upload=input_upload,
+                        complexity_uploads=complexity_uploads,
+                        output_dir=Path(output_dir),
+                    )
+                    output_paths = [
+                        ("Master complexity workbook", result.get("master_path")),
+                        ("VIN / SalesCode matrix", result.get("vin_matrix_path")),
+                        ("Harness selection workbook", result.get("selections_path")),
+                        ("Selection review workbook", result.get("review_path")),
+                    ]
+                    archive_bytes = io.BytesIO()
+                    generated_files: list[str] = []
+                    with zipfile.ZipFile(
+                        archive_bytes, "w", zipfile.ZIP_DEFLATED
+                    ) as archive:
+                        for _, path in output_paths:
+                            if path is not None and Path(path).is_file():
+                                safe_name = Path(path).name
+                                archive.write(path, arcname=safe_name)
+                                generated_files.append(safe_name)
+                    st.session_state["vbom_archive_bytes"] = archive_bytes.getvalue()
+                    st.session_state["vbom_generated_files"] = generated_files
+            review_cases = result.get("review_case_count", 0)
+            defe_name = result.get("defe_output_name", "the DEFE template")
             st.success("VBOM workbook bundle generated.")
+            st.info(
+                f"Open **Harness_Selection_Review** and resolve the "
+                f"**{review_cases}** flagged selection(s). When Pending Reviews "
+                f"reaches 0, use its **Generate DEFE Template** button to create "
+                f"**{defe_name}**. The DEFE template is withheld until the review "
+                f"is complete."
+            )
         except Exception as exc:  # noqa: BLE001 - surface any failure cleanly
             st.error(f"VBOM workflow failed: {exc}")
 
-vbom_result = st.session_state.get("vbom_result")
-if vbom_result is not None:
+vbom_archive_bytes = st.session_state.get("vbom_archive_bytes")
+if vbom_archive_bytes:
     st.subheader("Generated Files")
-    output_paths = [
-        ("Master complexity workbook", vbom_result.get("master_path")),
-        ("VIN / SalesCode matrix", vbom_result.get("vin_matrix_path")),
-        ("Harness selection workbook", vbom_result.get("selections_path")),
-        ("Formatted template", vbom_result.get("formatted_template_path")),
-    ]
-    for label, path in output_paths:
-        if path is not None and Path(path).exists():
-            st.write(f"- {label}: {Path(path).name}")
-
-    archive_bytes = io.BytesIO()
-    with zipfile.ZipFile(archive_bytes, "w", zipfile.ZIP_DEFLATED) as archive:
-        for _, path in output_paths:
-            if path is not None and Path(path).exists():
-                archive.write(path, arcname=Path(path).name)
-    archive_bytes.seek(0)
+    for file_name in st.session_state.get("vbom_generated_files", []):
+        st.write(f"- {file_name}")
     st.download_button(
         label="Download VBOM Bundle",
-        data=archive_bytes.getvalue(),
+        data=vbom_archive_bytes,
         file_name="VBOM_Risk_Matrix_Bundle.zip",
         mime="application/zip",
         key="dl_vbom_bundle",
-        use_container_width=True,
+        width="stretch",
     )

@@ -5,12 +5,19 @@ import csv
 import io
 import json
 import os
+import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib import parse, request, error
 
 import streamlit as st
+
+from splice.config import TICKETS_PATH
+
+_FEEDBACK_LOCK = threading.RLock()
+_GITHUB_TIMEOUT_SECONDS = 10
 
 
 def _get_streamlit_secret(*keys: str) -> str | None:
@@ -44,29 +51,54 @@ def _get_config_value(env_key: str, *, default: str | None = None, secret_keys: 
 class FeedbackStore:
     def __init__(self, storage_path: str | os.PathLike[str] | None = None) -> None:
         if storage_path is None:
-            storage_path = Path(__file__).resolve().parent / "data" / "tickets.json"
+            storage_path = TICKETS_PATH
         self.storage_path = Path(storage_path)
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.storage_path.exists():
-            self.storage_path.write_text("[]", encoding="utf-8")
+        with _FEEDBACK_LOCK:
+            if not self.storage_path.exists():
+                self._write_tickets_atomic([])
 
     def load_tickets(self) -> list[dict[str, Any]]:
-        try:
-            raw = self.storage_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return []
+        with _FEEDBACK_LOCK:
+            try:
+                raw = self.storage_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                return []
 
-        try:
-            payload = json.loads(raw) or []
-        except json.JSONDecodeError:
-            return []
+            try:
+                payload = json.loads(raw) or []
+            except json.JSONDecodeError:
+                return []
 
-        if isinstance(payload, list):
-            return payload
-        return []
+            if isinstance(payload, list):
+                return payload
+            return []
 
     def save_tickets(self, tickets: list[dict[str, Any]]) -> None:
-        self.storage_path.write_text(json.dumps(tickets, indent=2, ensure_ascii=False), encoding="utf-8")
+        with _FEEDBACK_LOCK:
+            self._write_tickets_atomic(tickets)
+
+    def _write_tickets_atomic(self, tickets: list[dict[str, Any]]) -> None:
+        """Replace the JSON file atomically so concurrent sessions cannot truncate it."""
+        payload = json.dumps(tickets, indent=2, ensure_ascii=False)
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.storage_path.parent,
+                prefix=f".{self.storage_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+                temp_path = Path(handle.name)
+            os.replace(temp_path, self.storage_path)
+        finally:
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink()
 
     def submit_ticket(
         self,
@@ -78,23 +110,24 @@ class FeedbackStore:
         category: str = "feedback",
         severity: str = "medium",
     ) -> str:
-        ticket_id = self._build_ticket_id()
-        created_at = datetime.now(timezone.utc).isoformat()
-        ticket = {
-            "ticket_id": ticket_id,
-            "created_at": created_at,
-            "reported_by": reported_by.strip() or "Anonymous",
-            "workflow": workflow.strip() or "Unknown workflow",
-            "area": area.strip() or "General",
-            "category": category.strip() or "feedback",
-            "severity": severity.strip() or "medium",
-            "description": description.strip(),
-            "summary": description.strip()[:140],
-            "status": "new",
-        }
-        tickets = self.load_tickets()
-        tickets.append(ticket)
-        self.save_tickets(tickets)
+        with _FEEDBACK_LOCK:
+            tickets = self.load_tickets()
+            ticket_id = self._build_ticket_id(len(tickets) + 1)
+            created_at = datetime.now(timezone.utc).isoformat()
+            ticket = {
+                "ticket_id": ticket_id,
+                "created_at": created_at,
+                "reported_by": reported_by.strip() or "Anonymous",
+                "workflow": workflow.strip() or "Unknown workflow",
+                "area": area.strip() or "General",
+                "category": category.strip() or "feedback",
+                "severity": severity.strip() or "medium",
+                "description": description.strip(),
+                "summary": description.strip()[:140],
+                "status": "new",
+            }
+            tickets.append(ticket)
+            self._write_tickets_atomic(tickets)
         return ticket_id
 
     def submit_ticket_and_sync(
@@ -193,19 +226,23 @@ class FeedbackStore:
 
         try:
             existing_req = request.Request(url, headers=headers, method="GET")
-            with request.urlopen(existing_req) as response:
+            with request.urlopen(existing_req, timeout=_GITHUB_TIMEOUT_SECONDS) as response:
                 existing = json.loads(response.read().decode("utf-8"))
                 payload["sha"] = existing.get("sha")
         except error.HTTPError as exc:
             if exc.code != 404:
                 return {"ok": False, "message": f"GitHub lookup failed: {exc}"}
+        except error.URLError as exc:
+            return {"ok": False, "message": f"GitHub lookup failed: {exc.reason}"}
 
         put_req = request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="PUT")
         try:
-            with request.urlopen(put_req) as response:
+            with request.urlopen(put_req, timeout=_GITHUB_TIMEOUT_SECONDS) as response:
                 response_body = json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
             return {"ok": False, "message": f"GitHub update failed: {exc}"}
+        except error.URLError as exc:
+            return {"ok": False, "message": f"GitHub update failed: {exc.reason}"}
 
         return {
             "ok": True,
@@ -213,10 +250,10 @@ class FeedbackStore:
             "html_url": response_body.get("content", {}).get("html_url"),
         }
 
-    def _build_ticket_id(self) -> str:
+    @staticmethod
+    def _build_ticket_id(sequence: int) -> str:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-        existing_count = len(self.load_tickets()) + 1
-        return f"TKT-{timestamp}-{existing_count:03d}"
+        return f"TKT-{timestamp}-{sequence:03d}"
 
 
 def get_feedback_area_options(*, workflow: str | None = None, area: str | None = None) -> list[str]:
@@ -248,7 +285,7 @@ def render_feedback_widget(
     st.sidebar.markdown("### Report an issue or feedback")
     with st.sidebar.expander("Open ticket form", expanded=True):
         st.caption("Submit a structured ticket from anywhere in the app.")
-        st.caption("Tickets are stored in the repo-backed data file and reviewed by the administrator.")
+        st.caption("Tickets are stored in this user's local application data and reviewed by the administrator.")
         st.text_input("Workflow", value=workflow, disabled=True, key=f"{key_prefix}_workflow")
         area_value = area or workflow
         area_options = get_feedback_area_options(workflow=workflow, area=area_value)

@@ -14,11 +14,17 @@ from splice.dtx_compare.engine import (
     launch_preorder_generation_tool,
     load_dtcr_report,
 )
+from splice.dtx_compare.enhanced_report import (
+    DTCRRequiredError,
+    generate_enhanced_dtx_report,
+)
 
 __all__ = [
     "compare_reports",
     "generate_dtcr_matching_report",
     "generate_dtx_change_report",
+    "generate_enhanced_dtx_report",
+    "DTCRRequiredError",
     "launch_preorder_generation_tool",
     "load_dtcr_report",
 ]

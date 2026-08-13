@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import os
 import re
-import sys
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -19,20 +17,14 @@ from splice.common.logging import get_logger
 from splice.common.text import (
     normalize_value,
     normalize_cell,
-    normalize_match_text as _normalize_match_text,
     split_delimited_values as _split_delimited_values,
     extract_transmittal_number as _extract_transmittal_number,
-    extract_bulletin_number as _extract_bulletin_number,
 )
 from splice.common.validation import ensure_non_empty_upload, require_columns
 
-logger = get_logger(__name__)
-from splice.dtcr.matching import (
-    DTCR_MATCHING_COLUMNS,
-    prepare_dtcr_for_matching as _prepare_dtcr_for_matching,
-    match_dtcr_to_harness_family,
-)
+from splice.dtcr.matching import match_dtcr_to_harness_family
 
+logger = get_logger(__name__)
 
 REQUIRED_COLUMNS = [
     "Device Control Number",
@@ -210,13 +202,6 @@ def _annotate_results_with_dtcr(
             results["top_20_cnums_df"] = _insert_dtcr_column(top_df, top_dtcr_values)
 
     return results
-
-
-def get_preorder_generation_exe_path() -> Path:
-    """Resolve the PreOrder tool path (env override or bundled assets fallback)."""
-    from splice.config import PREORDER_EXE_PATH
-
-    return PREORDER_EXE_PATH
 
 
 @dataclass(frozen=True)

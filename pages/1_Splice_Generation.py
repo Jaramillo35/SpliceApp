@@ -66,18 +66,24 @@ can_mode = st.checkbox(
     help="When enabled, splices are limited to three ends, matching CAN topology rules.",
 )
 
-with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as temp_file:
-    temp_file.write(uploaded_file.getbuffer())
-    temp_path = temp_file.name
-
 # Re-run analysis when the file OR the CAN-mode toggle changes.
 analysis_signature = f"{uploaded_file.name}:{uploaded_file.size}:{int(can_mode)}"
 if st.session_state.get("analysis_signature") != analysis_signature:
+    temp_path: Path | None = None
     try:
-        result = run_analysis(temp_path, can_mode=can_mode)
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=Path(uploaded_file.name).suffix,
+        ) as temp_file:
+            temp_file.write(uploaded_file.getbuffer())
+            temp_path = Path(temp_file.name)
+        result = run_analysis(str(temp_path), can_mode=can_mode)
     except Exception as exc:
         st.error(f"Analysis failed: {exc}")
         st.stop()
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
     st.session_state["analysis_result"] = result
     st.session_state["analysis_signature"] = analysis_signature
 
@@ -88,13 +94,13 @@ st.subheader("Input Previews")
 left, right = st.columns(2)
 with left:
     st.markdown("**Complexity Matrix (normalized)**")
-    st.dataframe(result["harness_code_map_df"], use_container_width=True)
+    st.dataframe(result["harness_code_map_df"], width="stretch")
 with right:
     st.markdown("**OptionPerCircuit (normalized)**")
-    st.dataframe(result["option_df"], use_container_width=True)
+    st.dataframe(result["option_df"], width="stretch")
 
 st.subheader("Generated Configurations")
-st.dataframe(result["configurations_df"], use_container_width=True)
+st.dataframe(result["configurations_df"], width="stretch")
 
 st.subheader("Generated Connections")
 conns_df = result["generated_connections_df"]
@@ -126,12 +132,12 @@ for (circuit, config_id), group in conns_df.groupby(["Circuit Name", "Configurat
     with col3:
         st.markdown(f"**Target PNs:** {target_pns}")
 
-    st.dataframe(group, use_container_width=True)
+    st.dataframe(group, width="stretch")
     st.markdown("---")
 
 st.subheader("Harness Print Matrix")
 st.markdown("Engineering applicability matrix showing which connections apply to each Harness PN:")
-st.dataframe(result["harness_print_matrix_df"], use_container_width=True)
+st.dataframe(result["harness_print_matrix_df"], width="stretch")
 
 st.subheader("Interactive Sales Code Generator")
 st.markdown("Select circuit/row from the second sheet, edit Sales Code text, and visualize PN applicability from first-sheet rules.")
@@ -186,7 +192,7 @@ else:
     edited_df = st.data_editor(
         pd.DataFrame([visualize_row]),
         column_config={pn: st.column_config.CheckboxColumn(pn) for pn in harness_cols},
-        use_container_width=True,
+        width="stretch",
         num_rows="fixed",
         key=f"interactive_editor_{selected_row_idx}",
     )

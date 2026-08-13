@@ -23,7 +23,7 @@ flowchart TD
     E --> O3[Generated SECR Workbook]
     F --> O4[Enriched SECR + DTCR Mapping]
     G --> O5[VBOM Matrix Outputs]
-    H --> O6[data/tickets.json]
+    H --> O6[Per-user tickets.json]
 ```
 
 Each functional area is its own package under `splice/`, with a Streamlit-free
@@ -32,6 +32,11 @@ public interface re-exported from the package `__init__`. Shared helpers live in
 DTCR matcher); environment-specific paths and tokens live in `splice/config`.
 The Streamlit layer (`app.py`, `ui/`) only renders — it imports from `splice.*`
 and never the reverse.
+
+For a frozen Windows build, mutable state lives in
+`%LOCALAPPDATA%\SpliceApp` rather than PyInstaller's `_internal` directory.
+Source-mode development continues to use the repository `data/` directory
+unless `SPLICE_DATA_DIR` is explicitly configured.
 
 ## Key Design Principles
 

@@ -18,5 +18,20 @@
   "16": "models.py",
   "17": "SECR_TEMPLATE_a714dc32.md",
   "18": "Template_2aa0f431.md",
-  "19": "run_app.sh"
+  "19": "run_app.sh",
+  "20": "secr_db.py",
+  "21": "dashboard.js",
+  "22": "_auto_enrich_secr_if_requested",
+  "23": "app.py",
+  "24": "SECR Database — Architecture, Requirements & Task Plan",
+  "25": "load_dtcr_matching_report",
+  "26": "PostgreSQL Setup for the SECR Database on Streamlit Cloud",
+  "27": "Windows Install Guide (Local Use)",
+  "28": "iSpeed DTCR Attachment Downloader",
+  "29": "shared.js",
+  "30": "export_dtcr_mapping_styled",
+  "31": "copilot-instructions.md",
+  "32": "build_windows_bundle.sh",
+  "33": "__init__.py",
+  "34": "splice"
 }

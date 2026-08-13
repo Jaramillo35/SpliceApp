@@ -7,7 +7,7 @@ It currently supports:
 - DTx old-versus-new comparison with change reporting and PreOrder generation.
 - DTCR matching and SECR creation/enrichment.
 - VBOM risk-matrix workflow orchestration.
-- In-app structured feedback ticketing and usage metrics.
+- In-app structured feedback ticketing.
 
 ## Business Problem
 
@@ -65,9 +65,45 @@ flowchart LR
     SECR --> XLSX
     VBOM --> XLSX
     FB --> JSON[(data/tickets.json)]
+
+    SECR --> DB[(SECR Database)]
+    IMP[Bulk SECR import] --> DB
+    DB --> BROWSE[SECR Database page]
 ~~~
 
 Each engine is a plain Python module with typed function signatures that take file paths or raw bytes in and return DataFrames, workbook bytes, or structured dicts out. The Streamlit pages (`pages/*.py`) are thin wrappers that upload a file, call one of these functions, and render the result — none of the business logic lives in the UI layer.
+
+### SECR Database
+
+The **SECR Database** page is the searchable history of every SECR — generated here or
+imported from an existing file. It answers the questions engineers otherwise open a
+folder of spreadsheets to answer: what changed, on which circuit or connector, under
+which DTCR, and what the value was before and after.
+
+| Module | Responsibility |
+|---|---|
+| `splice/secr/parse.py` | SECR workbook → metadata + one record per changed field |
+| `splice/secr/identity.py` | generated-SECR identity: metadata extraction, numbering, filenames |
+| `splice/secr/generation.py` | Create New SECR / Update Existing SECR workflows |
+| `splice/secr/db.py` | the only module that opens SQLite (save, delete, search, sequences, audit) |
+| `splice/secr/importer.py` | bulk import; reports every file as imported / duplicate / failed |
+| `splice/secr/api.py` | read-only query surface — also the future local-assistant tool set |
+| `ui/pages/secr_database.py` | Browse · Create · Update · Import · Dashboard (thin UI, no SQL) |
+
+**Generated SECRs** are numbered per `Model Year + Phase`, each scope starting at 1000, and
+named `SECR_IP_D28X1RU_1000_V1_05072026.xlsx` from structured metadata read out of the DEF
+compare. Updating one keeps its number and advances the version; a change of Harness
+Family, Model Year, Phase or Program blocks the update and points the engineer at a new
+SECR. Imported historical SECRs are never renumbered or renamed.
+
+The database is a single SQLite file at `data/secr_database.db`, overridable with
+`SPLICE_SECR_DB_PATH`. Back it up by copying that file. Schema design, the measured
+parsing rules, duplicate handling and known data caveats are in
+[docs/SECR_DATABASE_DESIGN.md](docs/SECR_DATABASE_DESIGN.md).
+
+Creating or updating a SECR saves it to the database automatically, with its change
+records and a copy of the workbook — no export-and-re-import step. Bulk import defaults
+to **skipping** duplicates so it can never overwrite history that is already stored.
 
 ## Quick Start
 
@@ -91,33 +127,26 @@ chmod +x run_app.sh
 
 ## Verification
 
-This repository does not currently ship an automated test suite or CI workflow.
-Verify changes by running the app (`./run_app.sh`) and exercising the affected
-workflow against known-good input files, confirming the generated workbook
-matches expectations before relying on it downstream.
+Run the automated regression suite and production-source checks before exercising
+the affected workflow against known-good engineering inputs:
+
+~~~bash
+PYTHONPATH=. pytest -q
+python scripts/validate_production.py
+~~~
 
 Because every engine in `splice/` is Streamlit-independent, an area can also be
 driven directly from a Python shell (for example
 `from splice.dtx_compare import generate_dtx_change_report`) to check its output
 without going through the UI.
 
-## Metrics and Dashboard
+## Windows Production Distribution
 
-The app records run metadata automatically and updates the dashboard from the same JSON metrics file used for the KPI table above.
-
-The dashboard is available at [pages/3_Metrics_Dashboard.py](pages/3_Metrics_Dashboard.py) and highlights completed workflows, processing time, rows processed, unique sessions, and time-savings coverage once baseline values are present.
-
-The metrics system is intentionally non-confidential: it does not store workbook contents, filenames, circuit names, company identifiers, ticket contents, raw IP addresses, or stack traces.
-
-### Protected Metrics Dashboard
-
-A protected view of the same page remains disabled until `METRICS_ADMIN_TOKEN` is configured.
-
-### Limitation: Unique Users vs Sessions
-
-Without authenticated identity, weekly unique users are approximated by weekly unique anonymous sessions.
-
-Full data dictionary: [docs/METRICS.md](docs/METRICS.md)
+The packaged application binds only to `127.0.0.1`. Runtime feedback and SQLite
+data are stored in `%LOCALAPPDATA%\SpliceApp`, so upgrades can replace the
+application directory without overwriting user data. See
+[packaging/windows/README_WINDOWS_INSTALL.md](packaging/windows/README_WINDOWS_INSTALL.md)
+and [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md).
 
 ## AI Agent Integration for Systems Engineers
 
@@ -129,14 +158,14 @@ Every workflow in this app is exposed as a pure Python function before it ever t
 | DTx Compare | `splice/dtx_compare/` | `generate_dtx_change_report()`, `launch_preorder_generation_tool()`, `compare_reports()` | Take a before/after pair of DTx exports, generate the change and PreOrder workbooks unattended, and draft a plain-English summary of what was added, removed, or modified for the engineer to approve. |
 | SECR Creation & Enrichment | `splice/secr/` (+ `splice/dtcr/`) | `create_secr_bytes()`, `update_secr_bytes()`, `match_dtcr_to_harness_family()`, `update_secr_reason_for_change()`, `update_secr_dtcr_numbers()` | Match incoming DTCR records to the correct harness family and pre-fill "Reason for Change" and DTCR numbers on the SECR, so the engineer verifies a draft instead of transcribing it by hand. |
 | VBOM Risk Matrix | `splice/vbom/` | `run_vbom_workflow()`, `format_workbook_output()` | Orchestrate the VBOM engine end-to-end on a schedule or on file arrival, and hand back a formatted workbook plus a risk summary. |
-| Feedback & Metrics | `feedback_system.py`, `data/impact_metrics.json`, `data/tickets.json` | `FeedbackStore`, metrics JSON files | Read submitted tickets and run metrics to generate a weekly digest of what broke, what got faster, and what's still fragile — without exposing any workbook contents, since the metrics store is designed to be non-confidential. |
+| Feedback | `feedback_system.py` | `FeedbackStore` | Read submitted local tickets and generate a digest of what broke and what should improve without exposing uploaded workbook contents. |
 
 Practical integration patterns:
 
 1. **Tool-per-function wrapping.** Register the entry points above as individual MCP or function-calling tools. A Systems Engineer can then ask an assistant to "diff these two DTx files and tell me what changed" or "draft a SECR update for harness X913 using these DTCR numbers," and the agent calls the engine directly rather than walking through the Streamlit UI.
 2. **Unattended pre-processing.** Because every engine validates its own inputs (`validate_generated_expression`, `validate_can_splices`, `validate_enrichment_inputs`), an agent can run a batch of incoming workbooks overnight and only escalate the ones that fail validation, cutting the volume of manual review to genuine exceptions.
 3. **Change-summary drafting.** `compare_reports()` and `build_modified_views()` already return structured added/removed/modified records; an agent can turn that structure into a short natural-language summary attached to the generated workbook, so the engineer opens a change description instead of a raw diff.
-4. **Operational reporting.** The append-only JSON metrics and feedback stores are safe for an agent to read on a schedule and turn into a standup-style update (see the `engineering:standup` skill) without any risk of leaking proprietary harness data.
+4. **Operational reporting.** The local feedback store can be read on a schedule and turned into a standup-style issue summary without exposing uploaded workbook contents.
 5. **Codebase Q&A.** The repository ships a `graphify-out/graph.json` index (see `.github/copilot-instructions.md`); an agent can query it directly for "where is X handled" or "how do these modules relate" questions instead of re-reading the full source tree.
 
 Guardrails that apply to agent-driven runs exactly as they do to human ones: the optional iSpeed integration still requires a user's own pre-existing, separately authorized access (see below), and any generated artifact should be reviewed before it's treated as a substitute for engineering sign-off — the app accelerates drafting and validation, it does not replace the engineer's approval.

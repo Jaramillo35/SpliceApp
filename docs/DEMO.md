@@ -29,4 +29,5 @@ Expected result:
 ## 4) Feedback demo
 
 - Submit a ticket from the sidebar form.
-- Confirm a new anonymized JSON entry is written to data/tickets.json.
+- Confirm a new JSON entry is written to `data/tickets.json` in source mode, or
+  `%LOCALAPPDATA%\SpliceApp\tickets.json` in the Windows executable.

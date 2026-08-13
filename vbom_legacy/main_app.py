@@ -1,12 +1,11 @@
 import os
 import re
 import pandas as pd
-
 try:
     import tkinter as tk
     from tkinter import Tk, filedialog, messagebox
     from tkinter import ttk
-except Exception:
+except Exception:  # headless (Streamlit/deploy) has no display/tk
     tk = None
     Tk = None
     filedialog = None
@@ -23,10 +22,12 @@ except Exception:
 
 
 def _require_tkinter_runtime():
+    """Guard for desktop-only GUI entry points. The Streamlit/web VBOM
+    workflow never calls these, so headless environments import cleanly."""
     if tk is None or Tk is None or filedialog is None or messagebox is None or ttk is None:
         raise RuntimeError(
             "Tkinter GUI support is not available in this environment. "
-            "The Streamlit VBOM workflow does not need the GUI, but the desktop-only UI entry points do."
+            "The web VBOM workflow does not need the GUI, but the desktop UI entry points do."
         )
 
 # ========================
@@ -47,7 +48,11 @@ SAVE_OUTPUT = True
 MASTER_FILE_NAME = "Master_Combined_Harness_Complexity.xlsx"
 VIN_MATRIX_FILE = "VIN_Salescode_matrix_.xlsx"
 SELECTIONS_FILE = "VIN_to_Harness_Selection.xlsx"  # final multi-tab output
+REVIEW_FILE = "Harness_Selection_Review.xlsm"
 TEMPLATE_SOURCE_FILE = "Template.xlsx"
+REVIEW_VBA_PROJECT_FILE = "review_vbaProject.bin"
+NOT_APPLICABLE_PN = "N/A"
+NOT_APPLICABLE_STATUS = "NOT_APPLICABLE"
 
 # Complexity header parsing: keep alpha-numeric, but numeric-only codes are dropped.
 COMPLEXITY_ALLOW_ALPHANUMERIC = True   # regex [A-Z0-9]{3} then filters out 3-digit codes
@@ -56,16 +61,13 @@ COMPLEXITY_ALLOW_ALPHANUMERIC = True   # regex [A-Z0-9]{3} then filters out 3-di
 # File pickers
 # =========
 def pick_file(title="Select VIN/spec file"):
-    _require_tkinter_runtime()
     root = Tk(); root.withdraw(); root.attributes('-topmost', True)
     filetypes = [("Excel files", "*.xlsx *.xls *.xlsm"), ("CSV files", "*.csv"), ("All files", "*.*")]
     path = filedialog.askopenfilename(title=title, filetypes=filetypes)
     root.destroy()
     return path
 
-
 def pick_multiple_files(title="Select one or more Harness Complexity files"):
-    _require_tkinter_runtime()
     root = Tk(); root.withdraw(); root.attributes('-topmost', True)
     filetypes = [("Excel files", "*.xlsx *.xls *.xlsm"), ("All files", "*.*")]
     paths = filedialog.askopenfilenames(title=title, filetypes=filetypes)
@@ -111,7 +113,6 @@ class RunSetupDialog:
     BRAND_TEXT = "#173552"
 
     def __init__(self):
-        _require_tkinter_runtime()
         self.result = None
         self.dnd_ready = False
         if HAS_TK_DND and TkinterDnD is not None:
@@ -358,7 +359,7 @@ class RunSetupDialog:
             self.logo_img = ImageTk.PhotoImage(pil)
             tk.Label(parent, image=self.logo_img, bg=self.BRAND_NAVY).pack(anchor="w")
         except Exception:
-            tk.Label(parent, text="Wiring Automation", bg=self.BRAND_NAVY, fg=self.BRAND_WHITE, font=("Segoe UI", 18, "bold")).pack(anchor="w")
+            tk.Label(parent, text="VERSIGENT", bg=self.BRAND_NAVY, fg=self.BRAND_WHITE, font=("Segoe UI", 18, "bold")).pack(anchor="w")
 
     def _enable_dnd(self):
         self.doall_drop.drop_target_register(DND_FILES)
@@ -1256,8 +1257,6 @@ def _format_stats_sheets(wb_path: str):
 # Build Selections + AllCandidates
 # ====================================
 def compute_status_score(req_cnt, matched, extra, missing):
-    if req_cnt == 0:
-        return "NOT APPLICABLE", None
     if missing == 0 and extra == 0:
         status = "EXACT"
     elif missing == 0 and extra > 0:
@@ -1266,20 +1265,6 @@ def compute_status_score(req_cnt, matched, extra, missing):
         status = "INCOMPLETE"
     score = matched - extra - 100 * missing
     return status, score
-
-def _family_standard_codes(fam: dict) -> set:
-    """Return codes present on 100% of the family's current PNs.
-
-    Standard is deliberately family-local: the same sales code may be standard
-    for one harness family and optional (therefore rankable) for another.  A G
-    cell means the code is present and participates in the coverage test.
-    """
-    pns = fam.get("pns", [])
-    if not pns:
-        return set()
-    present_sets = [set(codes) | set(giveaway_codes)
-                    for _pn, codes, giveaway_codes in pns]
-    return set.intersection(*present_sets) if present_sets else set()
 
 def _variant_base_family(name: str):
     """Normalize family name to group Pacifica/Voyager variants."""
@@ -1292,9 +1277,33 @@ def _variant_base_family(name: str):
     s = re.sub(r'[\s_]+', '_', s).strip().rstrip('_')
     return s
 
-def _is_trailer_tow_family(name: str) -> bool:
-    normalized = re.sub(r"[^A-Z0-9]+", "_", str(name).upper()).strip("_")
-    return "TRAILER_TOW" in normalized
+
+def _family_matching_codes(fam: dict) -> tuple[set, set]:
+    """
+    Return (matching_codes, standard_codes) for one harness family.
+
+    Codes present on every PN are standard/common and do not distinguish
+    applicability or PN choice when the family also has optional codes.
+    If the family has no optional codes (for example a one-PN Trailer Tow
+    family), fall back to its standard codes so the family can still be
+    recognized as applicable. Header codes present on no PN are ignored.
+    """
+    header_codes = set(fam["header_codes"])
+    pns = fam["pns"]
+    if not pns:
+        return set(), set()
+
+    code_counts = {code: 0 for code in header_codes}
+    for _pn, pn_codes, giveaway_codes in pns:
+        effective_codes = (set(pn_codes) | set(giveaway_codes)) & header_codes
+        for code in effective_codes:
+            code_counts[code] += 1
+
+    total_pns = len(pns)
+    standard_codes = {code for code, count in code_counts.items() if count == total_pns}
+    optional_codes = {code for code, count in code_counts.items() if 0 < count < total_pns}
+    matching_codes = optional_codes if optional_codes else standard_codes
+    return matching_codes, standard_codes
 
 def build_outputs(vin_matrix_df: pd.DataFrame,
                   per_file_complexity: list):
@@ -1325,97 +1334,100 @@ def build_outputs(vin_matrix_df: pd.DataFrame,
         for _base, fam_list in grouped.items():
             group_best = None  # (key, family_name, best_pn, best_info)
 
+            applicable_families = []
             for fam in fam_list:
-                family_name = fam["family"]
-                is_trailer_tow = _is_trailer_tow_family(family_name)
-                fam_codes = set(fam["header_codes"])
-                if is_trailer_tow:
-                    # AHT and HEY are equivalent positive applicability signals
-                    # for the optional Trailer Tow harness.  Keep both aliases
-                    # available even when a legacy matrix exposes only one.
-                    fam_codes.update({"AHT", "HEY"})
-                # Codes present on every current PN cannot distinguish one PN
-                # from another. Exclude them only for this family; the same code
-                # remains rankable in any other family where coverage is <100%.
-                # 501 is always non-rankable, even in malformed legacy inputs.
-                standard_codes = _family_standard_codes(fam) | {"501"}
-                if is_trailer_tow:
-                    standard_codes.update({"AHT", "HEY"})
-                applicable_family_codes = set(fam_codes) - {"501"}
-                rankable_family_codes = applicable_family_codes - standard_codes
-                vin_required_for_family = vin_codes & applicable_family_codes
-                vin_rankable_for_family = vin_required_for_family & rankable_family_codes
+                matching_codes, _standard_codes = _family_matching_codes(fam)
+                vin_required_for_family = vin_codes & matching_codes
+                if vin_required_for_family:
+                    applicable_families.append((fam, vin_required_for_family, matching_codes))
 
-                # Applicability is a hard gate, not a weak score.  If the VIN
-                # has no required signal for this family, do not rank or assign
-                # any of its PNs.  A grouped family may still be applicable via
-                # another Pacifica/Voyager variant.
-                if is_trailer_tow:
-                    family_is_applicable = bool(vin_codes & {"AHT", "HEY"})
-                else:
-                    family_is_applicable = bool(vin_required_for_family)
-                if not family_is_applicable:
-                    continue
+            # A harness is not needed when the VIN has none of the selected
+            # sales codes represented by that harness family's complexity.
+            # Record the result explicitly so the final BOM is auditable, but
+            # do not create PN candidates for a non-applicable family.
+            if not applicable_families:
+                for fam in fam_list:
+                    selections_rows.append({
+                        "VIN": vin,
+                        "HarnessFamily": fam["family"],
+                        "SelectedHarnessPN": NOT_APPLICABLE_PN,
+                        "MatchStatus": NOT_APPLICABLE_STATUS,
+                        "RequiredCount": 0,
+                        "MatchedCount": 0,
+                        "MissingCount": 0,
+                        "ExtraCount": 0,
+                        "RequiredSalesCodes": None,
+                        "MatchedSalesCodes": None,
+                        "Giveaway": None,
+                        "MissingSalesCodes": None,
+                        "ExtraSalesCodes": None,
+                        "Score": None,
+                    })
+                continue
+
+            for fam, vin_required_for_family, matching_codes in applicable_families:
+                family_name = fam["family"]
 
                 # evaluate all PNs for this family
                 best_key = None
                 best_pn = None
-                best_info = None  # (status, req_cnt, matched_cnt, missing_cnt, extra_cnt, missing_list, extra_list, score)
+                best_info = None  # selection details for the winning PN
 
                 pn_evals = []
                 for pn, pn_codes, pn_giveaway_codes in fam["pns"]:
-                    # G (giveaway) can satisfy a required signal, but an extra
-                    # giveaway must not penalize or lower a candidate's score.
-                    effective_pn_codes = set(pn_codes) | set(pn_giveaway_codes)
-                    if is_trailer_tow:
-                        effective_pn_codes.update({"AHT", "HEY"})
+                    # Treat both X and G as present for matching semantics.
+                    effective_pn_codes = (set(pn_codes) | set(pn_giveaway_codes)) & matching_codes
+                    matching_giveaway_codes = set(pn_giveaway_codes) & matching_codes
 
-                    # Standard signals still establish applicability and remain
-                    # visible in the reported match counts. Ranking uses only
-                    # the non-standard subset, so a family-standard code gives
-                    # every PN zero advantage and zero penalty.
                     matched_codes = vin_required_for_family & effective_pn_codes
                     missing_codes = vin_required_for_family - effective_pn_codes
-                    extra_codes = (set(pn_codes) & rankable_family_codes) - vin_required_for_family
+                    extra_codes = effective_pn_codes - vin_required_for_family
 
                     matched = len(matched_codes)
                     missing = len(missing_codes)
                     extra = len(extra_codes)
-                    rank_matched = len(vin_rankable_for_family & effective_pn_codes)
-                    rank_missing = len(vin_rankable_for_family - effective_pn_codes)
-                    if missing == 0 and extra == 0:
-                        status = "EXACT"
-                    elif missing == 0:
-                        status = "OVERBUILT"
-                    else:
-                        status = "INCOMPLETE"
-                    score = rank_matched - extra - 100 * rank_missing
+                    status, score = compute_status_score(len(vin_required_for_family), matched, extra, missing)
+                    required_list = ",".join(sorted(vin_required_for_family))
+                    matched_list = ",".join(sorted(matched_codes))
 
                     # sorting key for "best"
                     key = (score, matched, -missing, -extra, -len(extra_codes), pn)
                     pn_evals.append((pn, score, status, matched, missing, extra,
+                                     required_list,
+                                     matched_list,
                                      ",".join(sorted(missing_codes)),
                                      ",".join(sorted(extra_codes)),
                                      len(vin_required_for_family),
-                                     ",".join(sorted(pn_giveaway_codes))))
+                                     ",".join(sorted(matching_giveaway_codes))))
 
                     if (best_key is None) or (key > best_key):
                         best_key = key
                         best_pn = pn
                         best_info = (status, len(vin_required_for_family), matched, missing, extra,
+                                     required_list,
+                                     matched_list,
                                      ",".join(sorted(missing_codes)),
                                      ",".join(sorted(extra_codes)),
                                      score,
-                                     ",".join(sorted(pn_giveaway_codes)))
+                                     ",".join(sorted(matching_giveaway_codes)))
 
                 # add candidates (and mark IsBest later if they win the group)
-                for pn, score, _status, _matched, _missing, _extra, miss_list, extra_list, _req, giveaway_list in pn_evals:
+                for (pn, score, candidate_status, matched_count, missing_count, extra_count,
+                     required_list, matched_list, miss_list, extra_list, required_count,
+                     giveaway_list) in pn_evals:
                     all_candidates_rows.append({
                         "VIN": vin,
                         "HarnessFamily": family_name,
                         "PN": pn,
                         "Score": score,
                         "IsBest": False,
+                        "MatchStatus": candidate_status,
+                        "RequiredCount": required_count,
+                        "MatchedCount": matched_count,
+                        "MissingCount": missing_count,
+                        "ExtraCount": extra_count,
+                        "RequiredSalesCodes": required_list if required_list else None,
+                        "MatchedSalesCodes": matched_list if matched_list else None,
                         "Giveaway": giveaway_list if giveaway_list else None,
                         "MissingSalesCodes": miss_list if miss_list else None,
                         "ExtraSalesCodes": extra_list if extra_list else None
@@ -1426,21 +1438,6 @@ def build_outputs(vin_matrix_df: pd.DataFrame,
                         group_best = (best_key, family_name, best_pn, best_info)
 
             if group_best is None:
-                not_applicable_family = fam_list[0]["family"] if len(fam_list) == 1 else _base
-                selections_rows.append({
-                    "VIN": vin,
-                    "HarnessFamily": not_applicable_family,
-                    "SelectedHarnessPN": None,
-                    "MatchStatus": "NOT APPLICABLE",
-                    "RequiredCount": 0,
-                    "MatchedCount": 0,
-                    "MissingCount": 0,
-                    "ExtraCount": 0,
-                    "Giveaway": None,
-                    "MissingSalesCodes": None,
-                    "ExtraSalesCodes": None,
-                    "Score": None,
-                })
                 continue
 
             # mark best in AllCandidates for the selected family/pn
@@ -1450,7 +1447,9 @@ def build_outputs(vin_matrix_df: pd.DataFrame,
                     row["IsBest"] = True
 
             # add selection (only one per group)
-            status, req_cnt, matched_cnt, missing_cnt, extra_cnt, miss_list, extra_list, score, giveaway_list = best_info
+            (status, req_cnt, matched_cnt, missing_cnt, extra_cnt,
+             required_list, matched_list, miss_list, extra_list,
+             score, giveaway_list) = best_info
             selections_rows.append({
                 "VIN": vin,
                 "HarnessFamily": family_name,
@@ -1460,6 +1459,8 @@ def build_outputs(vin_matrix_df: pd.DataFrame,
                 "MatchedCount": matched_cnt,
                 "MissingCount": missing_cnt,
                 "ExtraCount": extra_cnt,
+                "RequiredSalesCodes": required_list if required_list else None,
+                "MatchedSalesCodes": matched_list if matched_list else None,
                 "Giveaway": giveaway_list if giveaway_list else None,
                 "MissingSalesCodes": miss_list if miss_list else None,
                 "ExtraSalesCodes": extra_list if extra_list else None,
@@ -1469,11 +1470,15 @@ def build_outputs(vin_matrix_df: pd.DataFrame,
     selections_df = pd.DataFrame(selections_rows, columns=[
         "VIN","HarnessFamily","SelectedHarnessPN","MatchStatus",
         "RequiredCount","MatchedCount","MissingCount","ExtraCount",
-        "Giveaway","MissingSalesCodes","ExtraSalesCodes","Score"
+        "RequiredSalesCodes","MatchedSalesCodes","Giveaway",
+        "MissingSalesCodes","ExtraSalesCodes","Score"
     ])
 
     all_candidates_df = pd.DataFrame(all_candidates_rows, columns=[
-        "VIN","HarnessFamily","PN","Score","IsBest","Giveaway","MissingSalesCodes","ExtraSalesCodes"
+        "VIN","HarnessFamily","PN","Score","IsBest","MatchStatus",
+        "RequiredCount","MatchedCount","MissingCount","ExtraCount",
+        "RequiredSalesCodes","MatchedSalesCodes","Giveaway",
+        "MissingSalesCodes","ExtraSalesCodes"
     ])
 
     # Final_BOM_By_VIN: pivot selections to VIN x family => PN
@@ -1549,6 +1554,8 @@ def apply_tie_break_overrides(selections_df: pd.DataFrame, all_candidates_df: pd
         selections.loc[mask_sel, "MatchedCount"] = matched_cnt
         selections.loc[mask_sel, "MissingCount"] = missing_cnt
         selections.loc[mask_sel, "ExtraCount"] = extra_cnt
+        selections.loc[mask_sel, "RequiredSalesCodes"] = chosen_row.get("RequiredSalesCodes")
+        selections.loc[mask_sel, "MatchedSalesCodes"] = chosen_row.get("MatchedSalesCodes")
         selections.loc[mask_sel, "Giveaway"] = chosen_row.get("Giveaway")
         selections.loc[mask_sel, "MissingSalesCodes"] = chosen_row.get("MissingSalesCodes")
         selections.loc[mask_sel, "ExtraSalesCodes"] = chosen_row.get("ExtraSalesCodes")
@@ -2205,6 +2212,476 @@ def filter_per_file_families(per_file_families: list, selected_codes_by_family: 
         })
     return filtered
 
+
+# ======================================================
+# Selection review workbook
+# ======================================================
+def _review_text(value) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    return str(value).strip()
+
+
+def _ordered_unique(values):
+    seen = set()
+    result = []
+    for value in values:
+        text = _review_text(value)
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
+
+
+def build_selection_review_cases(selections_df: pd.DataFrame,
+                                 all_candidates_df: pd.DataFrame,
+                                 per_file_families: list) -> pd.DataFrame:
+    """Build the small SE review queue from uncertain VIN/family selections.
+
+    A row requires review when any of these conditions is true:
+      - the engine's best candidate is INCOMPLETE;
+      - two or more candidates share the best score;
+      - N/A was selected although the family has a zero-option/base candidate.
+    """
+    columns = [
+        "ReviewID", "VIN", "HarnessFamily", "ReviewReason",
+        "EngineRecommendation", "RequiredSalesCodes", "MissingSalesCodes",
+        "ExtraSalesCodes", "Giveaway", "CandidateDetails",
+        "AllowedPNs", "SelectedPN", "ReviewerNotes",
+    ]
+    if selections_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    family_defs = {}
+    for family in per_file_families:
+        family_defs.setdefault(family["family"], []).append(family)
+
+    candidate_groups = {}
+    if not all_candidates_df.empty:
+        for key, group in all_candidates_df.groupby(["VIN", "HarnessFamily"], dropna=False):
+            candidate_groups[(str(key[0]), str(key[1]))] = group.copy()
+
+    review_rows = []
+    for _, selection in selections_df.iterrows():
+        vin = _review_text(selection.get("VIN"))
+        family_name = _review_text(selection.get("HarnessFamily"))
+        engine_pn = _review_text(selection.get("SelectedHarnessPN"))
+        match_status = _review_text(selection.get("MatchStatus")).upper()
+        key = (vin, family_name)
+        candidate_group = candidate_groups.get(key, pd.DataFrame())
+
+        reasons = []
+        candidate_pns = []
+
+        if match_status == "INCOMPLETE":
+            reasons.append("No complete PN covers every required sales code")
+            if not candidate_group.empty:
+                ordered = candidate_group.sort_values(
+                    by=["Score", "MissingCount", "ExtraCount", "PN"],
+                    ascending=[False, True, True, True],
+                )
+                candidate_pns.extend(ordered["PN"].tolist())
+
+        if not candidate_group.empty:
+            max_score = candidate_group["Score"].max()
+            top = candidate_group[candidate_group["Score"] == max_score]
+            if len(top) > 1:
+                reasons.append("Multiple PNs share the best score")
+                candidate_pns.extend(top.sort_values("PN")["PN"].tolist())
+
+        if match_status == NOT_APPLICABLE_STATUS:
+            base_pns = []
+            for family_def in family_defs.get(family_name, []):
+                matching_codes, standard_codes = _family_matching_codes(family_def)
+                has_optional_codes = bool(matching_codes) and matching_codes != standard_codes
+                if not has_optional_codes:
+                    continue
+                for pn, pn_codes, giveaway_codes in family_def["pns"]:
+                    effective_matching_codes = (
+                        set(pn_codes) | set(giveaway_codes)
+                    ) & matching_codes
+                    if not effective_matching_codes:
+                        base_pns.append(pn)
+            if base_pns:
+                reasons.append("N/A conflicts with an available base/default PN")
+                candidate_pns.extend(sorted(base_pns))
+
+        if not reasons:
+            continue
+
+        candidate_pns.append(engine_pn)
+        candidate_pns.append(NOT_APPLICABLE_PN)
+        candidate_pns = _ordered_unique(candidate_pns)
+
+        detail_lines = []
+        for pn in candidate_pns:
+            if pn.upper() == NOT_APPLICABLE_PN:
+                detail_lines.append(f"{NOT_APPLICABLE_PN} | Harness not required")
+                continue
+            candidate_rows = (
+                candidate_group[candidate_group["PN"].astype(str) == pn]
+                if not candidate_group.empty else pd.DataFrame()
+            )
+            if candidate_rows.empty:
+                detail_lines.append(f"{pn} | Base/default candidate")
+                continue
+            candidate = candidate_rows.iloc[0]
+            detail_lines.append(
+                f"{pn} | { _review_text(candidate.get('MatchStatus')) or 'CANDIDATE' }"
+                f" | Score {_review_text(candidate.get('Score')) or '-'}"
+                f" | Missing {_review_text(candidate.get('MissingSalesCodes')) or '-'}"
+                f" | Extra {_review_text(candidate.get('ExtraSalesCodes')) or '-'}"
+                f" | Giveaway {_review_text(candidate.get('Giveaway')) or '-'}"
+            )
+
+        review_rows.append({
+            "ReviewID": f"{vin}|{family_name}",
+            "VIN": vin,
+            "HarnessFamily": family_name,
+            "ReviewReason": "; ".join(_ordered_unique(reasons)),
+            "EngineRecommendation": engine_pn,
+            "RequiredSalesCodes": _review_text(selection.get("RequiredSalesCodes")),
+            "MissingSalesCodes": _review_text(selection.get("MissingSalesCodes")),
+            "ExtraSalesCodes": _review_text(selection.get("ExtraSalesCodes")),
+            "Giveaway": _review_text(selection.get("Giveaway")),
+            "CandidateDetails": "\n".join(detail_lines),
+            "AllowedPNs": ",".join(candidate_pns),
+            "SelectedPN": "",
+            "ReviewerNotes": "",
+        })
+
+    return pd.DataFrame(review_rows, columns=columns)
+
+
+def _openpyxl_color_hex(color):
+    if color is None:
+        return None
+    rgb = getattr(color, "rgb", None)
+    if isinstance(rgb, str) and len(rgb) >= 6:
+        return f"#{rgb[-6:]}"
+    return None
+
+
+def _copy_template_sheet_to_xlsxwriter(workbook, template_path: str):
+    """Embed the existing DEFE template as a hidden sheet in the review file."""
+    from openpyxl import load_workbook
+    from openpyxl.cell.cell import MergedCell
+    from openpyxl.utils import get_column_letter
+
+    source_workbook = load_workbook(template_path, data_only=False)
+    source_sheet = source_workbook.active
+    target_sheet = workbook.add_worksheet("DEFE_Template")
+    format_cache = {}
+
+    border_style_map = {
+        "thin": 1, "medium": 2, "dashed": 3, "dotted": 4,
+        "thick": 5, "double": 6, "hair": 7,
+        "mediumDashed": 8, "dashDot": 9, "mediumDashDot": 10,
+        "dashDotDot": 11, "mediumDashDotDot": 12, "slantDashDot": 13,
+    }
+
+    def cell_format(cell):
+        style_id = cell.style_id
+        if style_id in format_cache:
+            return format_cache[style_id]
+        properties = {}
+        font = cell.font
+        if font:
+            properties.update({
+                "bold": bool(font.bold),
+                "italic": bool(font.italic),
+                "font_name": font.name or "Calibri",
+                "font_size": font.sz or 11,
+            })
+            font_color = _openpyxl_color_hex(font.color)
+            if font_color:
+                properties["font_color"] = font_color
+        fill_color = _openpyxl_color_hex(cell.fill.fgColor)
+        if cell.fill and cell.fill.fill_type == "solid" and fill_color:
+            properties["bg_color"] = fill_color
+            properties["pattern"] = 1
+        alignment = cell.alignment
+        if alignment:
+            if alignment.horizontal:
+                properties["align"] = alignment.horizontal
+            if alignment.vertical:
+                properties["valign"] = alignment.vertical
+            if alignment.wrap_text:
+                properties["text_wrap"] = True
+            if alignment.text_rotation:
+                properties["rotation"] = alignment.text_rotation
+        if cell.number_format and cell.number_format != "General":
+            properties["num_format"] = cell.number_format
+        for side_name in ("left", "right", "top", "bottom"):
+            side = getattr(cell.border, side_name)
+            if side and side.style:
+                properties[side_name] = border_style_map.get(side.style, 1)
+                side_color = _openpyxl_color_hex(side.color)
+                if side_color:
+                    properties[f"{side_name}_color"] = side_color
+        result = workbook.add_format(properties)
+        format_cache[style_id] = result
+        return result
+
+    merged_cells = set()
+    for merged_range in source_sheet.merged_cells.ranges:
+        min_col, min_row, max_col, max_row = merged_range.bounds
+        top_left = source_sheet.cell(min_row, min_col)
+        target_sheet.merge_range(
+            min_row - 1, min_col - 1, max_row - 1, max_col - 1,
+            top_left.value if top_left.value is not None else "",
+            cell_format(top_left),
+        )
+        for row in range(min_row, max_row + 1):
+            for col in range(min_col, max_col + 1):
+                merged_cells.add((row, col))
+
+    for row in source_sheet.iter_rows():
+        for cell in row:
+            if isinstance(cell, MergedCell) or (cell.row, cell.column) in merged_cells:
+                continue
+            value = cell.value
+            fmt = cell_format(cell)
+            if isinstance(value, str) and value.startswith("="):
+                target_sheet.write_formula(cell.row - 1, cell.column - 1, value, fmt)
+            elif value is not None:
+                target_sheet.write(cell.row - 1, cell.column - 1, value, fmt)
+            elif cell.has_style:
+                target_sheet.write_blank(cell.row - 1, cell.column - 1, None, fmt)
+
+    for col_idx in range(1, source_sheet.max_column + 1):
+        dimension = source_sheet.column_dimensions.get(get_column_letter(col_idx))
+        if dimension and dimension.width:
+            target_sheet.set_column(col_idx - 1, col_idx - 1, dimension.width)
+    for row_idx, dimension in source_sheet.row_dimensions.items():
+        if dimension.height:
+            target_sheet.set_row(row_idx - 1, dimension.height)
+
+    target_sheet.very_hidden()
+    return target_sheet
+
+
+def create_selection_review_workbook(output_path: str,
+                                     review_df: pd.DataFrame,
+                                     selections_df: pd.DataFrame,
+                                     template_path: str,
+                                     vba_project_path: str,
+                                     defe_output_name: str = "Template_for_DEFE.xlsx") -> str:
+    """Create the self-contained macro-enabled SE review workbook.
+
+    defe_output_name is written to Config!B5 and is the single source of truth
+    for the file name the GenerateTemplateForDEFE macro emits, e.g.
+    27_KX_VBOM_Template_for_DEFE.xlsx.
+    """
+    import xlsxwriter
+    from xlsxwriter.utility import xl_col_to_name
+
+    if not os.path.isfile(vba_project_path):
+        raise FileNotFoundError(f"Review VBA project not found: {vba_project_path}")
+    if not os.path.isfile(template_path):
+        raise FileNotFoundError(f"DEFE template not found: {template_path}")
+
+    workbook = xlsxwriter.Workbook(output_path)
+    workbook.add_vba_project(vba_project_path)
+    workbook.set_calc_mode("auto")
+    workbook.set_properties({
+        "title": "Harness Selection Review",
+        "subject": "SE review of uncertain VIN-to-harness selections",
+        "author": "VBOM Generator",
+        "comments": "Resolve every flagged selection, then use the macro button to generate Template_for_DEFE.xlsx.",
+    })
+
+    navy = "#11314F"
+    blue = "#D9EAF7"
+    pale_blue = "#EAF3F8"
+    amber = "#FFF2CC"
+    red = "#FCE4D6"
+    green = "#E2F0D9"
+    gray = "#E7E6E6"
+    white = "#FFFFFF"
+
+    title_fmt = workbook.add_format({
+        "bold": True, "font_size": 18, "font_color": white,
+        "bg_color": navy, "align": "left", "valign": "vcenter",
+    })
+    instruction_fmt = workbook.add_format({
+        "font_color": "#334E68", "bg_color": pale_blue,
+        "text_wrap": True, "valign": "vcenter",
+    })
+    label_fmt = workbook.add_format({
+        "bold": True, "font_color": navy, "bg_color": blue,
+        "border": 1, "align": "center", "valign": "vcenter",
+    })
+    value_fmt = workbook.add_format({
+        "bold": True, "font_size": 12, "border": 1,
+        "align": "center", "valign": "vcenter",
+    })
+    header_fmt = workbook.add_format({
+        "bold": True, "font_color": white, "bg_color": navy,
+        "border": 1, "align": "center", "valign": "vcenter",
+        "text_wrap": True,
+    })
+    text_fmt = workbook.add_format({"border": 1, "valign": "top", "text_wrap": True})
+    center_fmt = workbook.add_format({"border": 1, "align": "center", "valign": "top", "text_wrap": True})
+    choice_fmt = workbook.add_format({
+        "border": 1, "bg_color": amber, "bold": True,
+        "align": "center", "valign": "vcenter",
+    })
+    pending_fmt = workbook.add_format({"bg_color": red, "font_color": "#9C0006", "bold": True})
+    resolved_fmt = workbook.add_format({"bg_color": green, "font_color": "#276221", "bold": True})
+
+    review_sheet = workbook.add_worksheet("Review")
+    review_sheet.hide_gridlines(2)
+    review_sheet.freeze_panes(6, 4)
+    review_sheet.set_zoom(85)
+    review_sheet.set_row(0, 30)
+    review_sheet.merge_range("A1:F1", "Harness Selection Review", title_fmt)
+    review_sheet.merge_range(
+        "A2:J3",
+        "Review only the rows below. Choose one Final PN from each yellow dropdown. "
+        "When Pending Reviews reaches 0, select Generate DEFE Template. "
+        "N/A is available when the SE confirms the harness is not required.",
+        instruction_fmt,
+    )
+    review_sheet.insert_button("G1", {
+        "macro": "GenerateTemplateForDEFE",
+        "caption": f"Generate DEFE Template ({defe_output_name})",
+        "width": 255,
+        "height": 48,
+        "font": {"bold": True, "color": white},
+        "fill": {"color": "#2E7D32"},
+    })
+
+    first_data_row = 6  # zero-based row 7
+    last_data_row = first_data_row + max(len(review_df) - 1, 0)
+    excel_first_row = first_data_row + 1
+    excel_last_row = max(last_data_row + 1, excel_first_row)
+
+    review_sheet.write("A5", "Total Reviews", label_fmt)
+    review_sheet.write("B5", len(review_df), value_fmt)
+    review_sheet.write("C5", "Pending Reviews", label_fmt)
+    review_sheet.write_formula(
+        "D5", f'=COUNTIF(G{excel_first_row}:G{excel_last_row},"PENDING")',
+        value_fmt, len(review_df),
+    )
+    review_sheet.write("E5", "Workbook Status", label_fmt)
+    review_sheet.write_formula(
+        "F5", '=IF(D5=0,"READY TO GENERATE","REVIEW REQUIRED")',
+        value_fmt, "REVIEW REQUIRED" if len(review_df) else "READY TO GENERATE",
+    )
+    review_sheet.merge_range("G5:J5", "Yellow cells are the only required user inputs.", instruction_fmt)
+
+    headers = [
+        "Review ID", "VIN", "Harness Family", "Why Review Is Needed",
+        "Engine Recommendation", "Final PN (SE Selection)", "Review Status",
+        "Required Codes", "Missing Codes", "Extra Codes", "Giveaway Codes",
+        "Candidate Details", "SE Notes", "Allowed PNs",
+    ]
+    for col, header in enumerate(headers):
+        review_sheet.write(5, col, header, header_fmt)
+
+    widths = [4, 19, 22, 27, 17, 20, 14, 22, 17, 17, 17, 66, 30, 4]
+    for col, width in enumerate(widths):
+        review_sheet.set_column(col, col, width)
+    review_sheet.set_column(0, 0, None, None, {"hidden": True})
+    review_sheet.set_column(13, 13, None, None, {"hidden": True})
+
+    candidate_sheet = workbook.add_worksheet("Candidate_Options")
+    candidate_sheet.hide()
+    for row_offset, (_, review_row) in enumerate(review_df.iterrows()):
+        target_row = first_data_row + row_offset
+        values = [
+            review_row["ReviewID"], review_row["VIN"], review_row["HarnessFamily"],
+            review_row["ReviewReason"], review_row["EngineRecommendation"],
+            "", "", review_row["RequiredSalesCodes"],
+            review_row["MissingSalesCodes"], review_row["ExtraSalesCodes"],
+            review_row["Giveaway"], review_row["CandidateDetails"],
+            "", review_row["AllowedPNs"],
+        ]
+        for col, value in enumerate(values):
+            fmt = choice_fmt if col == 5 else (center_fmt if col in (1, 2, 4, 6, 7, 8, 9, 10) else text_fmt)
+            review_sheet.write(target_row, col, value, fmt)
+        excel_row = target_row + 1
+        review_sheet.write_formula(
+            target_row, 6, f'=IF(F{excel_row}="","PENDING","RESOLVED")',
+            center_fmt, "PENDING",
+        )
+        review_sheet.set_row(target_row, 62)
+
+        options = [value for value in str(review_row["AllowedPNs"]).split(",") if value]
+        option_col = row_offset
+        candidate_sheet.write(0, option_col, review_row["ReviewID"])
+        for option_row, option in enumerate(options, start=1):
+            candidate_sheet.write(option_row, option_col, option)
+        col_letter = xl_col_to_name(option_col)
+        review_sheet.data_validation(target_row, 5, target_row, 5, {
+            "validate": "list",
+            "source": f"='Candidate_Options'!${col_letter}$2:${col_letter}${len(options) + 1}",
+            "input_title": "Select final PN",
+            "input_message": "Select the correct PN or N/A.",
+            "error_title": "Invalid PN",
+            "error_message": "Choose a PN from the approved candidate list.",
+        })
+
+    if len(review_df):
+        review_sheet.autofilter(5, 0, last_data_row, len(headers) - 1)
+        review_sheet.conditional_format(first_data_row, 6, last_data_row, 6, {
+            "type": "text", "criteria": "containing", "value": "PENDING", "format": pending_fmt,
+        })
+        review_sheet.conditional_format(first_data_row, 6, last_data_row, 6, {
+            "type": "text", "criteria": "containing", "value": "RESOLVED", "format": resolved_fmt,
+        })
+    else:
+        review_sheet.merge_range("A7:N9", "No uncertain selections were found. The workbook is ready to generate the DEFE template.", resolved_fmt)
+
+    data_sheet = workbook.add_worksheet("Selections_Data")
+    data_sheet.hide()
+    data_headers = [
+        "ReviewID", "VIN", "HarnessFamily", "EnginePN", "MatchStatus",
+        "RequiredCount", "MatchedCount", "MissingCount", "ExtraCount",
+        "RequiredSalesCodes", "MatchedSalesCodes", "Giveaway",
+        "MissingSalesCodes", "ExtraSalesCodes", "Score",
+    ]
+    for col, header in enumerate(data_headers):
+        data_sheet.write(0, col, header)
+    for row_idx, (_, selection) in enumerate(selections_df.iterrows(), start=1):
+        vin = _review_text(selection.get("VIN"))
+        family = _review_text(selection.get("HarnessFamily"))
+        values = [
+            f"{vin}|{family}", vin, family,
+            _review_text(selection.get("SelectedHarnessPN")),
+            _review_text(selection.get("MatchStatus")),
+            selection.get("RequiredCount"), selection.get("MatchedCount"),
+            selection.get("MissingCount"), selection.get("ExtraCount"),
+            _review_text(selection.get("RequiredSalesCodes")),
+            _review_text(selection.get("MatchedSalesCodes")),
+            _review_text(selection.get("Giveaway")),
+            _review_text(selection.get("MissingSalesCodes")),
+            _review_text(selection.get("ExtraSalesCodes")),
+            selection.get("Score"),
+        ]
+        for col, value in enumerate(values):
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                value = ""
+            data_sheet.write(row_idx, col, value)
+
+    config_sheet = workbook.add_worksheet("Config")
+    config_sheet.hide()
+    config_sheet.write_row("A1", ["Key", "Value"])
+    config_sheet.write_row("A2", ["ReviewFirstRow", excel_first_row])
+    config_sheet.write_row("A3", ["ReviewLastRow", excel_last_row if len(review_df) else excel_first_row - 1])
+    config_sheet.write_row("A4", ["SelectionLastRow", len(selections_df) + 1])
+    config_sheet.write_row("A5", ["OutputFile", defe_output_name])
+
+    _copy_template_sheet_to_xlsxwriter(workbook, template_path)
+    workbook.close()
+    return output_path
+
 # ==============================
 # Populate formatted Template.xlsx
 # ==============================
@@ -2291,6 +2768,8 @@ def create_formatted_output(template_path: str, my: str, program: str, out_dir: 
             family = str(row["HarnessFamily"]).strip()
             pn = str(row["SelectedHarnessPN"]).strip()
             vin = row["VIN"]
+            if pn.upper() == NOT_APPLICABLE_PN or str(row.get("MatchStatus", "")).strip().upper() == NOT_APPLICABLE_STATUS:
+                continue
             family_map.setdefault(family, {}).setdefault(pn, set()).add(vin)
         
         # Build ordered entries
@@ -2464,34 +2943,12 @@ def main():
         vin_matrix_df, families_for_matching)
     print(f"✓ Generated selections for {len(selections_df)} VIN-Family pairs")
 
-    # 8b) Tie-revision dialog — show when 2+ PNs share the top score
+    # 8b) Ties are no longer resolved in a modal dialog. They are carried into
+    # the macro-enabled SE review workbook together with incomplete and
+    # ambiguous-N/A cases.
     ties = find_same_score_ties(all_candidates_df)
     if ties:
-        print(f"✓ Found {len(ties)} tie case(s) — opening Harness PN Tie Revision window...")
-        _tie_root = Tk()
-        _tie_root.withdraw()
-        _tie_root.attributes("-topmost", True)
-        tie_dlg = HarnessTieRevisionDialog(_tie_root, ties)
-        overrides = tie_dlg.result
-        _tie_root.destroy()
-
-        if overrides is None:
-            print("User cancelled at tie revision. Exiting.")
-            try:
-                root = Tk(); root.withdraw()
-                messagebox.showinfo("Cancelled", "Process cancelled at tie-revision step.")
-                root.destroy()
-            except Exception:
-                pass
-            return
-
-        selections_df, all_candidates_df = apply_tie_break_overrides(
-            selections_df, all_candidates_df, overrides)
-        # Rebuild BOM from updated selections
-        bom = selections_df.pivot(index="VIN", columns="HarnessFamily",
-                                   values="SelectedHarnessPN").reset_index()
-        final_bom_df = bom[["VIN"] + sorted([c for c in bom.columns if c != "VIN"])]
-        print(f"✓ Tie overrides applied")
+        print(f"✓ Found {len(ties)} tie case(s) — flagged for SE workbook review")
     else:
         print("✓ No ties detected")
 
@@ -2503,10 +2960,21 @@ def main():
     else:
         print(f"✓ Output folder not changed (using): {out_dir}")
 
+    # Program-qualified naming: every output for this run carries the
+    # {MY}_{Program} tag captured in the startup setup window (e.g. 27_KX),
+    # matching the DEFE template name. Decided in exactly one place here.
+    my_short = my[-2:] if len(my) >= 2 else my
+    tag = f"{my_short}_{program}"
+    master_file     = f"Master_Combined_Harness_Complexity_{tag}.xlsx"
+    vin_matrix_file = f"VIN_Salescode_matrix_{tag}.xlsx"
+    selections_file = f"VIN_to_Harness_Selection_{tag}.xlsx"
+    review_file     = f"Harness_Selection_Review_{tag}.xlsm"
+    defe_output_name = f"{tag}_VBOM_Template_for_DEFE.xlsx"
+
     # Resolve final output paths only after user picks destination.
-    master_path = os.path.join(out_dir, MASTER_FILE_NAME)
-    vin_out_path = os.path.join(out_dir, VIN_MATRIX_FILE)
-    selections_out = os.path.join(out_dir, SELECTIONS_FILE)
+    master_path = os.path.join(out_dir, master_file)
+    vin_out_path = os.path.join(out_dir, vin_matrix_file)
+    selections_out = os.path.join(out_dir, selections_file)
 
     # Write Master workbook in final selected folder.
     used_sheetnames = set()
@@ -2515,12 +2983,12 @@ def main():
             sheet = safe_sheetname(os.path.basename(f), used_sheetnames)
             df_comp.to_excel(writer, sheet_name=sheet, index=False, header=False)
     format_workbook_output(master_path)
-    print(f"✓ Created: {MASTER_FILE_NAME}")
+    print(f"✓ Created: {master_file}")
 
     # Write VIN matrix and append SalesCode_Diff in final selected folder.
     vin_matrix_df.to_excel(vin_out_path, index=False, engine="openpyxl")
     write_df_to_excel_append(vin_out_path, "SalesCode_Diff", diff_df)
-    print(f"✓ Created: {VIN_MATRIX_FILE} (with SalesCode_Diff)")
+    print(f"✓ Created: {vin_matrix_file} (with SalesCode_Diff)")
 
     # 9) Save VIN_to_Harness_Selection.xlsx
     print("\n" + "="*80)
@@ -2535,7 +3003,7 @@ def main():
             family_stats_df.to_excel(writer, sheet_name="Family_Code_Stats", index=False)
             global_code_df.to_excel(writer, sheet_name="Global_Code_Overview", index=False)
     format_workbook_output(selections_out)
-    print(f"✓ Created: {SELECTIONS_FILE}")
+    print(f"✓ Created: {selections_file}")
     print("✓ Applied workbook formatting and highlights")
 
     # Format SalesCode statistics sheets
@@ -2545,36 +3013,28 @@ def main():
     except Exception as e:
         print(f"✓ Statistics sheets created (note: {e})")
 
-    # 9.5) Save formatted template in the same output folder used for all files
+    # 9.5) Create the macro-enabled review gate. The DEFE template is generated
+    # only from this workbook after every uncertainty is explicitly resolved.
     print("\n" + "="*80)
-    print("STEP 5/5: SAVE FORMATTED TEMPLATE")
+    print("STEP 5/5: CREATE SELECTION REVIEW WORKBOOK")
     print("="*80)
-    save_folder = out_dir
-    formatted_template_path = None
-
-    # Create and populate Template.xlsx
+    review_path = os.path.join(out_dir, review_file)
     template_src_path = os.path.join(os.path.dirname(__file__), TEMPLATE_SOURCE_FILE)
     if not os.path.exists(template_src_path):
         template_src_path = os.path.join(out_dir, TEMPLATE_SOURCE_FILE)
-
-    if os.path.exists(template_src_path):
-        try:
-            formatted_template_path = create_formatted_output(
-                template_src_path,
-                my,
-                program,
-                save_folder,
-                selections_df,
-                vin_matrix_df
-            )
-            if formatted_template_path:
-                print(f"✓ Formatted template created: {os.path.basename(formatted_template_path)}")
-        except Exception as e:
-            print(f"✗ Could not create formatted template: {e}")
-            import traceback
-            traceback.print_exc()
-    else:
-        print(f"⚠ Template.xlsx not found at: {template_src_path}")
+    vba_project_path = os.path.join(os.path.dirname(__file__), REVIEW_VBA_PROJECT_FILE)
+    review_df = build_selection_review_cases(
+        selections_df, all_candidates_df, families_for_matching)
+    create_selection_review_workbook(
+        review_path,
+        review_df,
+        selections_df,
+        template_src_path,
+        vba_project_path,
+        defe_output_name=defe_output_name,
+    )
+    print(f"✓ Created: {review_file}")
+    print(f"✓ Flagged {len(review_df)} VIN/family decision(s) for SE review")
 
     # Final completion dialog
     print("\n" + "="*80)
@@ -2584,12 +3044,6 @@ def main():
     try:
         root = Tk()
         root.withdraw()
-        
-        template_info = ""
-        if formatted_template_path:
-            template_info += f"  ✅ Formatted Template:\n      {os.path.basename(formatted_template_path)}\n"
-        if not template_info:
-            template_info = "  ⚠ Templates: Not saved\n"
         
         completion_msg = f"""✅ PROCESS COMPLETE!
 
@@ -2606,12 +3060,17 @@ Main Output Folder:
   {out_dir}
 
 Data Files:
-  • {MASTER_FILE_NAME}
-  • {SELECTIONS_FILE}
-  • {VIN_MATRIX_FILE}
+  • {master_file}
+  • {selections_file}
+  • {vin_matrix_file}
+  • {review_file}
 
-{template_info}
-All files are ready for use!"""
+Review Required:
+  • Open {review_file}
+  • Resolve all {len(review_df)} flagged decision(s)
+  • Use its Generate DEFE Template button (creates {defe_output_name})
+
+The DEFE template is intentionally withheld until the review is complete."""
         
         messagebox.showinfo("✅ Success", completion_msg)
         root.destroy()

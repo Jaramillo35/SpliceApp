@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import copy
-import datetime
 import io
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import openpyxl
-import pandas as pd
 from openpyxl.cell import MergedCell
 
 from splice.config import SECR_TEMPLATE_PATH as TEMPLATE_PATH
@@ -81,6 +79,20 @@ def _find_action_col(ws, header_row: int = 3) -> int:
     return 1  # fallback
 
 
+def _write_affected_category(
+    ws_summary,
+    *,
+    label_cell: str,
+    value_cell: str,
+    label: str,
+    values: List[str],
+) -> None:
+    """Write one affected-category list and keep its label count in sync."""
+    unique_values = sorted({_normalize_text(value) for value in values if _normalize_text(value)})
+    ws_summary[label_cell] = f"{label}: ({len(unique_values)})"
+    ws_summary[value_cell] = ", ".join(unique_values)
+
+
 # ---------------------------------------------------------------------------
 # DEF sheet processors — update Summary from copied DEF sheets
 # ---------------------------------------------------------------------------
@@ -96,7 +108,7 @@ def _process_def_def_summary(wb_secr, ws_summary) -> None:
 
     delete_values, chg_values, add_values = [], [], []
     for row_idx in range(4, (ws.max_row or 3) + 1):
-        action = ws.cell(row=row_idx, column=action_col).value
+        action = _normalize_text(ws.cell(row=row_idx, column=action_col).value).upper()
         value = ws.cell(row=row_idx, column=value_col).value
         if value is not None:
             s = str(value)
@@ -107,9 +119,15 @@ def _process_def_def_summary(wb_secr, ws_summary) -> None:
             elif action == "ADD":
                 add_values.append(s)
 
-    ws_summary["C32"] = ", ".join(delete_values) if delete_values else ""
-    ws_summary["C31"] = ", ".join(chg_values) if chg_values else ""
-    ws_summary["C30"] = ", ".join(add_values) if add_values else ""
+    _write_affected_category(
+        ws_summary, label_cell="B30", value_cell="C30", label="Added", values=add_values
+    )
+    _write_affected_category(
+        ws_summary, label_cell="B31", value_cell="C31", label="Changed", values=chg_values
+    )
+    _write_affected_category(
+        ws_summary, label_cell="B32", value_cell="C32", label="Removed", values=delete_values
+    )
 
 
 def _process_connector_sheet(wb_secr, ws_summary) -> None:
@@ -122,7 +140,7 @@ def _process_connector_sheet(wb_secr, ws_summary) -> None:
 
     delete_vals, chg_vals, add_vals = [], [], []
     for row_idx in range(4, (ws.max_row or 3) + 1):
-        action = ws.cell(row=row_idx, column=action_col).value
+        action = _normalize_text(ws.cell(row=row_idx, column=action_col).value).upper()
         connector = ws.cell(row=row_idx, column=connector_col).value
         if connector is not None:
             s = str(connector)
@@ -140,9 +158,15 @@ def _process_connector_sheet(wb_secr, ws_summary) -> None:
         delete_vals = list(delete_set - common)
         add_vals = list(add_set - common)
 
-    ws_summary["C22"] = ", ".join(sorted(set(delete_vals))) if delete_vals else ""
-    combined_chg_add = sorted(set(chg_vals + add_vals))
-    ws_summary["C21"] = ", ".join(combined_chg_add) if combined_chg_add else ""
+    _write_affected_category(
+        ws_summary, label_cell="B20", value_cell="C20", label="Added", values=add_vals
+    )
+    _write_affected_category(
+        ws_summary, label_cell="B21", value_cell="C21", label="Changed", values=chg_vals
+    )
+    _write_affected_category(
+        ws_summary, label_cell="B22", value_cell="C22", label="Removed", values=delete_vals
+    )
 
 
 def _process_circuit_sheet(wb_secr, ws_summary) -> None:
@@ -156,7 +180,7 @@ def _process_circuit_sheet(wb_secr, ws_summary) -> None:
 
     delete_vals, chg_vals, add_vals = [], [], []
     for row_idx in range(4, (ws.max_row or 3) + 1):
-        action = ws.cell(row=row_idx, column=action_col).value
+        action = _normalize_text(ws.cell(row=row_idx, column=action_col).value).upper()
         b = ws.cell(row=row_idx, column=val_b_col).value
         c = ws.cell(row=row_idx, column=val_c_col).value
         combined = (
@@ -177,9 +201,15 @@ def _process_circuit_sheet(wb_secr, ws_summary) -> None:
         delete_vals = list(delete_set - common)
         add_vals = list(add_set - common)
 
-    ws_summary["C27"] = ", ".join(sorted(set(delete_vals))) if delete_vals else ""
-    ws_summary["C25"] = ", ".join(sorted(set(add_vals))) if add_vals else ""
-    ws_summary["C26"] = ", ".join(sorted(set(chg_vals))) if chg_vals else ""
+    _write_affected_category(
+        ws_summary, label_cell="B25", value_cell="C25", label="Added", values=add_vals
+    )
+    _write_affected_category(
+        ws_summary, label_cell="B26", value_cell="C26", label="Changed", values=chg_vals
+    )
+    _write_affected_category(
+        ws_summary, label_cell="B27", value_cell="C27", label="Removed", values=delete_vals
+    )
 
 
 def _normalize_text(value: Any) -> str:
@@ -288,6 +318,58 @@ def _build_secr_code(
     return f"{type_prefix}{my_two}{program_clean}{phase}_{int(secr_sequence)}"
 
 
+
+# ---------------------------------------------------------------------------
+# Optional identity overrides (used by the SECR Database generation workflow)
+# ---------------------------------------------------------------------------
+
+def _apply_identity_overrides(
+    ws_summary,
+    m_code: str,
+    c10_value: str,
+    c11_value: str,
+    f10_value: str,
+    c12_value: str,
+    secr_number_override: str,
+    summary_overrides: Optional[Dict[str, Any]],
+) -> Tuple[str, str, str, str, str]:
+    """Let a caller supply the SECR number and Summary scope cells directly.
+
+    Both default to empty/``None``, in which case the values parsed from the DEF
+    filename are used exactly as before — existing callers are unaffected. The
+    SECR Database workflow passes validated metadata and a transactionally
+    reserved number instead, so the workbook records what was actually resolved
+    rather than whatever the filename happened to encode.
+    """
+    if secr_number_override:
+        m_code = secr_number_override
+        ws_summary["I2"] = m_code
+        ws_summary["C8"] = m_code
+
+    if summary_overrides:
+        mapping = {
+            "C10": ("model_year", lambda v: int(v) if str(v).isdigit() else v),
+            "C11": ("program", lambda v: v),
+            "F10": ("phase", lambda v: v),
+            "C12": ("harness_family", lambda v: v),
+        }
+        for cell, (key, cast) in mapping.items():
+            value = summary_overrides.get(key)
+            if value in (None, ""):
+                continue
+            ws_summary[cell] = cast(value)
+            if cell == "C10":
+                c10_value = str(value)
+            elif cell == "C11":
+                c11_value = str(value)
+            elif cell == "F10":
+                f10_value = str(value)
+            else:
+                c12_value = str(value)
+
+    return m_code, c10_value, c11_value, f10_value, c12_value
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -309,6 +391,9 @@ def create_secr_bytes(
     secr_model_year: str = "",
     secr_program: str = "",
     secr_phase: str = "",
+    secr_number_override: str = "",
+    filename_override: str = "",
+    summary_overrides: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bytes, Dict[str, Any]]:
     """Create a SECR workbook from DEF compare bytes.
 
@@ -369,6 +454,11 @@ def create_secr_bytes(
     ws_summary["I2"] = m_code
     ws_summary["C8"] = m_code
 
+    m_code, c10_value, c11_value, f10_value, c12_value = _apply_identity_overrides(
+        ws_summary, m_code, c10_value, c11_value, f10_value, c12_value,
+        secr_number_override, summary_overrides,
+    )
+
     # Copy all DEF sheets into the template workbook
     for ws in wb_def.worksheets:
         _copy_sheet(ws, wb_template)
@@ -408,7 +498,7 @@ def create_secr_bytes(
         wb_template.security.lockWindows = False
         wb_template.security.lockRevision = False
 
-    secr_filename = f"{m_code}.xlsx"
+    secr_filename = filename_override or f"{m_code}.xlsx"
 
     buf = io.BytesIO()
     wb_template.save(buf)
@@ -442,6 +532,9 @@ def update_secr_bytes(
     secr_model_year: str = "",
     secr_program: str = "",
     secr_phase: str = "",
+    secr_number_override: str = "",
+    filename_override: str = "",
+    summary_overrides: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bytes, Dict[str, Any]]:
     """Create updated SECR workbook from new DEF and old SECR baseline."""
     if not TEMPLATE_PATH.exists():
@@ -499,6 +592,11 @@ def update_secr_bytes(
     ws_summary["I2"] = m_code
     ws_summary["C8"] = m_code
 
+    m_code, c10_value, c11_value, f10_value, c12_value = _apply_identity_overrides(
+        ws_summary, m_code, c10_value, c11_value, f10_value, c12_value,
+        secr_number_override, summary_overrides,
+    )
+
     for ws in wb_def.worksheets:
         _copy_sheet(ws, wb_template)
     wb_def.close()
@@ -544,7 +642,7 @@ def update_secr_bytes(
         wb_template.security.lockWindows = False
         wb_template.security.lockRevision = False
 
-    secr_filename = f"{m_code}.xlsx"
+    secr_filename = filename_override or f"{m_code}.xlsx"
 
     buf = io.BytesIO()
     wb_template.save(buf)

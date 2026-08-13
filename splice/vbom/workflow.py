@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import os
 import re
-import sys
 import tempfile
 from pathlib import Path
 from typing import Iterable
@@ -66,6 +65,7 @@ def _style_worksheet(worksheet):
 
 def format_workbook_output(path: str | os.PathLike[str]) -> str:
     from openpyxl import load_workbook
+    from openpyxl.styles import PatternFill
 
     workbook = load_workbook(path)
     for worksheet in workbook.worksheets:
@@ -95,10 +95,17 @@ def format_workbook_output(path: str | os.PathLike[str]) -> str:
 def _resolve_vbom_root() -> Path:
     from splice.config import VBOM_ROOT_CANDIDATES
 
+    fallback = None
     for candidate in VBOM_ROOT_CANDIDATES:
         if (candidate / "main_app.py").exists():
-            return candidate
-    return VBOM_ROOT_CANDIDATES[0]
+            if fallback is None:
+                fallback = candidate
+            # Prefer an engine that also ships the review VBA project so the
+            # web flow can build the same macro-enabled review workbook the
+            # desktop app does (older roots lack review_vbaProject.bin).
+            if (candidate / "review_vbaProject.bin").exists():
+                return candidate
+    return fallback or VBOM_ROOT_CANDIDATES[0]
 
 
 def _load_vbom_module():
@@ -183,9 +190,13 @@ def run_vbom_workflow(
 
     selections_df, all_candidates_df, final_bom_df = vbom_main_app.build_outputs(vin_matrix_df, families_for_matching)
 
-    master_path = target_dir / vbom_main_app.MASTER_FILE_NAME
-    vin_matrix_path = target_dir / vbom_main_app.VIN_MATRIX_FILE
-    selections_path = target_dir / vbom_main_app.SELECTIONS_FILE
+    # Program-qualified naming: every output carries the {MY_last2}_{Program}
+    # tag (e.g. 27_RU), matching the DEFE template create_formatted_output emits.
+    my_short = my[-2:] if len(my) >= 2 else my
+    tag = f"{my_short}_{program}"
+    master_path = target_dir / f"Master_Combined_Harness_Complexity_{tag}.xlsx"
+    vin_matrix_path = target_dir / f"VIN_Salescode_matrix_{tag}.xlsx"
+    selections_path = target_dir / f"VIN_to_Harness_Selection_{tag}.xlsx"
 
     used_sheetnames = set()
     with pd.ExcelWriter(master_path, engine="openpyxl") as writer:
@@ -208,17 +219,26 @@ def run_vbom_workflow(
     vbom_main_app.format_workbook_output(str(master_path))
     vbom_main_app.format_workbook_output(str(selections_path))
 
-    template_path = _resolve_vbom_root() / vbom_main_app.TEMPLATE_SOURCE_FILE
-    formatted_template_path = None
-    if template_path.exists():
-        formatted_template_path = vbom_main_app.create_formatted_output(
-            str(template_path),
-            my,
-            program,
-            str(target_dir),
-            selections_df,
-            vin_matrix_df,
-        )
+    # Match the desktop workflow: emit the macro-enabled SE review workbook and
+    # WITHHOLD the DEFE template. The reviewer resolves every flagged selection,
+    # then generates {tag}_VBOM_Template_for_DEFE.xlsx from inside the workbook
+    # via its Generate DEFE Template macro button (Config!B5 carries the name).
+    vbom_root = _resolve_vbom_root()
+    template_path = vbom_root / vbom_main_app.TEMPLATE_SOURCE_FILE
+    vba_project_path = vbom_root / vbom_main_app.REVIEW_VBA_PROJECT_FILE
+    defe_output_name = f"{tag}_VBOM_Template_for_DEFE.xlsx"
+    review_path = target_dir / f"Harness_Selection_Review_{tag}.xlsm"
+    review_df = vbom_main_app.build_selection_review_cases(
+        selections_df, all_candidates_df, families_for_matching
+    )
+    vbom_main_app.create_selection_review_workbook(
+        str(review_path),
+        review_df,
+        selections_df,
+        str(template_path),
+        str(vba_project_path),
+        defe_output_name=defe_output_name,
+    )
 
     metrics_stats = {
         # rows_read combines primary input matrix rows and all harness complexity sheet rows.
@@ -235,6 +255,8 @@ def run_vbom_workflow(
         "master_path": master_path,
         "vin_matrix_path": vin_matrix_path,
         "selections_path": selections_path,
-        "formatted_template_path": formatted_template_path,
+        "review_path": review_path,
+        "review_case_count": int(len(review_df)),
+        "defe_output_name": defe_output_name,
         "metrics_stats": metrics_stats,
     }

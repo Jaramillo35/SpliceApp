@@ -12,15 +12,17 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 from splice.dtx_compare import (
-    generate_dtx_change_report,
     launch_preorder_generation_tool,
     load_dtcr_report,
 )
+from splice.dtx_compare.enhanced_report import generate_enhanced_dtx_report
 from feedback_system import FeedbackStore, render_feedback_widget
 
 
 st.title("DTx Compare Report")
-st.caption("Upload OLD and NEW DTx files to generate an engineering change workbook.")
+st.caption("Upload OLD + NEW DTx files and the DTCR report to generate the engineering change "
+           "workbook — with an implementation-progress dashboard, DTCR matching, Yellow "
+           "Connectors, and the PreOrder list.")
 
 feedback_store = FeedbackStore()
 render_feedback_widget(workflow="DTx Compare Report", area="DTx Compare Report", store=feedback_store, key_prefix="dtx_feedback")
@@ -32,14 +34,15 @@ with col_new:
     new_file = st.file_uploader("NEW DTx report", type=["xlsx", "xls", "xlsm"], key="dtx_new_file")
 with col_dtcr:
     dtcr_file = st.file_uploader(
-        "DTCR report (optional)",
+        "DTCR report (required)",
         type=["xlsx", "xls", "xlsm"],
         key="dtx_dtcr_file",
-        help="If provided, every change is tagged with its DTCR# via the Device Transmittal mapping.",
+        help="Required — every change is tagged with its DTCR#, and the DTCR Matching report "
+             "+ coverage panel are built from it.",
     )
 
-if old_file is None or new_file is None:
-    st.info("Upload both OLD and NEW DTx reports to continue. Optionally add a DTCR report to tag changes with DTCR#.")
+if old_file is None or new_file is None or dtcr_file is None:
+    st.info("Upload the OLD and NEW DTx reports **and** the DTCR report to continue.")
     st.stop()
 
 st.subheader("PreOrder Generation List")
@@ -47,17 +50,18 @@ st.caption("Generate the PreOrder workbook directly for the selected DTx reports
 
 if st.button("Generate PreOrder Generation List", type="secondary"):
     try:
-        temp_dir = Path(tempfile.mkdtemp(prefix="dtx_preorder_", dir=tempfile.gettempdir()))
-        old_temp_path = temp_dir / old_file.name
-        new_temp_path = temp_dir / new_file.name
-        old_temp_path.write_bytes(old_file.getvalue())
-        new_temp_path.write_bytes(new_file.getvalue())
+        with tempfile.TemporaryDirectory(prefix="dtx_preorder_") as temp_dir:
+            temp_root = Path(temp_dir)
+            old_temp_path = temp_root / Path(old_file.name).name
+            new_temp_path = temp_root / Path(new_file.name).name
+            old_temp_path.write_bytes(old_file.getvalue())
+            new_temp_path.write_bytes(new_file.getvalue())
 
-        with st.spinner("Generating PreOrder workbook..."):
-            preorder_result = launch_preorder_generation_tool(
-                old_file_path=old_temp_path,
-                new_file_path=new_temp_path,
-            )
+            with st.spinner("Generating PreOrder workbook..."):
+                preorder_result = launch_preorder_generation_tool(
+                    old_file_path=old_temp_path,
+                    new_file_path=new_temp_path,
+                )
         st.session_state["preorder_generation_result"] = preorder_result
         st.success("PreOrder workbook generated.")
     except Exception as exc:
@@ -65,7 +69,7 @@ if st.button("Generate PreOrder Generation List", type="secondary"):
 
 preorder_result = st.session_state.get("preorder_generation_result")
 if preorder_result is not None:
-    st.dataframe(preorder_result["summary_df"], use_container_width=True)
+    st.dataframe(preorder_result["summary_df"], width="stretch")
     st.download_button(
         label="Download PreOrder Workbook",
         data=preorder_result["output_excel_bytes"],
@@ -75,11 +79,9 @@ if preorder_result is not None:
 
 if st.button("Generate Compare Report", type="primary"):
     try:
-        dtcr_df = None
-        if dtcr_file is not None:
-            dtcr_df = load_dtcr_report(dtcr_file.getvalue(), dtcr_file.name)
+        dtcr_df = load_dtcr_report(dtcr_file.getvalue(), dtcr_file.name)
         with st.spinner("Comparing reports and building workbook..."):
-            result = generate_dtx_change_report(
+            result = generate_enhanced_dtx_report(
                 old_file_bytes=old_file.getvalue(),
                 new_file_bytes=new_file.getvalue(),
                 old_file_name=old_file.name,
@@ -117,7 +119,7 @@ family_summary_df = result.get("harness_family_summary_df")
 all_changes_df = result.get("all_changes_df")
 
 if family_summary_df is not None and not family_summary_df.empty:
-    st.dataframe(family_summary_df, use_container_width=True)
+    st.dataframe(family_summary_df, width="stretch")
     st.bar_chart(
         family_summary_df.set_index("Harness Family")[
             ["Added Circuits", "Removed Circuits", "Modified Circuits"]
@@ -145,19 +147,19 @@ if all_changes_df is not None and not all_changes_df.empty:
     if type_filter:
         filtered = filtered[filtered["Change Type"].isin(type_filter)]
     st.caption(f"{len(filtered):,} of {len(all_changes_df):,} changes shown")
-    st.dataframe(filtered, use_container_width=True)
+    st.dataframe(filtered, width="stretch")
 
 st.subheader("Preview Tables")
 with st.expander("Added Circuits", expanded=False):
-    st.dataframe(result["added_circuits_df"], use_container_width=True)
+    st.dataframe(result["added_circuits_df"], width="stretch")
 with st.expander("Removed Circuits", expanded=False):
-    st.dataframe(result["removed_circuits_df"], use_container_width=True)
+    st.dataframe(result["removed_circuits_df"], width="stretch")
 with st.expander("Modified Circuits", expanded=False):
-    st.dataframe(result["modified_circuits_df"], use_container_width=True)
+    st.dataframe(result["modified_circuits_df"], width="stretch")
 with st.expander("CNUM Summary", expanded=False):
-    st.dataframe(result["cnum_summary_df"], use_container_width=True)
+    st.dataframe(result["cnum_summary_df"], width="stretch")
 with st.expander("Field Change Frequency", expanded=False):
-    st.dataframe(result["field_change_frequency_df"], use_container_width=True)
+    st.dataframe(result["field_change_frequency_df"], width="stretch")
 
 download_col1, download_col2 = st.columns(2)
 with download_col1:
@@ -182,4 +184,4 @@ if dtcr_matching_bytes is not None:
         if matching_df is not None:
             matched = int((matching_df["Match Method"] != "No Match").sum())
             st.caption(f"{matched} of {len(matching_df)} DTCRs matched to a CNUM / Harness Family")
-            st.dataframe(matching_df, use_container_width=True)
+            st.dataframe(matching_df, width="stretch")

@@ -151,7 +151,7 @@ def _step_dtcr_matching() -> None:
         c1.metric("DTCR records", len(mapping_df))
         c2.metric("Matched", int(matched))
         c3.metric("No match", int((mapping_df["Match Method"] == "No Match").sum()))
-        st.dataframe(mapping_df, use_container_width=True, hide_index=True)
+        st.dataframe(mapping_df, width="stretch", hide_index=True)
         if mapping_bytes is not None:
             st.download_button(
                 "Download DTCR Matching Report (.xlsx)",
@@ -351,7 +351,7 @@ def _step_enrich() -> None:
         st.session_state[_k("enriched_filename")] = meta.get("filename", filename)
         st.session_state[_k("enriched_summary")] = summary_df
         st.success(f"Enriched using harness family: {family}")
-        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        st.dataframe(summary_df, width="stretch", hide_index=True)
 
     enriched_bytes = st.session_state.get(_k("enriched_bytes"))
     if enriched_bytes:
@@ -499,7 +499,7 @@ def _step_database() -> None:
         except Exception as exc:  # noqa: BLE001
             st.warning(f"Search failed: {exc}")
 
-    st.dataframe(pd.DataFrame(shown), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(shown), width="stretch", hide_index=True)
 
     if shown:
         label_to_id = {
@@ -511,7 +511,7 @@ def _step_database() -> None:
             try:
                 chain = secr_db.get_revision_chain(label_to_id[picked])
                 st.write("Revision chain (oldest first):")
-                st.dataframe(pd.DataFrame(chain), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(chain), width="stretch", hide_index=True)
             except Exception as exc:  # noqa: BLE001
                 st.warning(f"Could not load revision chain: {exc}")
 
@@ -528,7 +528,14 @@ def _save_secr_to_db(
     change_type: str,
     parent_secr_number: str | None = None,
 ) -> None:
-    """Persist a SECR record; surface a warning but never block on failure."""
+    """Persist a SECR record; surface a warning but never block on failure.
+
+    The generated workbook goes straight into the database — its metadata, its
+    change records, and the workbook itself for provenance — so a SECR created
+    here never has to be exported and re-imported to become searchable.
+    Re-generating the same SECR # + version replaces the stored record, which
+    is why this path uses ``replace`` where bulk import uses ``skip``.
+    """
     try:
         record = secr_db.record_from_workbook(
             secr_bytes,
@@ -538,6 +545,23 @@ def _save_secr_to_db(
             change_type=change_type,
             parent_secr_number=parent_secr_number,
         )
-        secr_db.save_secr(record)
+        secr_id = secr_db.save_secr(
+            record,
+            on_conflict=secr_db.CONFLICT_REPLACE,
+            source_bytes=secr_bytes,
+        )
     except Exception as exc:  # noqa: BLE001
         st.warning(f"SECR was generated, but saving to the database failed: {exc}")
+        return
+
+    change_count = len(record.get("changes", []))
+    st.caption(
+        f"Saved to the SECR database as record #{secr_id} "
+        f"({change_count} change record(s)) — searchable on the "
+        "**SECR Database** page."
+    )
+    warnings = [w for w in (record.get("parse_warnings") or "").split("\n") if w]
+    if warnings:
+        with st.expander(f"{len(warnings)} data-quality note(s) on this SECR"):
+            for warning in warnings:
+                st.write(f"- {warning}")

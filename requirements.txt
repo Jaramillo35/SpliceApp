@@ -12,3 +12,9 @@ openpyxl==3.1.5
 xlsxwriter==3.2.9
 sympy==1.14.0
 xlrd==2.0.2
+
+# Streamlit pulls these in transitively, but the SECR Database page imports
+# altair directly (the change-explorer charts) and the frozen build needs
+# pyarrow for st.dataframe, so both are pinned rather than left to resolution.
+altair==6.1.0
+pyarrow==20.0.0
