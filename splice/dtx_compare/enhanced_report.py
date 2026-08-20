@@ -110,6 +110,9 @@ def _write_workbook(old_name: str, new_name: str, results: dict) -> bytes:
     families = sorted(f for f in all_changes["Harness Family"].dropna().unique() if str(f).strip()) \
         if not all_changes.empty else []
 
+    dtcr_matching_df = results.get("dtcr_matching_df")
+    dtcr_row_count = int(len(dtcr_matching_df)) if isinstance(dtcr_matching_df, pd.DataFrame) else 0
+
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
         wb = writer.book
@@ -117,11 +120,12 @@ def _write_workbook(old_name: str, new_name: str, results: dict) -> bytes:
                            "subject": f"{old_name} vs {new_name}"})
         fmt = _formats(wb)
 
-        # Sheets are referenced by the dashboard's formulas by name, so order is free.
-        _write_all_changes(writer, wb, fmt, all_changes)
+        # Sheet order (cross-sheet formulas resolve by name, so this is purely presentation):
+        # Dashboard, DTCR Matching, Yellow Connectors, All Changes, then the detail tables.
         _write_dashboard(writer, wb, fmt, results, families, old_name, new_name)
         write_table(writer, "DTCR Matching", results["dtcr_matching_df"], wb, fmt)
         write_table(writer, "Yellow Connectors", results["yellow_connectors_df"], wb, fmt)
+        _write_all_changes(writer, wb, fmt, all_changes, dtcr_row_count)
         write_table(writer, "PreOrder List", results["preorder_summary_df"], wb, fmt)
         write_table(writer, "Harness Family Summary", results["harness_family_summary_df"], wb, fmt)
         for title, key in (("Added CNUMs", "added_cnums_df"), ("Removed CNUMs", "removed_cnums_df"),
@@ -148,6 +152,7 @@ def _formats(wb) -> dict:
         "num": wb.add_format({"border": 1, "num_format": "0"}),
         "pct": wb.add_format({"border": 1, "num_format": "0.0%"}),
         "sel": wb.add_format({"border": 1, "bold": True, "bg_color": "#FFF2CC"}),
+        "check": wb.add_format({"border": 1, "align": "center", "bg_color": "#FFF2CC"}),
         "label": wb.add_format({"bold": True}),
         "done": wb.add_format({"bg_color": _IMPL_ROW_FILL["Done"]}),
         "prog": wb.add_format({"bg_color": _IMPL_ROW_FILL["In Progress"]}),
@@ -156,11 +161,17 @@ def _formats(wb) -> dict:
 
 
 # --------------------------------------------------------------------------- All Changes (+ Status)
-def _write_all_changes(writer, wb, fmt, all_changes: pd.DataFrame) -> None:
-    """All Changes with a Status column (before DTCR#), a dropdown and status row-colors."""
+def _write_all_changes(writer, wb, fmt, all_changes: pd.DataFrame, dtcr_row_count: int = 0) -> None:
+    """All Changes with a Status column (before DTCR#), a dropdown and status row-colors.
+
+    ``DTCR#`` is a live formula that pulls from the DTCR Matching sheet by CNUM, so when the
+    SE fills a CNUM/Harness Family into a previously-unmatched DTCR Matching row the DTCR
+    number flows here automatically — comma-joined when several DTCRs share one CNUM.
+    """
     df = all_changes.copy()
     if "Status" not in df.columns:
         df.insert(0, "Status", "")                     # Status is the first column, before DTCR#
+    dtcr_vals = [normalize_value(v) for v in df["DTCR#"].tolist()] if "DTCR#" in df.columns else []
     ncols = df.shape[1]
     nrows = df.shape[0]
     df.to_excel(writer, sheet_name="All Changes", index=False)
@@ -182,47 +193,82 @@ def _write_all_changes(writer, wb, fmt, all_changes: pd.DataFrame) -> None:
             "type": "formula", "criteria": f'=$A2="{status}"',
             "format": wb.add_format({"bg_color": _IMPL_ROW_FILL[status]})})
 
+    # DTCR# flows live from the DTCR Matching sheet by CNUM. Both sides are padded with the
+    # ", " delimiter so a single CNUM matches on a token boundary even when a DTCR Matching
+    # row lists several comma-separated CNUMs (e.g. "D3834A, D3834B"); TEXTJOIN comma-joins
+    # every DTCR whose CNUM list contains this row's CNUM.
+    if nrows and dtcr_row_count:
+        end = dtcr_row_count + 1                                    # DTCR Matching data ends here
+        m_cnum = f"'DTCR Matching'!$I$2:$I${end}"                   # DTCR Matching CNUM column
+        m_num = f"'DTCR Matching'!$A$2:$A${end}"                    # DTCR Matching DTCR# column
+        for i in range(nrows):
+            r = i + 2                                               # Excel data row (CNUM in col H)
+            # TEXTJOIN is a post-2007 "future function": xlsxwriter does not expand it for array
+            # formulas, so it must carry the _xlfn. prefix or Excel shows #NAME?.
+            formula = (
+                f'=IF($H{r}="","",'
+                f'_xlfn.TEXTJOIN(", ",TRUE,IF(ISNUMBER(SEARCH(", "&$H{r}&", ",", "&{m_cnum}&", ")),'
+                f'{m_num},"")))'
+            )
+            cached = dtcr_vals[i] if i < len(dtcr_vals) else ""
+            ws.write_array_formula(i + 1, 1, i + 1, 1, formula, None, cached)
+
 
 # --------------------------------------------------------------------------- Dashboard
 def _write_dashboard(writer, wb, fmt, results, families, old_name, new_name) -> None:
+    """Three clearly separated panels: overall progress (scoped to the SE's ticked harnesses),
+    a by-family breakdown with a "My Harnesses" checkbox column, and static DTCR coverage."""
     ws = wb.add_worksheet("Dashboard")
     writer.sheets["Dashboard"] = ws
     ws.hide_gridlines(2)
-    for col, w in (("A", 26), ("B", 12), ("C", 13), ("D", 13), ("E", 13), ("F", 3), ("G", 22), ("H", 12)):
+    for col, w in (("A", 22), ("B", 30), ("C", 13), ("D", 13), ("E", 13), ("F", 13), ("G", 3)):
         ws.set_column(f"{col}:{col}", w)
 
-    ws.merge_range("A1:H1", "DTx Engineering Change Report", fmt["title"])
+    ws.merge_range("A1:F1", "DTx Engineering Change Report", fmt["title"])
     ws.write("A2", f"OLD: {old_name}", fmt["meta"])
     ws.write("A3", f"NEW: {new_name}", fmt["meta"])
 
     ST = "'All Changes'!$A:$A"          # Status column
     FAM = "'All Changes'!$C:$C"         # Harness Family column (Status, DTCR#, Harness Family, …)
 
-    # ---- Implementation Progress (harness-selectable, live via COUNTIFS) ----
-    ws.merge_range("A5:E5", "IMPLEMENTATION PROGRESS", fmt["section"])
-    ws.write("A6", "Harness family:", fmt["label"])
-    ws.write("B6", _ALL_FAMILIES, fmt["sel"])
-    # The family list is too long for an inline dropdown (Excel caps at 255 chars), so drive
-    # the dropdown from a hidden range in column R and put the COUNTIFS criterion in Q1.
-    ws.write(0, 17, _ALL_FAMILIES)                                       # R1
-    for i, family in enumerate(families):
-        ws.write(1 + i, 17, family)                                     # R2, R3, …
-    ws.set_column("Q:R", None, None, {"hidden": True})
-    ws.data_validation("B6", {"validate": "list", "source": f"=$R$1:$R${1 + len(families)}"})
-    ws.write_formula("Q1", f'=IF($B$6="{_ALL_FAMILIES}","*",$B$6)')     # criterion helper
-    crit = "$Q$1"
+    n = len(families)
+    # By-family table geometry (defined here so the overall panel can aggregate over it).
+    # ``tbl_hdr`` is a 0-indexed row; ``fam_first``/``fam_last`` are 1-indexed Excel rows.
+    tbl_hdr = 22                        # 0-indexed → Excel row 23 (table header)
+    fam_first = tbl_hdr + 2             # Excel row 24 — first family row (below the header)
+    fam_last = fam_first + n - 1        # Excel row of last family
+    MY = f"$A${fam_first}:$A${fam_last}"        # My-Harnesses checkbox column (TRUE/FALSE)
+    C_DONE = f"$C${fam_first}:$C${fam_last}"
+    C_PROG = f"$D${fam_first}:$D${fam_last}"
+    C_X = f"$E${fam_first}:$E${fam_last}"
+    C_NOT = f"$F${fam_first}:$F${fam_last}"
 
-    ws.write("A8", "Status", fmt["subheader"]); ws.write("B8", "Count", fmt["subheader"])
-    rows = [
-        ("Done",        f'=COUNTIFS({ST},"Done",{FAM},{crit})',        fmt["done"]),
-        ("In Progress", f'=COUNTIFS({ST},"In Progress",{FAM},{crit})', fmt["prog"]),
-        ("Needs Review (X)", f'=COUNTIFS({ST},"X",{FAM},{crit})',      fmt["x"]),
-        ("Not started", "=MAX(0,$B$12-$B$9-$B$10-$B$11)",              fmt["default"]),
-    ]
+    # ---- Panel 1: overall implementation progress, scoped to the ticked harnesses ----
+    ws.merge_range("A5:F5", "IMPLEMENTATION PROGRESS  —  MY HARNESSES", fmt["section"])
+    ws.write("A6", 'Scoped to the harnesses ticked under "My Harnesses" in the table below.', fmt["meta"])
+
+    ws.write("A8", "Status", fmt["subheader"])
+    ws.write("B8", "Count", fmt["subheader"])
+    ws.write("C8", "% of scope", fmt["subheader"])
+    # Counts sum each family's status tally weighted by its My-Harnesses tick (TRUE→1).
+    if families:
+        rows = [
+            ("Done",             f"=SUMPRODUCT({C_DONE},--({MY}))", fmt["done"]),
+            ("In Progress",      f"=SUMPRODUCT({C_PROG},--({MY}))", fmt["prog"]),
+            ("Needs Review (X)", f"=SUMPRODUCT({C_X},--({MY}))",    fmt["x"]),
+            ("Not started",      f"=SUMPRODUCT({C_NOT},--({MY}))",  fmt["default"]),
+        ]
+    else:
+        rows = [("Done", 0, fmt["done"]), ("In Progress", 0, fmt["prog"]),
+                ("Needs Review (X)", 0, fmt["x"]), ("Not started", 0, fmt["default"])]
     for i, (label, formula, cell_fmt) in enumerate(rows):
         ws.write(8 + i, 0, label, cell_fmt)
-        ws.write_formula(8 + i, 1, formula, fmt["num"])
-    ws.write("A13", "Total relevant", fmt["label"]); ws.write_formula("B13", f"=COUNTIF({FAM},{crit})", fmt["num"])
+        if isinstance(formula, str):
+            ws.write_formula(8 + i, 1, formula, fmt["num"])
+        else:
+            ws.write_number(8 + i, 1, formula, fmt["num"])
+        ws.write_formula(8 + i, 2, f"=IF($B$13=0,0,B{9 + i}/$B$13)", fmt["pct"])
+    ws.write("A13", "Total in scope", fmt["label"]); ws.write_formula("B13", "=SUM($B$9:$B$12)", fmt["num"])
     ws.write("A14", "% complete", fmt["label"]);     ws.write_formula("B14", "=IF($B$13=0,0,$B$9/$B$13)", fmt["pct"])
 
     donut = wb.add_chart({"type": "doughnut"})
@@ -231,42 +277,56 @@ def _write_dashboard(writer, wb, fmt, results, families, old_name, new_name) -> 
         "categories": ["Dashboard", 8, 0, 11, 0],
         "values": ["Dashboard", 8, 1, 11, 1],
         "points": [{"fill": {"color": _IMPL_CHART_COLOR[s]}} for s in ("Done", "In Progress", "X", "Not started")],
+        "data_labels": {"percentage": True, "font": {"size": 9, "bold": True}},
     })
-    donut.set_title({"name": "Progress (selected harness)", "name_font": {"size": 11}})
+    donut.set_title({"name": "Progress — My Harnesses", "name_font": {"size": 11}})
     donut.set_legend({"position": "right"})
-    ws.insert_chart("D6", donut, {"x_scale": 1.0, "y_scale": 1.0})
+    donut.set_hole_size(55)
+    ws.insert_chart("D6", donut, {"x_scale": 1.05, "y_scale": 1.05})
 
-    # ---- Progress by harness family (all families; recomputes as Status changes) ----
-    ws.merge_range("A17:E17", "PROGRESS BY HARNESS FAMILY", fmt["section"])
-    hdr = ["Harness Family", "Done", "In Progress", "Needs Review", "Not started"]
-    for c, h in enumerate(hdr):
-        ws.write(17, c, h, fmt["subheader"])
-    start = 18
+    # ---- Panel 2: progress by harness family (+ My-Harnesses picker) ----
+    ws.merge_range(tbl_hdr - 2, 0, tbl_hdr - 2, 5, "PROGRESS BY HARNESS FAMILY", fmt["section"])
+    ws.write(tbl_hdr - 1, 0, "Tick the harnesses you own to scope Panel 1 to them.", fmt["meta"])
+    for c, h in enumerate(["My Harnesses", "Harness Family", "Done", "In Progress", "Needs Review", "Not started"]):
+        ws.write(tbl_hdr, c, h, fmt["subheader"])
+    # Hidden helper columns (R:U) mirror each status but blank out (NA) unticked harnesses,
+    # so the by-family bar chart plots only the families the SE has claimed.
+    plot_cols = {2: 17, 3: 18, 4: 19, 5: 20}            # visible col -> hidden plot col
     for i, family in enumerate(families):
-        r = start + i
-        fam_cell = f"$A${r + 1}"
-        ws.write(r, 0, family, fmt["default"])
-        ws.write_formula(r, 1, f'=COUNTIFS({ST},"Done",{FAM},{fam_cell})', fmt["num"])
-        ws.write_formula(r, 2, f'=COUNTIFS({ST},"In Progress",{FAM},{fam_cell})', fmt["num"])
-        ws.write_formula(r, 3, f'=COUNTIFS({ST},"X",{FAM},{fam_cell})', fmt["num"])
-        ws.write_formula(r, 4, f'=MAX(0,COUNTIF({FAM},{fam_cell})-B{r + 1}-C{r + 1}-D{r + 1})', fmt["num"])
-    last_fam = start + max(len(families), 1) - 1
+        r = fam_first - 1 + i                            # 0-indexed row for this family
+        excel = r + 1
+        ws.insert_checkbox(r, 0, True, fmt["check"])     # default: every harness is "mine"
+        ws.write(r, 1, family, fmt["default"])
+        ws.write_formula(r, 2, f'=COUNTIFS({ST},"Done",{FAM},$B${excel})', fmt["num"])
+        ws.write_formula(r, 3, f'=COUNTIFS({ST},"In Progress",{FAM},$B${excel})', fmt["num"])
+        ws.write_formula(r, 4, f'=COUNTIFS({ST},"X",{FAM},$B${excel})', fmt["num"])
+        ws.write_formula(r, 5, f'=MAX(0,COUNTIF({FAM},$B${excel})-C{excel}-D{excel}-E{excel})', fmt["num"])
+        for src, dst in plot_cols.items():               # NA() for unticked → no bar drawn
+            src_letter = chr(ord("A") + src)
+            ws.write_formula(r, dst, f'=IF($A${excel},{src_letter}{excel},NA())')
+    ws.set_column("R:U", None, None, {"hidden": True})
+
     if families:
+        # AutoFilter over the picker table lets the SE collapse unticked rows entirely
+        # (charts skip hidden rows), on top of the always-on NA() blanking above.
+        ws.autofilter(tbl_hdr, 0, fam_last - 1, 5)
         bar = wb.add_chart({"type": "bar", "subtype": "stacked"})
-        for col, name in ((1, "Done"), (2, "In Progress"), (3, "Needs Review"), (4, "Not started")):
-            key = {1: "Done", 2: "In Progress", 3: "X", 4: "Not started"}[col]
+        for col, name, key in ((17, "Done", "Done"), (18, "In Progress", "In Progress"),
+                               (19, "Needs Review", "X"), (20, "Not started", "Not started")):
             bar.add_series({
                 "name": name,
-                "categories": ["Dashboard", start, 0, last_fam, 0],
-                "values": ["Dashboard", start, col, last_fam, col],
+                "categories": ["Dashboard", fam_first - 1, 1, fam_last - 1, 1],
+                "values": ["Dashboard", fam_first - 1, col, fam_last - 1, col],
                 "fill": {"color": _IMPL_CHART_COLOR[key]},
             })
-        bar.set_title({"name": "Progress by harness family", "name_font": {"size": 11}})
+        bar.set_title({"name": "Progress by harness family (My Harnesses)", "name_font": {"size": 11}})
         bar.set_legend({"position": "bottom"})
-        bar.set_y_axis({"reverse": True})
-        ws.insert_chart("G17", bar, {"x_scale": 1.6, "y_scale": 1.3})
+        bar.set_y_axis({"reverse": True, "num_font": {"size": 8}})
+        # Grow the plot so every one of the (up to ~34) family names stays readable.
+        y_scale = min(5.0, max(1.4, 0.11 * n + 0.6))
+        ws.insert_chart(tbl_hdr, 7, bar, {"x_scale": 1.6, "y_scale": y_scale})
 
-    # ---- DTCR coverage (static — fixed at generation) ----
+    # ---- Panel 3: DTCR coverage (static — fixed at generation) ----
     dtcr = results["dtcr_matching_df"]
     method = dtcr["Match Method"].astype(str) if "Match Method" in dtcr.columns else pd.Series([], dtype=str)
     cov = [
@@ -274,8 +334,8 @@ def _write_dashboard(writer, wb, fmt, results, families, old_name, new_name) -> 
         ("Matched — Device Name", int((method == "Device Name").sum())),
         ("Unmatched", int((method == "No Match").sum())),
     ]
-    base = last_fam + 3
-    ws.merge_range(base, 0, base, 4, "DTCR COVERAGE", fmt["section"])
+    base = fam_last + 3
+    ws.merge_range(base, 0, base, 5, "DTCR COVERAGE", fmt["section"])
     ws.write(base + 1, 0, "Match method", fmt["subheader"]); ws.write(base + 1, 1, "DTCRs", fmt["subheader"])
     for i, (label, value) in enumerate(cov):
         ws.write(base + 2 + i, 0, label, fmt["default"])
@@ -287,6 +347,7 @@ def _write_dashboard(writer, wb, fmt, results, families, old_name, new_name) -> 
         "categories": ["Dashboard", base + 2, 0, base + 4, 0],
         "values": ["Dashboard", base + 2, 1, base + 4, 1],
         "points": [{"fill": {"color": c}} for c in ("#2E7D32", "#58A6FF", "#C00000")],
+        "data_labels": {"percentage": True, "font": {"size": 9, "bold": True}},
     })
     pie.set_title({"name": "DTCR match coverage", "name_font": {"size": 11}})
     pie.set_legend({"position": "right"})

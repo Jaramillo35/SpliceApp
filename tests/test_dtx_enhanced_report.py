@@ -56,14 +56,23 @@ def test_enhanced_workbook_sheets_status_and_dashboard(_real):
     # the WEAVE deliverables are all present as sheets
     for sheet in ("Dashboard", "All Changes", "DTCR Matching", "Yellow Connectors", "PreOrder List"):
         assert sheet in wb.sheetnames
+    # requested sheet order: Dashboard, DTCR Matching, Yellow Connectors, All Changes, …
+    order = wb.sheetnames
+    assert order[0] == "Dashboard"
+    assert order.index("DTCR Matching") < order.index("Yellow Connectors") < order.index("All Changes")
 
     ac = wb["All Changes"]
     assert ac.cell(1, 1).value == "Status" and ac.cell(1, 2).value == "DTCR#"   # Status before DTCR#
     assert len(ac.data_validations.dataValidation) == 1                          # the Status dropdown
     assert len(ac.conditional_formatting._cf_rules) >= 1                         # status row-coloring
+    # DTCR# is a live array formula flowing from the DTCR Matching sheet by CNUM
+    dtcr_cell = ac.cell(2, 2).value
+    dtcr_formula = getattr(dtcr_cell, "text", dtcr_cell)          # openpyxl wraps array formulas
+    assert "DTCR Matching" in str(dtcr_formula) and "TEXTJOIN" in str(dtcr_formula)
 
     db = wb["Dashboard"]
-    assert db["B6"].value == "(All families)"                                     # harness selector
-    assert db["B9"].value.startswith("=COUNTIFS")                                 # live Done count
+    assert db["A23"].value == "My Harnesses" and db["B23"].value == "Harness Family"   # picker column
+    assert db["B9"].value.startswith("=SUMPRODUCT")                               # scoped Done count
     assert db["B14"].value.startswith("=IF")                                      # % complete
+    assert db["A12"].value == "Not started"                                       # Not-started row present
     assert len(db._charts) == 3                                                   # progress donut, by-family bar, DTCR pie
