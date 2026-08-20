@@ -1,0 +1,6 @@
+# splice-api service dependencies (in addition to the Splice engine requirements).
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+# httpx is used by fastapi.testclient for the contract tests.
+httpx>=0.27

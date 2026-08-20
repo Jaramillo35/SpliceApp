@@ -1,0 +1,19 @@
+# Keep the build context small and reproducible.
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+.venv/
+venv/
+.git/
+.gitignore
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+tests/
+data/
+dist/
+build/
+*.log
+.DS_Store
+# UI-only assets not needed by the API image
+pages/

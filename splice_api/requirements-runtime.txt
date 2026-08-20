@@ -1,0 +1,11 @@
+# Lean runtime deps for the splice-api container image.
+# Engine needs (no Streamlit/altair/pyarrow — those are UI-only; the API path imports
+# streamlit lazily/optionally and runs without it, verified) + the API server.
+pandas==3.0.3
+openpyxl==3.1.5
+xlsxwriter==3.2.9
+xlrd==2.0.2
+sympy==1.14.0
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9

@@ -1,0 +1,51 @@
+# Dev stack for the harness platform.
+#   docker compose up --build            → starts splice-api only
+#   docker compose --profile ai up       → also starts Ollama + Weaviate (Phase 5 scaffold)
+name: harness-platform
+
+services:
+  splice-api:
+    build:
+      context: .
+      dockerfile: splice_api/Dockerfile
+    image: harness-platform/splice-api:0.1.0
+    container_name: splice-api
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=2).status==200 else 1)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # --- Optional AI stack (Phase 5) — present as scaffold, NOT yet wired to the API. ---
+  # Gated behind the "ai" profile so the default `up` does not start them.
+  ollama:
+    profiles: ["ai"]
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+  weaviate:
+    profiles: ["ai"]
+    image: cr.weaviate.io/semitechnologies/weaviate:1.27.0
+    container_name: weaviate
+    ports:
+      - "8080:8080"
+    environment:
+      QUERY_DEFAULTS_LIMIT: "25"
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+    volumes:
+      - weaviate:/var/lib/weaviate
+    restart: unless-stopped
+
+volumes:
+  ollama:
+  weaviate:
