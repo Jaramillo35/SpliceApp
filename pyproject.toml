@@ -32,4 +32,13 @@ packages = [
     "splice.splice_gen",
     "splice.dtx_compare",
     "splice.vbom",
+    "splice_api",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# FastAPI's DI idiom uses callable defaults — File(...), Depends(...), Query(...) — by design.
+extend-ignore = ["B008"]

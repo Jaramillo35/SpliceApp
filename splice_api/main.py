@@ -27,9 +27,9 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from splice.dtx_compare import launch_preorder_generation_tool, load_dtcr_report  # noqa: E402
-from splice.dtx_compare.engine import generate_dtcr_matching_report  # noqa: E402
-from splice.dtx_compare.enhanced_report import (  # noqa: E402
+from splice.dtx_compare import launch_preorder_generation_tool, load_dtcr_report
+from splice.dtx_compare.engine import generate_dtcr_matching_report
+from splice.dtx_compare.enhanced_report import (
     DTCRRequiredError,
     generate_enhanced_dtx_report,
 )
@@ -124,7 +124,7 @@ async def dtx_compare_summary(
     if fam_df is not None and "Harness Family" in getattr(fam_df, "columns", []):
         families = sorted(fam_df["Harness Family"].dropna().astype(str).unique().tolist())
     dm = r.get("dtcr_matching_df")
-    dtcr_total = int(len(dm)) if dm is not None else 0
+    dtcr_total = len(dm) if dm is not None else 0
     dtcr_matched = (
         int((dm["Match Method"] != "No Match").sum())
         if dm is not None and "Match Method" in dm.columns else 0
