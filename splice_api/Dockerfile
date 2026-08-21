@@ -23,6 +23,8 @@ COPY --from=builder /opt/venv /opt/venv
 # Only what the service needs: the engines and the API layer (no UIs, tests, or data).
 COPY splice ./splice
 COPY splice_api ./splice_api
+# The HRN chart engine's default supplier list (name -> prefix mapping).
+COPY ["assets/DEF Supplier Codes.xlsx", "./assets/"]
 
 USER appuser
 EXPOSE 8000

@@ -160,6 +160,39 @@ async def dtcr_match(
     return _xlsx_response(data, r.get("dtcr_matching_file_name", "DTCR_Matching_Report.xlsx"))
 
 
+@app.post("/hrn/chart", tags=["hrn"], summary="HRN + CMP chart workbook (.xlsx)")
+async def hrn_chart(
+    hrn: UploadFile = File(..., description=".hrn circuit file"),
+    matrix: UploadFile = File(..., description="harness matrix .csv (semicolon-delimited)"),
+    cmp: UploadFile | None = File(None, description="optional .cmp connector map"),
+    supplier: UploadFile | None = File(
+        None, description="optional supplier list override (Excel/CSV)"),
+) -> StreamingResponse:
+    """Chart workbook named {HarnessFamily}_{ModelYear}{Program}_Chart_{MMDDYYYY}
+    (fields extracted from the HRN file name; date = day of the run). Diagnostic
+    counts come back in X-Unmatched-Connectors / X-Invalid-Prefixes headers."""
+    from splice.hrncmp.engine import build_chart, load_supplier_map
+
+    hb, hn = await _read(hrn)
+    mb, _ = await _read(matrix)
+    cb = (await _read(cmp))[0] if cmp is not None and cmp.filename else None
+    supplier_map = None
+    if supplier is not None and supplier.filename:
+        sb, sn = await _read(supplier)
+        supplier_map = load_supplier_map(sb)
+        if not supplier_map:
+            raise HTTPException(
+                status_code=400, detail=f"Unreadable supplier list: {sn}")
+    try:
+        r = build_chart(hn, hb, mb, cb, supplier_map=supplier_map)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"HRN chart failed: {exc}") from exc
+    response = _xlsx_response(r.workbook, r.filename)
+    response.headers["X-Unmatched-Connectors"] = str(len(r.unmatched))
+    response.headers["X-Invalid-Prefixes"] = str(len(r.invalid_prefixes))
+    return response
+
+
 @app.post("/preorder", tags=["preorder"], summary="PreOrder generation workbook (.xlsx)")
 async def preorder(
     old: UploadFile = File(...), new: UploadFile = File(...),

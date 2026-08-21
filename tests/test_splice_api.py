@@ -72,3 +72,38 @@ def test_dtcr_match_returns_xlsx():
 def test_preorder_returns_xlsx():
     r = client.post("/preorder", files=_uploads(["old", "new"]))
     assert r.status_code == 200 and r.content[:2] == b"PK"
+
+
+# --------------------------------------------------------------------------- /hrn/chart
+
+def _hrn_synthetic():
+    def row(ckt, frm, to, sales):
+        f = [''] * 26
+        f[0], f[2], f[5], f[12], f[14], f[24] = ckt, frm, to, 'FAM', sales, 'POWER'
+        return ','.join(f)
+    hrn = '\n'.join([row('CKT001', 'D456', 'X100', 'S1')]).encode()
+    csv = b"HARNESS;S1\nHRN-A;X\n"
+    cmp = b"D456,,TE CONNECTIVITY,PN-111\nX100,,YAZAKI,PN-333\n"
+    return hrn, csv, cmp
+
+
+def test_hrn_chart_returns_named_xlsx():
+    from datetime import datetime
+    hrn, csv, cmp = _hrn_synthetic()
+    name = "68605261AA_2028DJ2P_X1_A_07_07_26_14_14_45_EC_MIRROR_08-07-2026.hrn"
+    r = client.post("/hrn/chart", files={
+        "hrn": (name, hrn, "text/plain"),
+        "matrix": ("m.csv", csv, "text/csv"),
+        "cmp": ("c.cmp", cmp, "text/plain"),
+    })
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == XLSX
+    today = datetime.now().strftime("%m%d%Y")
+    assert r.headers["X-Output-Filename"] == f"EC_MIRROR_2028DJ_Chart_{today}.xlsx"
+    assert r.headers["X-Unmatched-Connectors"] == "0"
+
+
+def test_hrn_chart_missing_matrix_is_422():
+    hrn, _, _ = _hrn_synthetic()
+    r = client.post("/hrn/chart", files={"hrn": ("a.hrn", hrn, "text/plain")})
+    assert r.status_code == 422
