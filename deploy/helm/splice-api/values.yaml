@@ -1,0 +1,58 @@
+# Default configuration for the splice-api chart. Override with -f myvalues.yaml or --set.
+
+replicaCount: 1
+
+image:
+  repository: splice-api
+  tag: local
+  # IfNotPresent so kind uses the image loaded via `kind load docker-image`,
+  # rather than trying to pull `splice-api:local` from a registry.
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80          # the Service port
+  # container port is `containerPort` below; the Service targets it by name ("http").
+
+containerPort: 8000
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# Pod- and container-level hardening (mirrors the non-root Docker image; ADR-0004 defensive posture).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# /tmp must stay writable (the /preorder endpoint uses tempfiles) even with a read-only root FS.
+tmpDir:
+  enabled: true
+
+probes:
+  path: /health
+
+ingress:
+  enabled: false
+  className: ""
+  host: splice-api.local
+  annotations: {}
+
+serviceAccount:
+  create: true
+  name: ""
+
+nameOverride: ""
+fullnameOverride: ""

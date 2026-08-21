@@ -1,0 +1,18 @@
+splice-api ({{ .Chart.AppVersion }}) is deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Access it with a port-forward (simplest on kind):
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "splice-api.fullname" . }} 8000:{{ .Values.service.port }}
+
+Then in another terminal:
+
+  curl http://localhost:8000/health
+  open  http://localhost:8000/docs
+
+Check the rollout:
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+{{- if .Values.ingress.enabled }}
+
+Ingress is enabled for host "{{ .Values.ingress.host }}" (add it to /etc/hosts pointing at your ingress controller).
+{{- end }}

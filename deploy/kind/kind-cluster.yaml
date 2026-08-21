@@ -1,0 +1,7 @@
+# Minimal single-node kind cluster for the harness platform.
+# Create with:  kind create cluster --config deploy/kind/kind-cluster.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: harness
+nodes:
+  - role: control-plane

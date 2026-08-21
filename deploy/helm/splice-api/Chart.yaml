@@ -1,0 +1,6 @@
+apiVersion: v2
+name: splice-api
+description: The Splice DTx/DTCR FastAPI gateway, packaged for Kubernetes (Phase 4).
+type: application
+version: 0.1.0          # chart version
+appVersion: "0.1.0"     # splice-api app version
