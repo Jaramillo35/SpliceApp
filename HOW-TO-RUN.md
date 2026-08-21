@@ -22,6 +22,11 @@ You do **not** need to know anything technical. Just follow the steps in order.
 
 That's it. There is **no typing of commands**.
 
+> **For the person hosting the tool for the team:** when a new version is
+> announced, double-click **Update** (Windows: `Update (Windows).bat`,
+> Mac: `Update (Mac).command`). It downloads the latest version and restarts
+> the tool in about a minute. All data is kept.
+
 ---
 
 ## PART 1 — One-time setup (do this once)
