@@ -54,7 +54,7 @@ st.markdown(
         <h1 style="margin-bottom: 0.35rem; color: #10273a;">System Engineer Toolkit</h1>
         <p style="margin: 0; color: #2f4b62;">
             Select a workflow to launch wiring splice generation, DTx report comparison,
-            SECR management, or the VBOM risk matrix.
+            the SECR database, or the VBOM risk matrix.
         </p>
     </div>
     """,
@@ -113,19 +113,21 @@ with row2[0]:
     st.markdown(
         """
         <div class="tool-card">
-            <div class="tool-title">SECR Management</div>
+            <div class="tool-title">SECR Database</div>
             <div class="tool-desc">
-                One guided flow from DTCR report matching to an updated SECR: match DTCRs,
-                create a SECR, enrich it, update revisions, and browse the SECR database.
+                A searchable history of engineering changes: import SECR workbooks, create
+                and update SECRs from DEF compares, browse every change, and ask the local
+                assistant about any of it in plain language.
             </div>
-            <span class="tool-badge">DTCR Matching</span>
             <span class="tool-badge">Create / Update</span>
-            <span class="tool-badge">Database</span>
+            <span class="tool-badge">Import</span>
+            <span class="tool-badge">Local AI Assistant</span>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.page_link("pages/4_SECR_Management.py", label="Open SECR Management", icon="🗂️")
+    st.page_link("ui/pages/secr_database.py", label="Open SECR Database", icon="🗄️")
+    st.page_link("ui/pages/secr_assistant.py", label="Ask the Database", icon="💬")
 
 with row2[1]:
     st.markdown(
@@ -144,6 +146,59 @@ with row2[1]:
         unsafe_allow_html=True,
     )
     st.page_link("pages/5_VBOM_Risk_Matrix.py", label="Open VBOM Risk Matrix", icon="🧮")
+
+with st.container(border=True):
+    st.markdown(
+        """
+        <div class="tool-title">Inline Continuity</div>
+        <div class="tool-desc">
+            Validate that circuits continue across harness interfaces. Load a Circuit
+            Summary and the complexity file for each harness in it; every cavity of every
+            inline is decided, and only the exceptions reach you.
+        </div>
+        <div class="tool-badges">
+            <span class="tool-badge">Circuit Summary</span>
+            <span class="tool-badge">Harness Complexity</span>
+            <span class="tool-badge">Findings Workbook</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.page_link("pages/6_Inline_Continuity.py", label="Open Inline Continuity", icon="🔌")
+
+with st.container(border=True):
+    st.markdown(
+        """
+        <div class="tool-title">HRN Chart Builder</div>
+        <div class="tool-desc">
+            Batch-convert HRN circuit files with their harness matrix CSV (and optional
+            CMP connector map) into styled chart workbooks, named
+            {HarnessFamily}_{ModelYear}{Program}_Chart_{date} from the HRN file name.
+        </div>
+        <span class="tool-badge">Batch Upload</span>
+        <span class="tool-badge">Auto-Pairing</span>
+        <span class="tool-badge">Supplier Prefixes</span>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.page_link("ui/pages/hrn_chart.py", label="Open HRN Chart Builder", icon="📈")
+
+with st.container(border=True):
+    st.markdown(
+        """
+        <div class="tool-title">Meeting Transcripts</div>
+        <div class="tool-desc">
+            Record Teams Live Captions into an anonymized markdown transcript — speakers
+            become Speaker 1..N, names are never written to disk — ready to feed an LLM
+            for minutes, action points, and pending items. Capture runs on Windows.
+        </div>
+        <span class="tool-badge">Teams Captions</span>
+        <span class="tool-badge">Anonymized</span>
+        <span class="tool-badge">LLM-ready</span>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.page_link("ui/pages/meeting_transcripts.py", label="Open Meeting Transcripts", icon="🎙️")
 
 with st.container(border=True):
     st.markdown(

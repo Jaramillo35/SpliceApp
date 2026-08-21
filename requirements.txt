@@ -18,3 +18,14 @@ xlrd==2.0.2
 # pyarrow for st.dataframe, so both are pinned rather than left to resolution.
 altair==6.1.0
 pyarrow==20.0.0
+
+# The SECR Database local assistant talks to Ollama over plain HTTP; no SDK,
+# no cloud client.
+requests==2.34.2
+
+# Meeting Transcripts capture reads the Teams Live Captions window through
+# Windows UI Automation. Windows-only by nature; the page degrades to a
+# read-only transcript browser elsewhere. Not pinned exactly because they are
+# never installed in the Linux/macOS environments where the pin set is solved.
+uiautomation>=2.0.18 ; sys_platform == "win32"
+comtypes>=1.2.0 ; sys_platform == "win32"

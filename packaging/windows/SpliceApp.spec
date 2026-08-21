@@ -26,6 +26,7 @@ extra_datas = [
     (str(ROOT / "pages"), "pages"),
     (str(ROOT / "ui"), "ui"),
     (str(ROOT / "splice"), "splice"),
+    (str(ROOT / "secrdb"), "secrdb"),
     (str(ROOT / "assets"), "assets"),
     (str(ROOT / "vbom_legacy"), "vbom_legacy"),
 ]
@@ -56,6 +57,32 @@ hiddenimports = list(
             "splice.secr.identity",
             "splice.secr.importer",
             "splice.secr.parse",
+            # Merged SECR Database vertical (vendored core + local assistant).
+            "secrdb",
+            "secrdb.config",
+            "secrdb.diagnostics",
+            "secrdb.assistant.agent",
+            "secrdb.assistant.grounding",
+            "secrdb.assistant.ollama",
+            "secrdb.assistant.tools",
+            "secrdb.core.dtcr.library",
+            "secrdb.core.dtcr.matching",
+            "secrdb.core.secr.api",
+            "secrdb.core.secr.batch",
+            "secrdb.core.secr.db",
+            "secrdb.core.secr.enrich",
+            "secrdb.core.secr.generation",
+            "secrdb.core.secr.identity",
+            "secrdb.core.secr.importer",
+            "requests",
+            # HRN Chart Builder engine (reached only through a page module).
+            "splice.hrncmp.engine",
+            # Meeting Transcripts: uiautomation loads comtypes.stream
+            # dynamically, so PyInstaller cannot see it statically.
+            "uiautomation",
+            "comtypes",
+            "comtypes.stream",
+            "splice.transcripts.recorder",
         ]
     )
 )

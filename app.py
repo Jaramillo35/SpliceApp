@@ -27,8 +27,12 @@ pages = [
     st.Page("ui/pages/home.py", title="Home", icon="🏠", default=True),
     st.Page("pages/1_Splice_Generation.py", title="Splice Generation", icon="🔌"),
     st.Page("pages/2_DTx_Compare_Report.py", title="DTx Compare Report", icon="📑"),
-    st.Page("pages/4_SECR_Management.py", title="SECR Management", icon="🗂️"),
+    st.Page("ui/pages/secr_database.py", title="SECR Database", icon="🗄️"),
+    st.Page("ui/pages/secr_assistant.py", title="Ask the Database", icon="💬"),
     st.Page("pages/5_VBOM_Risk_Matrix.py", title="VBOM Risk Matrix", icon="🧮"),
+    st.Page("pages/6_Inline_Continuity.py", title="Inline Continuity", icon="🔌"),
+    st.Page("ui/pages/hrn_chart.py", title="HRN Chart Builder", icon="📈"),
+    st.Page("ui/pages/meeting_transcripts.py", title="Meeting Transcripts", icon="🎙️"),
 ]
 
 st.navigation(pages).run()

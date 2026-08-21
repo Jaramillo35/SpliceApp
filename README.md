@@ -5,8 +5,14 @@ Automotive Wiring Automation is a Streamlit application that consolidates multip
 It currently supports:
 - Splice generation from harness complexity and option logic.
 - DTx old-versus-new comparison with change reporting and PreOrder generation.
-- DTCR matching and SECR creation/enrichment.
+- DTCR matching and the SECR database (create, update, import, browse) with a
+  local AI assistant.
 - VBOM risk-matrix workflow orchestration.
+- Inline continuity validation across harness interfaces.
+- HRN + CMP chart building (batch upload, auto-pairing, supplier prefixes) —
+  also exposed by splice-api as `POST /hrn/chart` for Docker/Kubernetes.
+- Meeting transcript capture from Teams Live Captions with speaker
+  anonymization (Windows desktop installs).
 - In-app structured feedback ticketing.
 
 ## Business Problem
