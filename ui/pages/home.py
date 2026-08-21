@@ -1,7 +1,8 @@
 """Home / overview page — tool cards and shared downloads.
 
 Rendered as the default page by the ``st.navigation`` shell in ``app.py``.
-Navigation uses ``st.page_link`` so it participates in the native multipage nav.
+Every tool gets the same card component (title, description, badges, then its
+links/downloads), laid out two per row in declaration order.
 """
 
 from __future__ import annotations
@@ -17,6 +18,9 @@ if str(APP_DIR) not in sys.path:
 
 SPLICE_SAMPLE_INPUT_PATH = APP_DIR / "assets" / "downloads" / "Z913_example_input.xlsx"
 DTCR_EXTENSION_ZIP_PATH = APP_DIR / "assets" / "downloads" / "ispeed-dtcr-downloader.zip"
+TRANSCRIPT_RECORDER_ZIP_PATH = (
+    APP_DIR / "assets" / "downloads" / "teams-transcript-recorder.zip"
+)
 
 st.markdown(
     """
@@ -33,7 +37,7 @@ st.markdown(
             border-radius: 14px;
             padding: 1rem;
             background: #ffffff;
-            min-height: 200px;
+            min-height: 190px;
             box-shadow: 0 8px 16px rgba(26, 43, 60, 0.05);
         }
         .tool-title { font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem; color: #14324a; }
@@ -53,32 +57,31 @@ st.markdown(
     <div class="hero">
         <h1 style="margin-bottom: 0.35rem; color: #10273a;">System Engineer Toolkit</h1>
         <p style="margin: 0; color: #2f4b62;">
-            Select a workflow to launch wiring splice generation, DTx report comparison,
-            the SECR database, or the VBOM risk matrix.
+            One home for the wiring-engineering workflows: splice generation, DTx comparison,
+            the SECR database, VBOM risk matrix, inline continuity, HRN charts, and meeting
+            transcripts.
         </p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-row1 = st.columns(2, gap="large")
 
-with row1[0]:
+def tool_card(title: str, desc: str, badges: list[str]) -> None:
+    badge_html = "".join(f'<span class="tool-badge">{b}</span>' for b in badges)
     st.markdown(
-        """
+        f"""
         <div class="tool-card">
-            <div class="tool-title">Splice Generation</div>
-            <div class="tool-desc">
-                Build harness configurations, generated connections, print matrix, and
-                interactive sales code validation from one Complexity + OptionPerCkt workbook.
-            </div>
-            <span class="tool-badge">Complexity</span>
-            <span class="tool-badge">OptionPerCkt</span>
-            <span class="tool-badge">Output Excel</span>
+            <div class="tool-title">{title}</div>
+            <div class="tool-desc">{desc}</div>
+            {badge_html}
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def splice_generation_extras() -> None:
     st.page_link("pages/1_Splice_Generation.py", label="Open Splice Generation", icon="🔌")
     if SPLICE_SAMPLE_INPUT_PATH.exists():
         st.download_button(
@@ -89,128 +92,69 @@ with row1[0]:
             key="download_splice_example_home",
         )
 
-with row1[1]:
-    st.markdown(
-        """
-        <div class="tool-card">
-            <div class="tool-title">DTx Compare Report</div>
-            <div class="tool-desc">
-                Compare OLD vs NEW DTx reports, review added/removed/modified CNUM and
-                circuits, optionally tag changes with DTCR#, and generate the compare workbook.
-            </div>
-            <span class="tool-badge">OLD vs NEW</span>
-            <span class="tool-badge">Change Log</span>
-            <span class="tool-badge">Dashboard</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+
+def dtx_extras() -> None:
     st.page_link("pages/2_DTx_Compare_Report.py", label="Open DTx Compare Report", icon="📑")
 
-row2 = st.columns(2, gap="large")
 
-with row2[0]:
-    st.markdown(
-        """
-        <div class="tool-card">
-            <div class="tool-title">SECR Database</div>
-            <div class="tool-desc">
-                A searchable history of engineering changes: import SECR workbooks, create
-                and update SECRs from DEF compares, browse every change, and ask the local
-                assistant about any of it in plain language.
-            </div>
-            <span class="tool-badge">Create / Update</span>
-            <span class="tool-badge">Import</span>
-            <span class="tool-badge">Local AI Assistant</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def secr_extras() -> None:
     st.page_link("ui/pages/secr_database.py", label="Open SECR Database", icon="🗄️")
     st.page_link("ui/pages/secr_assistant.py", label="Ask the Database", icon="💬")
 
-with row2[1]:
-    st.markdown(
-        """
-        <div class="tool-card">
-            <div class="tool-title">VBOM Risk Matrix</div>
-            <div class="tool-desc">
-                Upload VBOM input files and generate the same workbook bundle used by the
-                desktop VBOM workflow: master complexity workbook, VIN matrix, and selections.
-            </div>
-            <span class="tool-badge">DoAll / BuildSpec</span>
-            <span class="tool-badge">Harness Complexity</span>
-            <span class="tool-badge">Workbook Bundle</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+
+def vbom_extras() -> None:
     st.page_link("pages/5_VBOM_Risk_Matrix.py", label="Open VBOM Risk Matrix", icon="🧮")
 
-with st.container(border=True):
-    st.markdown(
-        """
-        <div class="tool-title">Inline Continuity</div>
-        <div class="tool-desc">
-            Validate that circuits continue across harness interfaces. Load a Circuit
-            Summary and the complexity file for each harness in it; every cavity of every
-            inline is decided, and only the exceptions reach you.
-        </div>
-        <div class="tool-badges">
-            <span class="tool-badge">Circuit Summary</span>
-            <span class="tool-badge">Harness Complexity</span>
-            <span class="tool-badge">Findings Workbook</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+
+def inline_extras() -> None:
     st.page_link("pages/6_Inline_Continuity.py", label="Open Inline Continuity", icon="🔌")
 
-with st.container(border=True):
-    st.markdown(
-        """
-        <div class="tool-title">HRN Chart Builder</div>
-        <div class="tool-desc">
-            Batch-convert HRN circuit files with their harness matrix CSV (and optional
-            CMP connector map) into styled chart workbooks, named
-            {HarnessFamily}_{ModelYear}{Program}_Chart_{date} from the HRN file name.
-        </div>
-        <span class="tool-badge">Batch Upload</span>
-        <span class="tool-badge">Auto-Pairing</span>
-        <span class="tool-badge">Supplier Prefixes</span>
-        """,
-        unsafe_allow_html=True,
-    )
+
+def hrn_extras() -> None:
     st.page_link("ui/pages/hrn_chart.py", label="Open HRN Chart Builder", icon="📈")
 
-with st.container(border=True):
-    st.markdown(
-        """
-        <div class="tool-title">Meeting Transcripts</div>
-        <div class="tool-desc">
-            Record Teams Live Captions into an anonymized markdown transcript — speakers
-            become Speaker 1..N, names are never written to disk — ready to feed an LLM
-            for minutes, action points, and pending items. Capture runs on Windows.
-        </div>
-        <span class="tool-badge">Teams Captions</span>
-        <span class="tool-badge">Anonymized</span>
-        <span class="tool-badge">LLM-ready</span>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.page_link("ui/pages/meeting_transcripts.py", label="Open Meeting Transcripts", icon="🎙️")
 
-with st.container(border=True):
-    st.markdown(
-        """
-        <div class="tool-title">iSpeed DTCR Downloader</div>
-        <div class="tool-desc">
-            Download the Chrome extension package used to capture iSpeed DTCR search results,
-            attachments, and a DTCR summary CSV in one run.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def transcripts_extras() -> None:
+    st.page_link("ui/pages/meeting_transcripts.py", label="Open Meeting Transcripts", icon="🎙️")
+    if TRANSCRIPT_RECORDER_ZIP_PATH.exists():
+        st.download_button(
+            "Download Standalone Recorder (build kit)",
+            data=TRANSCRIPT_RECORDER_ZIP_PATH.read_bytes(),
+            file_name="teams-transcript-recorder.zip",
+            mime="application/zip",
+            key="download_transcript_recorder_kit",
+        )
+    with st.expander("Build and use the standalone recorder", expanded=False):
+        st.markdown(
+            """
+A lightweight Windows **tray app** with the same anonymized recording as the
+Meeting Transcripts page — for coworkers who don't run Splice.
+
+### Build (once, on any Windows PC with Python 3.11+)
+
+1. Download and unzip the build kit.
+2. Open a command prompt in the unzipped folder.
+3. `pip install -r requirements.txt`
+4. `pyinstaller tray_recorder.spec`
+5. The exe is at `dist\\TeamsTranscriptRecorder.exe` — copy it anywhere and
+   share it; coworkers don't need Python.
+
+### Use
+
+1. Run the exe — a microphone icon appears in the system tray.
+2. In the Teams meeting turn on **Live Captions**
+   (More → Language and speech → Live captions).
+3. Recording starts when captions appear and finishes when they close.
+   Transcripts land in a `Transcripts` folder next to the exe.
+4. Tray menu: **Pause/Resume**, **Open Transcripts**, **Exit**.
+
+Speakers are anonymized to Speaker 1..N — names never reach disk. The full
+`BUILD_WINDOWS.txt` inside the kit has the details.
+            """
+        )
+
+
+def ispeed_extras() -> None:
     if DTCR_EXTENSION_ZIP_PATH.exists():
         st.download_button(
             "Download iSpeed DTCR Downloader",
@@ -224,7 +168,6 @@ with st.container(border=True):
             "Chrome extension package not found. "
             "Expected: assets/downloads/ispeed-dtcr-downloader.zip"
         )
-
     with st.expander("Install and use the extension", expanded=False):
         st.markdown(
             """
@@ -256,3 +199,90 @@ iSpeed can be slow. The extension waits for each detail page and the restored se
 results before continuing.
             """
         )
+
+
+TOOLS = [
+    {
+        "title": "Splice Generation",
+        "desc": (
+            "Build harness configurations, generated connections, print matrix, and "
+            "interactive sales code validation from one Complexity + OptionPerCkt workbook."
+        ),
+        "badges": ["Complexity", "OptionPerCkt", "Output Excel"],
+        "extras": splice_generation_extras,
+    },
+    {
+        "title": "DTx Compare Report",
+        "desc": (
+            "Compare OLD vs NEW DTx reports, review added/removed/modified CNUM and "
+            "circuits, optionally tag changes with DTCR#, and generate the compare workbook."
+        ),
+        "badges": ["OLD vs NEW", "Change Log", "Dashboard"],
+        "extras": dtx_extras,
+    },
+    {
+        "title": "SECR Database",
+        "desc": (
+            "A searchable history of engineering changes: import SECR workbooks, create "
+            "and update SECRs from DEF compares, browse every change, and ask the local "
+            "assistant about any of it in plain language."
+        ),
+        "badges": ["Create / Update", "Import", "Local AI Assistant"],
+        "extras": secr_extras,
+    },
+    {
+        "title": "VBOM Risk Matrix",
+        "desc": (
+            "Upload VBOM input files and generate the same workbook bundle used by the "
+            "desktop VBOM workflow: master complexity workbook, VIN matrix, and selections."
+        ),
+        "badges": ["DoAll / BuildSpec", "Harness Complexity", "Workbook Bundle"],
+        "extras": vbom_extras,
+    },
+    {
+        "title": "Inline Continuity",
+        "desc": (
+            "Validate that circuits continue across harness interfaces. Load a Circuit "
+            "Summary and the complexity file for each harness in it; every cavity of every "
+            "inline is decided, and only the exceptions reach you."
+        ),
+        "badges": ["Circuit Summary", "Harness Complexity", "Findings Workbook"],
+        "extras": inline_extras,
+    },
+    {
+        "title": "HRN Chart Builder",
+        "desc": (
+            "Batch-convert HRN circuit files with their harness matrix CSV (and optional "
+            "CMP connector map) into styled chart workbooks, named "
+            "{HarnessFamily}_{ModelYear}{Program}_Chart_{date} from the HRN file name."
+        ),
+        "badges": ["Batch Upload", "Auto-Pairing", "Supplier Prefixes"],
+        "extras": hrn_extras,
+    },
+    {
+        "title": "Meeting Transcripts",
+        "desc": (
+            "Record Teams Live Captions into an anonymized markdown transcript — speakers "
+            "become Speaker 1..N, names are never written to disk — ready to feed an LLM "
+            "for minutes and action points. Also available as a standalone tray exe."
+        ),
+        "badges": ["Teams Captions", "Anonymized", "LLM-ready"],
+        "extras": transcripts_extras,
+    },
+    {
+        "title": "iSpeed DTCR Downloader",
+        "desc": (
+            "Chrome extension that captures iSpeed DTCR search results, attachments, and "
+            "a DTCR summary CSV in one run. Download it here and load it in Chrome."
+        ),
+        "badges": ["Chrome Extension", "Attachments", "Summary CSV"],
+        "extras": ispeed_extras,
+    },
+]
+
+for i in range(0, len(TOOLS), 2):
+    row = st.columns(2, gap="large")
+    for col, tool in zip(row, TOOLS[i:i + 2]):
+        with col:
+            tool_card(tool["title"], tool["desc"], tool["badges"])
+            tool["extras"]()

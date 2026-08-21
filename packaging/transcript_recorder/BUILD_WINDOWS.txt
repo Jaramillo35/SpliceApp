@@ -1,0 +1,46 @@
+Teams Transcript Recorder — Windows build steps
+===============================================
+
+What it is
+----------
+A small tray app that records Microsoft Teams Live Captions into anonymized
+markdown transcripts (speakers become Speaker 1..N — participant names are
+never written to disk). Same recording logic as the Splice app's Meeting
+Transcripts page, for people who want a lightweight recorder without
+installing Splice.
+
+Build (one time, on any Windows 10/11 PC with Python 3.11+)
+-----------------------------------------------------------
+1. Unzip this folder anywhere (e.g. C:\TranscriptRecorder)
+
+2. Open a command prompt in that folder and install dependencies:
+
+   pip install -r requirements.txt
+
+3. Build:
+
+   pyinstaller tray_recorder.spec
+
+4. The exe is at:
+
+   dist\TeamsTranscriptRecorder.exe
+
+   Copy it anywhere you like (e.g. your Desktop). You can share this exe
+   with coworkers — they do NOT need Python.
+
+Use
+---
+- Run the exe: a microphone icon appears in the system tray.
+- In your Teams meeting turn on Live Captions
+  (More > Language and speech > Live captions).
+- Recording starts automatically when the captions appear and finishes when
+  they close. Transcripts land in a "Transcripts" folder next to the exe.
+- Tray menu: Pause/Resume recording, Open Transcripts, Exit.
+
+Notes
+-----
+- Everything runs on your own PC; nothing is uploaded anywhere.
+- Names spoken mid-sentence ("thanks John") cannot be detected and stay in
+  the text; the transcript header states this.
+- To turn a transcript into meeting minutes, paste it into an LLM with the
+  prompt from the Splice app's Meeting Transcripts page.
