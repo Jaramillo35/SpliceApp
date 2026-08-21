@@ -1,8 +1,10 @@
-# DTx Compare Tool — How to Run It (No Computer Background Needed)
+# System Engineer Toolkit — How to Run It (No Computer Background Needed)
 
-This tool takes your **OLD** DTx report, your **NEW** DTx report, and the **DTCR** report,
-and gives you back one Excel workbook with the engineering-change dashboard, DTCR matching,
-yellow connectors, and the PreOrder list — all in a few clicks.
+This is the full wiring-engineering toolkit in your web browser: Splice Generation,
+DTx Compare (OLD vs NEW with DTCR matching and the PreOrder list), the SECR Database,
+the VBOM Risk Matrix, Inline Continuity checks, and the HRN Chart Builder — all in a
+few clicks. There is also a technical API page at http://localhost:8501 for
+automation; most people never need it.
 
 You do **not** need to know anything technical. Just follow the steps in order.
 
@@ -77,7 +79,7 @@ while it gets everything ready — this is normal, just let it run. Later, it st
 When it's ready, your **web browser opens automatically** to the tool. If it doesn't, open your
 browser and type this address:
 
-> **http://localhost:8000/docs**
+> **http://localhost:8501**
 
 Leave the black window open while you use the tool.
 

@@ -1,8 +1,8 @@
 @echo off
-title DTx Compare Tool
+title System Engineer Toolkit
 cd /d "%~dp0"
 echo ============================================================
-echo   Starting the DTx Compare Tool
+echo   Starting the System Engineer Toolkit
 echo.
 echo   The FIRST time, this takes a few minutes while it prepares
 echo   everything. Later times are much faster.
@@ -26,12 +26,12 @@ if errorlevel 1 (
 echo.
 echo Getting the tool ready...
 timeout /t 10 /nobreak >nul
-start "" http://localhost:8000/docs
+start "" http://localhost:8501
 echo.
 echo The tool is running and should have opened in your web browser.
 echo If it did not, open your browser and type this address:
 echo.
-echo        http://localhost:8000/docs
+echo        http://localhost:8501
 echo.
 echo When you are finished, double-click "Stop (Windows).bat".
 echo You can leave this window open in the meantime.

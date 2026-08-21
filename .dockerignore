@@ -15,5 +15,3 @@ dist/
 build/
 *.log
 .DS_Store
-# UI-only assets not needed by the API image
-pages/
