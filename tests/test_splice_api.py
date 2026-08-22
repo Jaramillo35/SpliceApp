@@ -98,7 +98,9 @@ def test_hrn_chart_returns_named_xlsx():
     })
     assert r.status_code == 200, r.text
     assert r.headers["content-type"] == XLSX
-    today = datetime.now().strftime("%m%d%Y")
+    # Local wall-clock on purpose: the engine names charts by the user's
+    # local run day, so the expectation must use the same clock.
+    today = datetime.now().strftime("%m%d%Y")  # noqa: DTZ005
     assert r.headers["X-Output-Filename"] == f"EC_MIRROR_2028DJ_Chart_{today}.xlsx"
     assert r.headers["X-Unmatched-Connectors"] == "0"
 
