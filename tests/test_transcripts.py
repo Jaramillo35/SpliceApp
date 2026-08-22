@@ -105,6 +105,16 @@ class TestTranscript:
         assert "anonymized" in rendered
         assert "**Speaker 1** hello everyone" in rendered
 
+    def test_render_embeds_llm_instructions(self):
+        # the file itself tells the assistant what to produce, so pasting a
+        # transcript into an LLM yields minutes with no extra prompt
+        rendered = Transcript().render()
+        assert "How to use this file" in rendered
+        assert "Instructions for the assistant" in rendered
+        assert "action" in rendered and "pending" in rendered
+        # instructions come before the transcript body
+        assert rendered.index("Instructions for the assistant") < rendered.index("---")
+
     def test_duplicate_items_ignored(self):
         t = Transcript()
         t.add_caption("Maria Lopez")

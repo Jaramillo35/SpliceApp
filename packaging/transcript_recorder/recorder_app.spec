@@ -2,7 +2,7 @@
 # Build:  pyinstaller tray_recorder.spec
 
 a = Analysis(
-    ['tray_recorder.py'],
+    ['recorder_app.py'],
     pathex=[],
     binaries=[],
     datas=[],

@@ -127,28 +127,35 @@ def transcripts_extras() -> None:
     with st.expander("Build and use the standalone recorder", expanded=False):
         st.markdown(
             """
-A lightweight Windows **tray app** with the same anonymized recording as the
-Meeting Transcripts page — for coworkers who don't run Splice.
+A lightweight Windows app with a small **status window** and the same
+anonymized recording as the Meeting Transcripts page — for coworkers who
+don't run Splice.
 
 ### Build (once, on any Windows PC with Python 3.11+)
 
 1. Download and unzip the build kit.
 2. Open a command prompt in the unzipped folder.
 3. `pip install -r requirements.txt`
-4. `pyinstaller tray_recorder.spec`
+4. `pyinstaller recorder_app.spec`
 5. The exe is at `dist\\TeamsTranscriptRecorder.exe` — copy it anywhere and
    share it; coworkers don't need Python.
 
 ### Use
 
-1. Run the exe — a microphone icon appears in the system tray.
+1. Run the exe — a small window shows the recorder status.
 2. In the Teams meeting turn on **Live Captions**
    (More → Language and speech → Live captions).
-3. Recording starts when captions appear and finishes when they close.
-   Transcripts land in a `Transcripts` folder next to the exe.
-4. Tray menu: **Pause/Resume**, **Open Transcripts**, **Exit**.
+3. If it says **"No captions window detected"** with captions already on,
+   separate (pop out) the captions window from the meeting window.
+4. Recording starts when captions are detected and finishes when they close.
+   When a transcript is saved, the **Open Transcripts Folder** button lights
+   up and takes you straight to the file.
+5. **Pause** any time — paused speech is not recorded. Closing the window
+   stops the recorder.
 
-Speakers are anonymized to Speaker 1..N — names never reach disk. The full
+Speakers are anonymized to Speaker 1..N — names never reach disk — and every
+transcript starts with built-in instructions for an AI assistant, so pasting
+the file into an LLM produces the meeting minutes directly. The full
 `BUILD_WINDOWS.txt` inside the kit has the details.
             """
         )

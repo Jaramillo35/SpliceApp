@@ -153,6 +153,19 @@ class Transcript:
         lines = [
             "# Meeting Transcript",
             "",
+            "> **How to use this file:** paste the ENTIRE file into an AI "
+            "assistant (Copilot, ChatGPT, Claude, ...) and send it — the "
+            "instructions the assistant needs are right below.",
+            "",
+            "**Instructions for the assistant:** produce meeting minutes from "
+            "the anonymized transcript that follows: 1) a concise summary of "
+            "what was discussed and concluded; 2) decisions made; 3) action "
+            "points as a table (action, owner as Speaker N, due date if "
+            "mentioned); 4) pending or unresolved items; 5) risks, concerns, "
+            "and other relevant information. Keep the Speaker N labels exactly "
+            "as written and do not invent names. If a section has no content, "
+            'write "None recorded."',
+            "",
             f"**Started:** {self.started.strftime('%Y-%m-%d %H:%M:%S')}",
             f"**Speakers:** {self.anonymizer.count} (anonymized as Speaker 1..N; "
             "names spoken mid-sentence are not removed)",

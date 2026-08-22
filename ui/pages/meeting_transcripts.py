@@ -160,9 +160,12 @@ def _render_library() -> None:
 def _render_minutes_help() -> None:
     with st.expander("Turn a transcript into meeting minutes (LLM prompt)"):
         st.markdown(
-            "Paste the prompt below into your LLM of choice, followed by the "
-            "transcript file's contents. The transcript is already anonymized, "
-            "so no participant names leave your machine with it."
+            "Every transcript **already starts with instructions for the "
+            "assistant** — just paste the whole file into your LLM of choice "
+            "and send it. The transcript is anonymized, so no participant "
+            "names leave your machine with it.\n\n"
+            "For older transcripts without the embedded instructions, use "
+            "this prompt followed by the file's contents:"
         )
         st.code(MINUTES_PROMPT, language=None)
 

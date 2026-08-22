@@ -3,10 +3,11 @@ Teams Transcript Recorder — Windows build steps
 
 What it is
 ----------
-A small tray app that records Microsoft Teams Live Captions into anonymized
+A small app that records Microsoft Teams Live Captions into anonymized
 markdown transcripts (speakers become Speaker 1..N — participant names are
-never written to disk). Same recording logic as the Splice app's Meeting
-Transcripts page, for people who want a lightweight recorder without
+never written to disk). A little status window shows whether it is waiting
+for captions, recording, or paused. Same recording logic as the Splice app's
+Meeting Transcripts page, for people who want a lightweight recorder without
 installing Splice.
 
 Build (one time, on any Windows 10/11 PC with Python 3.11+)
@@ -19,7 +20,7 @@ Build (one time, on any Windows 10/11 PC with Python 3.11+)
 
 3. Build:
 
-   pyinstaller tray_recorder.spec
+   pyinstaller recorder_app.spec
 
 4. The exe is at:
 
@@ -30,17 +31,23 @@ Build (one time, on any Windows 10/11 PC with Python 3.11+)
 
 Use
 ---
-- Run the exe: a microphone icon appears in the system tray.
+- Run the exe: a small status window opens.
 - In your Teams meeting turn on Live Captions
   (More > Language and speech > Live captions).
-- Recording starts automatically when the captions appear and finishes when
-  they close. Transcripts land in a "Transcripts" folder next to the exe.
-- Tray menu: Pause/Resume recording, Open Transcripts, Exit.
+- If the window says "No captions window detected" even with captions ON,
+  separate (pop out) the captions window from the meeting window.
+- Recording starts automatically when the captions are detected and finishes
+  when they close. Transcripts land in a "Transcripts" folder next to the
+  exe, and the "Open Transcripts Folder" button lights up when a transcript
+  is saved.
+- Pause recording any time with the Pause button (paused speech is NOT
+  recorded). Closing the window stops the recorder.
 
 Notes
 -----
 - Everything runs on your own PC; nothing is uploaded anywhere.
 - Names spoken mid-sentence ("thanks John") cannot be detected and stay in
   the text; the transcript header states this.
-- To turn a transcript into meeting minutes, paste it into an LLM with the
-  prompt from the Splice app's Meeting Transcripts page.
+- To turn a transcript into meeting minutes, just paste the WHOLE file into
+  an AI assistant (Copilot, ChatGPT, Claude, ...) — every transcript starts
+  with the instructions the assistant needs, so it knows what to do.

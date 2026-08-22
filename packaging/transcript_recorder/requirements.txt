@@ -1,6 +1,5 @@
 # Teams Transcript Recorder — build dependencies (Windows only).
+# The GUI uses tkinter, which ships with Python itself.
 pyinstaller
 uiautomation
 comtypes
-pystray
-pillow

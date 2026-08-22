@@ -1,15 +1,17 @@
-"""Teams Transcript Recorder — standalone Windows tray app.
+"""Teams Transcript Recorder — standalone Windows app with a small status GUI.
 
-Sits in the system tray and records Microsoft Teams Live Captions into
-anonymized markdown transcripts, exactly like Splice's Meeting Transcripts
-page: participant names never reach disk (speakers become Speaker 1..N),
-filenames carry only a timestamp, and partially transcribed captions fold
-into their final sentence.
+Records Microsoft Teams Live Captions into anonymized markdown transcripts,
+exactly like Splice's Meeting Transcripts page: participant names never reach
+disk (speakers become Speaker 1..N), filenames carry only a timestamp, and
+partially transcribed captions fold into their final sentence. Every
+transcript starts with instructions for an AI assistant, so pasting the file
+into an LLM produces meeting minutes directly.
 
-It waits for a Teams captions window, records until the captions close, saves
-the transcript to a "Transcripts" folder next to the exe, then waits for the
-next meeting — no interaction needed. Tray menu: Pause/Resume, Open
-Transcripts, Exit.
+The window shows what the recorder is doing (no captions window detected /
+recording / paused), and when a meeting ends it offers a button straight to
+the saved transcript's folder. Recording needs no interaction: it starts when
+a captions window appears and finishes when it closes, then waits for the
+next meeting.
 
 NOTE: the anonymization/document logic is vendored from
 splice/transcripts/recorder.py (the Splice app). If a bug is fixed there,
@@ -22,13 +24,11 @@ import os
 import re
 import sys
 import threading
+import tkinter as tk
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
-
-from PIL import Image, ImageDraw
-from pystray import Icon, Menu, MenuItem
 
 import uiautomation as auto
 
@@ -136,6 +136,19 @@ class Transcript:
         lines = [
             "# Meeting Transcript",
             "",
+            "> **How to use this file:** paste the ENTIRE file into an AI "
+            "assistant (Copilot, ChatGPT, Claude, ...) and send it — the "
+            "instructions the assistant needs are right below.",
+            "",
+            "**Instructions for the assistant:** produce meeting minutes from "
+            "the anonymized transcript that follows: 1) a concise summary of "
+            "what was discussed and concluded; 2) decisions made; 3) action "
+            "points as a table (action, owner as Speaker N, due date if "
+            "mentioned); 4) pending or unresolved items; 5) risks, concerns, "
+            "and other relevant information. Keep the Speaker N labels exactly "
+            "as written and do not invent names. If a section has no content, "
+            'write "None recorded."',
+            "",
             f"**Started:** {self.started.strftime('%Y-%m-%d %H:%M:%S')}",
             f"**Speakers:** {self.anonymizer.count} (anonymized as Speaker 1..N; "
             "names spoken mid-sentence are not removed)",
@@ -158,12 +171,26 @@ def _write_atomic(path: Path, content: str) -> None:
 
 
 # --------------------------------------------------------------------------
-# Capture loop
+# Capture worker
 # --------------------------------------------------------------------------
 
 POLL_SECONDS = 1.0
-SCAN_SECONDS = 5.0
+SCAN_SECONDS = 3.0
 
+
+class SharedState:
+    """What the worker reports and the GUI displays."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.status = "scanning"       # scanning | recording
+        self.entries = 0
+        self.speakers = 0
+        self.current_file = ""
+        self.last_saved = ""
+
+
+state = SharedState()
 stop_event = threading.Event()
 pause_event = threading.Event()
 
@@ -195,6 +222,11 @@ def _record_one_meeting(window) -> None:
     transcript = Transcript()
     out_path = TRANSCRIPTS_DIR / f"Meeting_{transcript.started.strftime('%Y-%m-%d_%H-%M')}.md"
     window_name = window.Name
+    with state.lock:
+        state.status = "recording"
+        state.current_file = out_path.name
+        state.entries = 0
+        state.speakers = 0
     try:
         while not stop_event.is_set():
             if pause_event.is_set():
@@ -211,9 +243,16 @@ def _record_one_meeting(window) -> None:
                 changed |= transcript.add_caption(item)
             if changed:
                 _write_atomic(out_path, transcript.render())
+            with state.lock:
+                state.entries = len(transcript.entries)
+                state.speakers = transcript.anonymizer.count
             stop_event.wait(POLL_SECONDS)
     finally:
         _write_atomic(out_path, transcript.render(ended=datetime.now()))
+        with state.lock:
+            state.status = "scanning"
+            state.last_saved = out_path.name
+            state.current_file = ""
 
 
 def recorder_worker() -> None:
@@ -229,51 +268,108 @@ def recorder_worker() -> None:
 
 
 # --------------------------------------------------------------------------
-# Tray UI
+# GUI
 # --------------------------------------------------------------------------
 
-def make_icon_image() -> Image.Image:
-    img = Image.new("RGB", (64, 64), color=(10, 102, 208))
-    draw = ImageDraw.Draw(img)
-    draw.ellipse((18, 10, 46, 40), fill=(255, 255, 255))       # mic head
-    draw.rectangle((29, 40, 35, 50), fill=(255, 255, 255))     # mic stem
-    draw.rectangle((22, 52, 42, 56), fill=(255, 255, 255))     # base
-    return img
+BG = "#F4F4F6"
+GREEN = "#1F7A33"
+ORANGE = "#B96A00"
+GRAY = "#5A5A60"
 
-
-def toggle_pause(icon, item) -> None:
-    if pause_event.is_set():
-        pause_event.clear()
-    else:
-        pause_event.set()
-
-
-def open_transcripts(icon, item) -> None:
-    TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
-    os.startfile(str(TRANSCRIPTS_DIR))  # type: ignore[attr-defined]
-
-
-def quit_app(icon, item) -> None:
-    stop_event.set()
-    icon.stop()
+NO_CAPTIONS_HELP = (
+    "In your Teams meeting turn on Live Captions:\n"
+    "More → Language and speech → Live captions.\n\n"
+    "Captions already ON but still not detected?\n"
+    "Separate the captions window from the meeting window\n"
+    "(pop the captions out so they are their own window)."
+)
 
 
 def main() -> None:
     threading.Thread(target=recorder_worker, daemon=True).start()
-    icon = Icon(
-        "Teams Transcript Recorder",
-        make_icon_image(),
-        "Teams Transcript Recorder (anonymized)",
-        menu=Menu(
-            MenuItem(
-                lambda item: "Resume recording" if pause_event.is_set() else "Pause recording",
-                toggle_pause,
-            ),
-            MenuItem("Open Transcripts", open_transcripts),
-            MenuItem("Exit", quit_app),
-        ),
-    )
-    icon.run()
+
+    root = tk.Tk()
+    root.title("Teams Transcript Recorder")
+    root.geometry("430x330")
+    root.resizable(False, False)
+    root.configure(bg=BG)
+
+    tk.Label(root, text="Teams Transcript Recorder", bg=BG, fg="#1D1D1F",
+             font=("Segoe UI", 14, "bold")).pack(pady=(14, 2))
+    tk.Label(root, text="Transcripts are anonymized: speakers become Speaker 1..N,\n"
+                        "names are never saved.", bg=BG, fg=GRAY,
+             font=("Segoe UI", 9)).pack()
+
+    status_lbl = tk.Label(root, text="", bg=BG, font=("Segoe UI", 12, "bold"))
+    status_lbl.pack(pady=(14, 2))
+    detail_lbl = tk.Label(root, text="", bg=BG, fg=GRAY, font=("Segoe UI", 9),
+                          justify="center")
+    detail_lbl.pack(pady=(0, 8))
+
+    btn_row = tk.Frame(root, bg=BG)
+    btn_row.pack(pady=(4, 0))
+
+    def toggle_pause() -> None:
+        if pause_event.is_set():
+            pause_event.clear()
+        else:
+            pause_event.set()
+
+    def open_folder() -> None:
+        TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(TRANSCRIPTS_DIR))  # type: ignore[attr-defined]
+
+    pause_btn = tk.Button(btn_row, text="Pause recording", width=18,
+                          command=toggle_pause, state="disabled")
+    pause_btn.pack(side="left", padx=6)
+    folder_btn = tk.Button(btn_row, text="Open Transcripts Folder", width=22,
+                           command=open_folder, state="disabled")
+    folder_btn.pack(side="left", padx=6)
+
+    saved_lbl = tk.Label(root, text="", bg=BG, fg=GREEN, font=("Segoe UI", 9))
+    saved_lbl.pack(pady=(10, 0))
+
+    def tick() -> None:
+        with state.lock:
+            status = state.status
+            entries, speakers = state.entries, state.speakers
+            current, last = state.current_file, state.last_saved
+
+        if status == "recording" and pause_event.is_set():
+            status_lbl.config(text="⏸  Paused", fg=ORANGE)
+            detail_lbl.config(text="Captions spoken now are NOT being recorded.")
+            pause_btn.config(text="Resume recording", state="normal")
+        elif status == "recording":
+            status_lbl.config(text="●  Recording", fg=GREEN)
+            detail_lbl.config(
+                text=f"{entries} caption entries · {speakers} speakers\n"
+                     f"Saving to {current}")
+            pause_btn.config(text="Pause recording", state="normal")
+        else:
+            status_lbl.config(text="○  No captions window detected", fg=ORANGE)
+            detail_lbl.config(text=NO_CAPTIONS_HELP)
+            pause_btn.config(text="Pause recording", state="disabled")
+            if pause_event.is_set():
+                pause_event.clear()
+
+        has_transcripts = bool(last) or (
+            TRANSCRIPTS_DIR.is_dir() and any(TRANSCRIPTS_DIR.glob("*.md")))
+        folder_btn.config(state="normal" if has_transcripts else "disabled")
+        if last:
+            saved_lbl.config(
+                text=f"✔ Transcript saved: {last}\n"
+                     "Open the folder and paste the file into an AI assistant "
+                     "for the minutes.")
+
+        root.after(500, tick)
+
+    def on_close() -> None:
+        stop_event.set()
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_close)
+    tick()
+    root.mainloop()
 
 
 if __name__ == "__main__":
