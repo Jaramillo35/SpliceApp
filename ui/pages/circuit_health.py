@@ -111,8 +111,8 @@ def _finding_row(f, baseline, idx):
         with st.form(key=f"{K}disp_{idx}_{f.fingerprint}"):
             c1, c2, c3 = st.columns([1, 2, 1])
             verdict = c1.selectbox("Disposition", health.DISPOSITIONS,
-                                   key=f"{K}v_{f.fingerprint}")
-            reason = c2.text_input("Reason", key=f"{K}r_{f.fingerprint}",
+                                   key=f"{K}v_{idx}_{f.fingerprint}")
+            reason = c2.text_input("Reason", key=f"{K}r_{idx}_{f.fingerprint}",
                                    placeholder="why this is acceptable / a defect")
             if c3.form_submit_button("Save"):
                 by = st.session_state.get(f"{K}engineer", "") or "SE"

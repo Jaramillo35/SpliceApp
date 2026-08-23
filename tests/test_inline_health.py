@@ -209,3 +209,16 @@ class TestReport:
                                       "Cleared proofs", "Sign-off"}
         rows = list(wb["Findings"].iter_rows(values_only=True))
         assert rows[1][11] == "Defect"  # disposition column round-trips
+
+
+class TestDeduplication:
+    def test_identical_fingerprints_collapse_to_one_finding(self):
+        # Streamlit renders one widget set per finding; duplicate fingerprints
+        # crashed the page with StreamlitDuplicateElementKey (field report).
+        result = _analyze(
+            [{"circuit": "R732", "cnum": "X10A", "cav": "8", "sc": "CG3"}],
+            [{"circuit": "R732", "cnum": "Y10A", "cav": "8", "sc": "CG3&(CYC/CYF)"}],
+            LEFT_BUILDS, RIGHT_BUILDS,
+        )
+        prints = [f.fingerprint for f in result.findings]
+        assert len(prints) == len(set(prints))

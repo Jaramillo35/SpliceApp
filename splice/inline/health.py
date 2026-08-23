@@ -365,8 +365,18 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
                             f"{len(gap_builds)} build(s) affected."),
                 ))
 
+    # Two findings with the same fingerprint are the same logical finding
+    # (one disposition must clear both); keep the more severe occurrence.
     order = {SEV_BLOCKER: 0, SEV_HIGH: 1, SEV_REVIEW: 2, SEV_INFO: 3}
     result.findings.sort(key=lambda f: (order.get(f.severity, 9), f.inline, f.cavity))
+    seen: Set[str] = set()
+    deduped = []
+    for f in result.findings:
+        if f.fingerprint in seen:
+            continue
+        seen.add(f.fingerprint)
+        deduped.append(f)
+    result.findings = deduped
     return result
 
 
