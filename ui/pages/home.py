@@ -110,6 +110,10 @@ def inline_extras() -> None:
     st.page_link("pages/6_Inline_Continuity.py", label="Open Inline Continuity", icon="🔌")
 
 
+def circuit_health_extras() -> None:
+    st.page_link("ui/pages/circuit_health.py", label="Open Circuit Health Check", icon="🩺")
+
+
 def hrn_extras() -> None:
     st.page_link("ui/pages/hrn_chart.py", label="Open HRN Chart Builder", icon="📈")
 
@@ -255,6 +259,17 @@ TOOLS = [
         ),
         "badges": ["Circuit Summary", "Harness Complexity", "Findings Workbook"],
         "extras": inline_extras,
+    },
+    {
+        "title": "Circuit Health Check",
+        "desc": (
+            "Holistic missing-circuit detection: option windows with real builds "
+            "but no wire, and circuits absent from one inline crossing while live "
+            "elsewhere. Auto-clears provable variants; the rest queues for SE "
+            "disposition with sign-off gates."
+        ),
+        "badges": ["Window Coverage", "Route Gaps", "SE Sign-off"],
+        "extras": circuit_health_extras,
     },
     {
         "title": "HRN Chart Builder",

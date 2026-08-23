@@ -31,6 +31,7 @@ pages = [
     st.Page("ui/pages/secr_assistant.py", title="Ask the Database", icon="💬"),
     st.Page("pages/5_VBOM_Risk_Matrix.py", title="VBOM Risk Matrix", icon="🧮"),
     st.Page("pages/6_Inline_Continuity.py", title="Inline Continuity", icon="🔌"),
+    st.Page("ui/pages/circuit_health.py", title="Circuit Health Check", icon="🩺"),
     st.Page("ui/pages/hrn_chart.py", title="HRN Chart Builder", icon="📈"),
     st.Page("ui/pages/meeting_transcripts.py", title="Meeting Transcripts", icon="🎙️"),
 ]

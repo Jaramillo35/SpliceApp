@@ -77,6 +77,7 @@ hiddenimports = list(
             "requests",
             # HRN Chart Builder engine (reached only through a page module).
             "splice.hrncmp.engine",
+            "splice.inline.health",
             # Meeting Transcripts: uiautomation loads comtypes.stream
             # dynamically, so PyInstaller cannot see it statically.
             "uiautomation",
