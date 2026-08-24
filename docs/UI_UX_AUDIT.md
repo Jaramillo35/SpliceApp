@@ -146,3 +146,27 @@ for long runs, `st.toast` on completions, and no gratuitous transitions.
 Each phase lands as its own commit(s) on `ui-ux-upgrade`, verified in both
 light and dark mode before moving on; `secr-database` (and the deployed host)
 stays on the stable UI until the branch merges.
+
+---
+
+## Addendum — NiceGUI prototype (Phase-0 of the stack decision)
+
+`prototypes/nicegui_circuit_health/main.py` rebuilds Circuit Health Check on
+NiceGUI 3.x, importing `splice.inline.health` unchanged. Run with:
+
+    python prototypes/nicegui_circuit_health/main.py       # localhost:8503
+    # dev: SPLICE_PROTO_AUTOLOAD=<validation dir> preloads the study files
+
+Exercised against the real X2A study (17 complexity files): 83 findings,
+780 auto-cleared, live sticky metrics. What it demonstrates over Streamlit:
+
+- **No rerun**: uploads, tab switches, and dispositions update only the
+  affected elements — the page never blinks.
+- **Real modal dialog** for dispositions (updates metrics + list in place).
+- **Sticky header metrics** that change live as findings are dispositioned.
+- **Motion with restraint**: 180ms ease-out reveals, 140ms press feedback,
+  `prefers-reduced-motion` respected — the Emil/Apple craft Streamlit
+  cannot express.
+
+Same Python, same engines, same Docker story. If the team judges the felt
+difference worth it, migration is page-by-page with `splice/` untouched.
