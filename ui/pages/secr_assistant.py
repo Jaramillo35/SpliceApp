@@ -49,7 +49,7 @@ _EVIDENCE_COLUMNS = [
 
 
 def render() -> None:
-    st.title("Ask the database")
+    st.title("Ask the Database")
     st.caption(
         "Questions are answered from the SECR records themselves. The model "
         "runs on this machine — nothing is sent anywhere."

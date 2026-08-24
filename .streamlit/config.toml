@@ -1,0 +1,13 @@
+# Splice brand theme — dark-first, Versigent orange primary.
+# Custom surfaces in ui/theme.py read Streamlit's CSS variables, so they stay
+# correct if a user switches to the light theme from the app menu.
+
+[theme]
+base = "dark"
+primaryColor = "#d95926"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1a1d24"
+textColor = "#e8e8ec"
+
+[browser]
+gatherUsageStats = false

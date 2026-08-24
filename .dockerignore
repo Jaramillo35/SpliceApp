@@ -15,3 +15,5 @@ dist/
 build/
 *.log
 .DS_Store
+# never bake real secrets into an image
+.streamlit/secrets.toml

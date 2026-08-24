@@ -27,7 +27,7 @@ from splice.splice_gen import (
 from feedback_system import FeedbackStore, render_feedback_widget
 
 
-st.title("Wiring Harness Splice Generator")
+st.title("Splice Generation")
 st.caption("Generate harness print-ready direct connections, splices, configuration groups, and validation reports.")
 
 with st.expander("How To Prepare The Upload File", expanded=True):

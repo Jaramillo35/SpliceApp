@@ -30,6 +30,7 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 # The whole app: shell, pages, UI modules, engines, vendored SECR core, assets.
 COPY app.py feedback_system.py ./
+COPY .streamlit ./.streamlit
 COPY pages ./pages
 COPY ui ./ui
 COPY splice ./splice

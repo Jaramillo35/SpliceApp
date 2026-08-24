@@ -22,63 +22,16 @@ TRANSCRIPT_RECORDER_ZIP_PATH = (
     APP_DIR / "assets" / "downloads" / "teams-transcript-recorder.zip"
 )
 
-st.markdown(
-    """
-    <style>
-        .hero {
-            padding: 1.25rem 1.5rem;
-            border-radius: 16px;
-            border: 1px solid #d9e4ee;
-            background: linear-gradient(135deg, #f3f8fc 0%, #eef6f2 100%);
-            margin-bottom: 1.2rem;
-        }
-        .tool-card {
-            border: 1px solid #d6e1ea;
-            border-radius: 14px;
-            padding: 1rem;
-            background: #ffffff;
-            min-height: 190px;
-            box-shadow: 0 8px 16px rgba(26, 43, 60, 0.05);
-        }
-        .tool-title { font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem; color: #14324a; }
-        .tool-desc { color: #35526b; margin-bottom: 1rem; }
-        .tool-badge {
-            display: inline-block; padding: 0.2rem 0.55rem; border-radius: 999px;
-            font-size: 0.8rem; font-weight: 600; background: #e8f4ff; color: #0b5ea8;
-            margin-right: 0.35rem; margin-bottom: 0.45rem;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
+from ui import components
+
+components.hero(
+    "System Engineer Toolkit",
+    "One home for the wiring-engineering workflows: splice generation, DTx "
+    "comparison, the SECR database, VBOM risk matrix, circuit health, HRN "
+    "charts, and meeting transcripts.",
 )
 
-st.markdown(
-    """
-    <div class="hero">
-        <h1 style="margin-bottom: 0.35rem; color: #10273a;">System Engineer Toolkit</h1>
-        <p style="margin: 0; color: #2f4b62;">
-            One home for the wiring-engineering workflows: splice generation, DTx comparison,
-            the SECR database, VBOM risk matrix, inline continuity, HRN charts, and meeting
-            transcripts.
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-def tool_card(title: str, desc: str, badges: list[str]) -> None:
-    badge_html = "".join(f'<span class="tool-badge">{b}</span>' for b in badges)
-    st.markdown(
-        f"""
-        <div class="tool-card">
-            <div class="tool-title">{title}</div>
-            <div class="tool-desc">{desc}</div>
-            {badge_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+tool_card = components.tool_card
 
 
 def splice_generation_extras() -> None:

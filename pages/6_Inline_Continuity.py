@@ -28,7 +28,7 @@ from splice.inline.validate import run_study
 
 K = "inline_"
 
-st.title("Inline Continuity Validation")
+st.title("Inline Continuity")
 st.caption(
     "Checks that circuits continue across harness interfaces. Load the Circuit "
     "Summary and the complexity file for every harness in it; the tool decides "

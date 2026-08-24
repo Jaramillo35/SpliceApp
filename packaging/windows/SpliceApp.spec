@@ -28,6 +28,7 @@ extra_datas = [
     (str(ROOT / "splice"), "splice"),
     (str(ROOT / "secrdb"), "secrdb"),
     (str(ROOT / "assets"), "assets"),
+    (str(ROOT / ".streamlit"), ".streamlit"),
     (str(ROOT / "vbom_legacy"), "vbom_legacy"),
 ]
 
