@@ -32,6 +32,76 @@ BASELINE_PATH = DATA_DIR / "inline_health" / "baseline.json"
 
 SEV_ICON = {health.SEV_BLOCKER: "🟥", health.SEV_HIGH: "🟧", health.SEV_REVIEW: "🟨"}
 
+KIND_LABEL = {
+    "cavity": "Cavity mismatch",
+    "one_sided_window": "Missing variant window",
+    "route_window_gap": "Route gap",
+}
+
+
+def _finding_title(f) -> str:
+    icon = SEV_ICON.get(f.severity, "▫️")
+    kind = KIND_LABEL.get(f.kind, f.kind)
+    parts = [f"{icon} [{f.severity}] {kind} · {f.inline}"]
+    if f.cavity:
+        parts.append(f"cavity {f.cavity}")
+    if f.circuit:
+        parts.append(f.circuit)
+    if f.kind == "route_window_gap":
+        parts.append(f"on {f.harness_with}")
+    elif f.kind == "one_sided_window":
+        parts.append(f"{f.harness_with} has it — missing on {f.harness_without}")
+    elif f.harness_with or f.harness_without:
+        parts.append(f"{f.harness_with} ↔ {f.harness_without}")
+    return " · ".join(parts)
+
+
+def _render_how_it_works() -> None:
+    with st.expander("ℹ️ How this check works — read me first"):
+        st.markdown(
+            """
+**What it does.** A circuit that crosses from one harness to another must have
+a wire on *both* sides of the inline connector — for **every** vehicle that can
+be built. This page checks that three ways:
+
+1. **Cavity mismatch** — one harness has a wire in a cavity and the mate has
+   nothing (or a different circuit) there. The classic, visible defect.
+2. **Missing variant window** — both sides have wires, *but their sales-code
+   conditions don't cover the same vehicles*. Example: Body_Left sends `R732`
+   for every `CG3` vehicle, but Body_Right only receives it for `CG3&(CYC/CYF)`
+   — so a `CG3&CY3` vehicle builds a wire on the left that dead-ends at the
+   inline. The tool unions each side's conditions, subtracts one from the
+   other, and checks the leftover *window* against the complexity tables: if
+   real build part numbers exist in that window on the side with no wire,
+   that's a finding — with the affected part numbers listed as evidence.
+3. **Route gap** — a circuit is live on a harness in some option window (it
+   crosses other inlines there) but has **no variant at one of its crossings**
+   in that same window. This found the `A960` defect: present for
+   `XZ2` vehicles at two inlines, absent at the Body_Left↔Body_Right one.
+
+**What it needs.** The program **Circuit Summary** (the wires and their sales
+codes) plus **one Harness Complexity file per harness** (which part numbers
+build, with which sales codes). Files are matched by the DEF id *inside* the
+complexity file, never by filename.
+
+**Severities.**
+| | meaning |
+|---|---|
+| 🟥 Blocker | real builds exist with a wire on one side and nothing on the other — a vehicle will be built with a dead-ended circuit |
+| 🟧 High | route gap or config skew — usually real, but routing can legitimately differ by option; engineering judgment needed |
+| 🟨 Review | attribute or bookkeeping differences worth a look |
+| ✅ Auto-cleared | the algebra *proved* the difference is unreachable (the option window never builds) — no action needed, proof kept for audit |
+
+**Your workflow.** ① Load files → Run. ② Check Gate 0 (missing files, stale
+revisions) — findings against stale inputs are suspect. ③ Work the **Open**
+tab: each finding gets a disposition — *Accepted variant* (it's fine, say
+why), *Defect* (file the SECR), or *By design*. Dispositions are remembered:
+the next run only shows what's new. ④ When no Blocker/High is open, **sign
+off** — that records your name, the date, and the run in the baseline, and
+the report workbook carries the full audit trail.
+            """
+        )
+
 
 def _load_inputs():
     st.subheader("1 · Inputs")
@@ -89,11 +159,7 @@ def _render_gate0(result, rejected):
 
 def _finding_row(f, baseline, idx):
     d = baseline.get("dispositions", {}).get(f.fingerprint)
-    icon = SEV_ICON.get(f.severity, "▫️")
-    title = (f"{icon} [{f.severity}] {f.kind} · {f.inline}"
-             + (f" · cavity {f.cavity}" if f.cavity else "")
-             + (f" · {f.circuit}" if f.circuit else ""))
-    with st.expander(title, expanded=False):
+    with st.expander(_finding_title(f), expanded=False):
         st.write(f.detail)
         if f.window:
             st.code(f.window, language=None)
@@ -186,6 +252,7 @@ def render() -> None:
         "crossing while live elsewhere. Provable variant-splitting is cleared "
         "automatically; everything else queues for your disposition."
     )
+    _render_how_it_works()
 
     summary_file, cx_files = _load_inputs()
     if not summary_file or not cx_files:
