@@ -22,22 +22,26 @@ def page() -> None:
     with c.frame("SECR Database",
                  "Every SECR generated or imported, searchable by SECR #, "
                  "DTCR, CNUM, circuit, connector, program, or harness family."):
+        from nicegui_app.pages import secr_forms
+
         with ui.tabs().props("dense align=left") as tabs:
             t_browse = ui.tab("Browse")
+            t_create = ui.tab("Create SECR")
+            t_update = ui.tab("Update SECR")
             t_import = ui.tab("Import SECR files")
             t_dash = ui.tab("Dashboard")
         with ui.tab_panels(tabs, value=t_browse).classes("w-full"):
             with ui.tab_panel(t_browse).classes("p-0 pt-3"):
                 _browse()
+            with ui.tab_panel(t_create).classes("p-0 pt-3"):
+                secr_forms.create_tab()
+            with ui.tab_panel(t_update).classes("p-0 pt-3"):
+                secr_forms.update_tab()
             with ui.tab_panel(t_import).classes("p-0 pt-3"):
                 _import_tab()
             with ui.tab_panel(t_dash).classes("p-0 pt-3"):
                 _dashboard()
-
-        with c.card("Create / Update SECR"):
-            ui.label("The Create, Update, and DTCR-report flows migrate in the "
-                     "next wave — meanwhile they live on the Streamlit page.") \
-                .classes("text-sm sx-muted")
+                secr_forms.library_panel()
 
 
 def _browse() -> None:

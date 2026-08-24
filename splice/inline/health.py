@@ -173,6 +173,11 @@ class HealthResult:
     cleared: List[ClearedProof]
     pairs: List[InlinePair] = field(default_factory=list)
     cavities_checked: int = 0
+    #: the full cavity study (layer 1) — kept so the continuity audit views
+    #: (every cavity, marked differences, findings workbook) need no rerun
+    study: object = None
+    #: readiness gaps from splice.inline.readiness (input pre-checks)
+    gaps: list = field(default_factory=list)
 
     def open_findings(self, baseline: dict) -> List[HealthFinding]:
         return [f for f in self.findings
@@ -240,8 +245,15 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
 
     display = {hid: h.name for hid, h in summary.items()}
 
+    # ---- Gate 0 extras: readiness pre-checks ------------------------------
+    # (duplicate-upload detection needs the pre-dedup file list, which this
+    # API does not receive — callers dedupe by DEF id before analyze)
+    from splice.inline.readiness import assess
+    result.gaps = assess(summary, complexity)
+
     # ---- Layer 1: cavity continuity, via the existing engine -------------
     study = run_study(summary, ends, complexity, pairs, unmated)
+    result.study = study
     for f in study.findings:
         sev = _VERDICT_SEVERITY.get(f.verdict)
         if sev is None or f.verdict == "Continuous":

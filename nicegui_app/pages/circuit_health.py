@@ -98,6 +98,7 @@ def page() -> None:
                     t_open = ui.tab(f"Open ({len(open_f)})")
                     t_done = ui.tab(f"Dispositioned ({len(done_f)})")
                     t_clear = ui.tab(f"Auto-cleared ({len(r.cleared)})")
+                    t_audit = ui.tab("Continuity audit")
                 with ui.tab_panels(tabs, value=t_open).classes("w-full"):
                     with ui.tab_panel(t_open).classes("p-0 pt-2"):
                         if not open_f:
@@ -111,6 +112,8 @@ def page() -> None:
                         for p in r.cleared[:300]:
                             ui.label(f"{p.inline} · cav {p.cavity} · {p.window}") \
                                 .classes("text-xs sx-mono sx-muted")
+                    with ui.tab_panel(t_audit).classes("p-0 pt-2"):
+                        _audit_tab(r)
 
             with c.card("Sign-off & report"):
                 engineer = ui.input("Systems Engineer").classes("w-60")
@@ -126,6 +129,53 @@ def page() -> None:
                                       lambda: health.render_report(
                                           state["result"],
                                           health.load_baseline(BASELINE_PATH)))
+
+        def _audit_tab(r) -> None:
+            """The former Inline Continuity page, in full: every cavity,
+            marked differences, readiness gaps, and the findings workbook."""
+            from splice.inline import report as inline_report
+            study = r.study
+            if study is None:
+                c.empty("Run the health check to build the audit.")
+                return
+            counts = study.verdict_counts()
+            with ui.row().classes("gap-6 py-1"):
+                for label, value in [
+                        ("Cavities checked", f"{study.cavities_checked:,}"),
+                        ("Continuous", f"{counts.get('Continuous', 0):,}"),
+                        ("Need review", f"{len(study.review):,}"),
+                        ("Inline pairs", f"{len(study.pairs):,}")]:
+                    with ui.column().classes("items-center gap-0"):
+                        ui.label(value).classes("text-xl font-bold")
+                        ui.label(label).classes("text-[11px] sx-muted")
+            if r.gaps:
+                with ui.expansion(f"Input readiness notes ({len(r.gaps)})") \
+                        .classes("w-full").props("dense"):
+                    _frame_table(inline_report.gaps_frame(r.gaps))
+            for title, frame in [
+                    ("Cavities needing review", inline_report.review_frame(study)),
+                    ("Marked differences inside continuous cavities",
+                     inline_report.marked_frame(study)),
+                    ("Every cavity", inline_report.all_frame(study)),
+                    ("Every circuit (one row per wire)",
+                     inline_report.options_frame(study))]:
+                with ui.expansion(f"{title} ({len(frame)})").classes("w-full") \
+                        .props("dense"):
+                    _frame_table(frame)
+            c.download_button(
+                "Inline_Continuity_Findings.xlsx",
+                lambda: inline_report.build_workbook(state["result"].study,
+                                                     state["result"].gaps))
+
+        def _frame_table(df, limit: int = 500) -> None:
+            if df is None or df.empty:
+                ui.label("None.").classes("text-sm sx-muted")
+                return
+            view = df.head(limit).astype(str)
+            ui.table(rows=view.to_dict("records"), columns=[
+                {"name": col, "label": col, "field": col, "align": "left"}
+                for col in view.columns], pagination=25) \
+                .classes("w-full").props("dense flat")
 
         def finding_row(f, dispositions) -> None:
             d = dispositions.get(f.fingerprint)
