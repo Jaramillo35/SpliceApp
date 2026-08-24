@@ -240,6 +240,14 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
             complexity: Dict[str, Harness], pairs: List[InlinePair],
             unmated: List) -> HealthResult:
     """Run all three layers and return the consolidated result."""
+    # Complexity harnesses are named after their FILE (read_complexity gets the
+    # filename); findings must wear the summary's harness names, or the pair
+    # matrix and reports show "2_Harness_Complexity_..._DASH_04-19-2026"
+    # instead of "DASH" (field report, 2026-08-24).
+    for hid, cx in complexity.items():
+        if hid in summary and summary[hid].name:
+            cx.name = summary[hid].name
+
     result = HealthResult(inputs=build_input_report(summary, complexity),
                           findings=[], cleared=[], pairs=pairs)
 

@@ -73,11 +73,18 @@ def frame(title: str, caption: str = ""):
 
     with ui.left_drawer(value=True, fixed=True).props("width=230 breakpoint=800") \
             .classes("p-3").style(f"background:{theme.SURFACE_2};border-right:1px solid {theme.LINE}"):
-        logo = ASSETS / "versigent_logo_horizontal.jpg"
-        if logo.exists():
-            ui.image(str(logo)).classes("w-40 mb-2 rounded")
-        else:
-            ui.label("Splice").classes("text-lg font-bold px-2")
+        # Brand block drawn in UI tokens (the JPG logo carries a white box
+        # that fights the dark drawer — field report, 2026-08-24).
+        with ui.row().classes("items-center gap-2 px-2 pt-1 pb-3"):
+            with ui.element("div").classes(
+                    "w-8 h-8 rounded-lg flex items-center justify-center") \
+                    .style(f"background:{theme.BRAND}"):
+                ui.icon("electrical_services").classes("text-xl text-white")
+            with ui.column().classes("gap-0"):
+                ui.label("Versigent").classes(
+                    "text-base font-bold leading-none tracking-tight")
+                ui.label("System Engineer Toolkit").classes(
+                    "text-[10px] sx-muted leading-none")
         with ui.link(target="/").classes("no-underline"):
             _nav_row("Home", "home", title == "Home")
         for section, items in NAV:
@@ -133,18 +140,27 @@ def upload_zone(label: str, on_file: Callable[[str, bytes], None],
                 accept: str = "", multiple: bool = False) -> None:
     """Upload that reads bytes immediately and confirms with a chip row."""
     with ui.column().classes("flex-1 gap-1 min-w-[16rem]"):
+        received: list[str] = []
+
         async def handle(e) -> None:
             # NiceGUI 3.x: the event carries a FileUpload at e.file
             # (e.content/e.name was the pre-3.0 API and fails silently here).
             data = await e.file.read()
             on_file(e.file.name, data)
-            with loaded:
-                ui.label(e.file.name).classes("text-xs px-2 py-0.5 rounded-full") \
-                    .style(f"background:{theme.STATUS['ok']}22;color:{theme.STATUS['ok']}")
+            received.append(e.file.name)
+            # one summary chip, not one per file — 17 complexity files must
+            # not become a page of chips (field report, 2026-08-24)
+            text = received[0] if len(received) == 1 \
+                else f"{len(received)} files received"
+            confirm.set_text(f"✓ {text}")
+            confirm.set_visibility(True)
 
         ui.upload(label=label, on_upload=handle, multiple=multiple, auto_upload=True) \
-            .props(f'accept="{accept}" color=primary flat bordered').classes("w-full")
-        loaded = ui.row().classes("gap-1 flex-wrap")
+            .props(f'accept="{accept}" color=primary flat bordered') \
+            .classes("w-full").style("max-height: 14rem")
+        confirm = ui.label("").classes("text-xs px-2 py-0.5 rounded-full w-fit") \
+            .style(f"background:{theme.STATUS['ok']}22;color:{theme.STATUS['ok']}")
+        confirm.set_visibility(False)
 
 
 async def run_engine(fn: Callable, *args, running: str, done: str = "Done"):

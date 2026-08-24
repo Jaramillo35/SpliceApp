@@ -189,13 +189,8 @@ def page() -> None:
                  "The review workbench: the charts are the filters — click a "
                  "matrix cell, a kind, or a circuit to scope the queue."):
 
-        # ---------------- header: metrics + progress ----------------------
-        @ui.refreshable
-        def header() -> None:
-            r = state["result"]
-            if not r:
-                return
-            baseline = health.load_baseline(BASELINE_PATH)
+        # -------- metrics + progress (rendered inside the workbench) -------
+        def metrics_strip(r, baseline) -> None:
             open_f = r.open_findings(baseline)
             with ui.row().classes("gap-4 flex-wrap items-center"):
                 for label, value, kind in [
@@ -219,8 +214,6 @@ def page() -> None:
                         ui.element("div").style(
                             f"background:{color};width:{fraction * 100:.2f}%")
                 ui.label(" · ".join(s[2] for s in segments)).classes("text-xs sx-muted")
-
-        header()
 
         # ---------------- inputs ------------------------------------------
         with ui.expansion("Inputs", value=state["result"] is None) \
@@ -253,6 +246,7 @@ def page() -> None:
             dispositions = baseline.get("dispositions", {})
             open_f = r.open_findings(baseline)
 
+            metrics_strip(r, baseline)
             gate0(r)
 
             with ui.tabs().props("dense align=left") as tabs:
@@ -525,7 +519,6 @@ def page() -> None:
 
         # ------------- actions --------------------------------------------
         def refresh_all() -> None:
-            header.refresh()
             workbench.refresh()
 
         def dispose(f, verdict: str, reason: str) -> None:
