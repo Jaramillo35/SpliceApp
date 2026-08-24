@@ -107,12 +107,13 @@ metric_cols[2].metric("Added Circuits", int(result["added_circuit_count"]))
 metric_cols[3].metric("Removed Circuits", int(result["removed_circuit_count"]))
 metric_cols[4].metric("Modified Circuits", int(result["modified_circuit_count"]))
 
-st.subheader("Detected Layout")
-layout_left, layout_right = st.columns(2)
-old_layout = result["old_layout"]
-new_layout = result["new_layout"]
-layout_left.info(f"OLD: sheet '{old_layout.sheet_name}', header row {old_layout.header_row + 1}")
-layout_right.info(f"NEW: sheet '{new_layout.sheet_name}', header row {new_layout.header_row + 1}")
+old_layout = result.get("old_layout")
+new_layout = result.get("new_layout")
+if old_layout is not None and new_layout is not None:
+    st.subheader("Detected Layout")
+    layout_left, layout_right = st.columns(2)
+    layout_left.info(f"OLD: sheet '{old_layout.sheet_name}', header row {old_layout.header_row + 1}")
+    layout_right.info(f"NEW: sheet '{new_layout.sheet_name}', header row {new_layout.header_row + 1}")
 
 st.subheader("Changes by Harness Family")
 family_summary_df = result.get("harness_family_summary_df")

@@ -99,6 +99,10 @@ def generate_enhanced_dtx_report(
     output = _write_workbook(old_file_name, new_file_name, results)
     return {
         **results,
+        # The page's "Detected Layout" panel reads these; the classic engine
+        # returned them and the enhanced path must keep that contract.
+        "old_layout": old_layout,
+        "new_layout": new_layout,
         "output_excel_bytes": output,
         "output_file_name": build_output_filename(old_file_name, new_file_name),
     }

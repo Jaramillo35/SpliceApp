@@ -76,3 +76,21 @@ def test_enhanced_workbook_sheets_status_and_dashboard(_real):
     assert db["B14"].value.startswith("=IF")                                      # % complete
     assert db["A12"].value == "Not started"                                       # Not-started row present
     assert len(db._charts) == 3                                                   # progress donut, by-family bar, DTCR pie
+
+
+def test_result_carries_every_key_the_page_hard_indexes(_real):
+    """Field report 2026-08-23: the page crashed with KeyError 'old_layout' —
+    the enhanced path dropped keys the classic engine used to return. Keep the
+    page's full contract pinned so a missing key fails here, not in front of
+    an engineer."""
+    page_contract = {
+        "added_cnum_count", "removed_cnum_count", "added_circuit_count",
+        "removed_circuit_count", "modified_circuit_count",
+        "old_layout", "new_layout",
+        "added_circuits_df", "removed_circuits_df", "modified_circuits_df",
+        "cnum_summary_df", "field_change_frequency_df",
+        "output_excel_bytes", "output_file_name",
+    }
+    missing = page_contract - set(_real)
+    assert not missing, f"enhanced result is missing page keys: {sorted(missing)}"
+    assert _real["old_layout"].sheet_name and _real["new_layout"].sheet_name
