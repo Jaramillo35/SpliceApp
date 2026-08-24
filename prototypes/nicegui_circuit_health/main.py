@@ -158,12 +158,12 @@ with ui.column().classes("w-full max-w-5xl mx-auto p-6 gap-4"):
                  "matched by the DEF id inside each file, never the filename.") \
             .classes("text-sm opacity-60")
         with ui.row().classes("w-full gap-4"):
-            def on_summary(e) -> None:
-                S.summary_bytes, S.summary_name = e.content.read(), e.name
-                ui.notify(f"Summary: {e.name}", type="positive")
+            async def on_summary(e) -> None:
+                S.summary_bytes, S.summary_name = await e.file.read(), e.file.name
+                ui.notify(f"Summary: {e.file.name}", type="positive")
 
-            def on_cx(e) -> None:
-                S.cx_files[e.name] = e.content.read()
+            async def on_cx(e) -> None:
+                S.cx_files[e.file.name] = await e.file.read()
                 cx_count.set_text(f"{len(S.cx_files)} complexity file(s) loaded")
 
             ui.upload(label="Circuit Summary (.xlsx)", on_upload=on_summary,

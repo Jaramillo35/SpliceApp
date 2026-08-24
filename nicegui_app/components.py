@@ -133,11 +133,13 @@ def upload_zone(label: str, on_file: Callable[[str, bytes], None],
                 accept: str = "", multiple: bool = False) -> None:
     """Upload that reads bytes immediately and confirms with a chip row."""
     with ui.column().classes("flex-1 gap-1 min-w-[16rem]"):
-        def handle(e) -> None:
-            data = e.content.read()
-            on_file(e.name, data)
+        async def handle(e) -> None:
+            # NiceGUI 3.x: the event carries a FileUpload at e.file
+            # (e.content/e.name was the pre-3.0 API and fails silently here).
+            data = await e.file.read()
+            on_file(e.file.name, data)
             with loaded:
-                ui.label(e.name).classes("text-xs px-2 py-0.5 rounded-full") \
+                ui.label(e.file.name).classes("text-xs px-2 py-0.5 rounded-full") \
                     .style(f"background:{theme.STATUS['ok']}22;color:{theme.STATUS['ok']}")
 
         ui.upload(label=label, on_upload=handle, multiple=multiple, auto_upload=True) \
