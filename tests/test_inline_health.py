@@ -222,3 +222,48 @@ class TestDeduplication:
         )
         prints = [f.fingerprint for f in result.findings]
         assert len(prints) == len(set(prints))
+
+
+class TestPresentation:
+    """Field reports 2026-08-24: names and within-harness rendering."""
+
+    def test_findings_wear_summary_names_not_filenames(self):
+        # complexity harnesses are named after their uploaded FILE; every
+        # finding (all layers) and the study must show the summary's names
+        result = _analyze(
+            [{"circuit": "R732", "cnum": "X10A", "cav": "8", "sc": "CG3"}],
+            [{"circuit": "R732", "cnum": "Y10A", "cav": "8", "sc": "CG3&(CYC/CYF)"}],
+            LEFT_BUILDS, RIGHT_BUILDS,
+        )
+        names = {f.harness_with for f in result.findings} \
+            | {f.harness_without for f in result.findings} \
+            | {f.harness_a for f in result.study.findings} \
+            | {f.harness_b for f in result.study.findings}
+        leaked = {n for n in names if "cx_" in str(n) or ".xlsm" in str(n)}
+        assert not leaked, f"complexity filenames leaked into findings: {leaked}"
+
+    def test_route_gap_reports_as_within_one_harness(self):
+        # a route gap lives inside ONE harness; the report must not print the
+        # harness on both sides ("BODY LEFT ↔ BODY LEFT" misread as an inline)
+        import io
+        from openpyxl import load_workbook
+        result = _analyze(
+            [{"circuit": "A960", "cnum": "X20A", "cav": "1", "sc": "CYF/CY3"},
+             {"circuit": "A960", "cnum": "X21A", "cav": "1", "sc": "CYF"}],
+            [{"circuit": "A960", "cnum": "Y20A", "cav": "1", "sc": "CYF/CY3"},
+             {"circuit": "A960", "cnum": "Y21A", "cav": "1", "sc": "CYF"}],
+            LEFT_BUILDS, RIGHT_BUILDS,
+        )
+        gap = next(f for f in result.findings if f.kind == "route_window_gap")
+        assert gap.within_harness
+        assert gap.crossings and gap.inline not in gap.crossings
+
+        wb = load_workbook(io.BytesIO(render_report(result, {"dispositions": {}})))
+        rows = list(wb["Findings"].iter_rows(values_only=True))
+        hdr = rows[0]
+        for r in rows[1:]:
+            if r[hdr.index("Kind")] == "route_window_gap":
+                missing_on = str(r[hdr.index("Missing on")])
+                has_wire = str(r[hdr.index("Has wire")])
+                assert missing_on != has_wire
+                assert "within" in missing_on

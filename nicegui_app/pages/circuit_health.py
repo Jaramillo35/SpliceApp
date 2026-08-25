@@ -295,7 +295,8 @@ def page() -> None:
             with ui.row().classes("w-full gap-3 flex-wrap"):
                 with ui.card().classes("sx-card flex-1 min-w-[22rem]"):
                     ui.label("Where — open findings per harness pair "
-                             "(click a cell to scope)") \
+                             "(click a cell to scope; diagonal = within-harness "
+                             "route gaps)") \
                         .classes("text-xs font-bold sx-muted")
                     ui.echart(matrix_options(open_f),
                               on_point_click=lambda e: set_pair(e)) \
@@ -428,8 +429,31 @@ def page() -> None:
                         .props("outline dense no-caps")
 
         def _diagram(f) -> None:
-            """Two harnesses and the inline between them, drawn."""
+            """Two harnesses and the inline between them, drawn — or, for a
+            route gap, ONE harness and its crossings (a route gap lives within
+            a single harness; drawing it as A ↔ A misread as an inline)."""
             ok, bad = theme.STATUS["ok"], theme.STATUS["blocker"]
+            if f.kind == "route_window_gap":
+                with ui.row().classes("items-center w-full gap-3 my-2 flex-wrap"):
+                    with ui.column().classes("items-center gap-0 px-3 py-2 rounded-lg") \
+                            .style(f"background:{theme.SURFACE_2};"
+                                   f"border:1px solid {theme.BRAND}66"):
+                        ui.icon("cable").style(f"color:{theme.BRAND}")
+                        ui.label(f.harness_with).classes("text-xs font-semibold")
+                        ui.label("one harness").classes("text-[10px] sx-muted")
+                    with ui.column().classes("gap-1"):
+                        for crossing in f.crossings:
+                            with ui.row().classes("items-center gap-1"):
+                                ui.icon("check_circle").classes("text-sm") \
+                                    .style(f"color:{ok}")
+                                ui.label(f"{crossing} — has {f.circuit} variants") \
+                                    .classes("text-xs sx-mono")
+                        with ui.row().classes("items-center gap-1"):
+                            ui.icon("cancel").classes("text-sm").style(f"color:{bad}")
+                            ui.label(f"{f.inline} — no variant in this window") \
+                                .classes("text-xs sx-mono font-bold") \
+                                .style(f"color:{bad}")
+                return
             one_sided = f.kind == "one_sided_window"
             with ui.row().classes("items-center w-full gap-0 my-2"):
                 with ui.column().classes("items-center gap-0 px-3 py-2 rounded-lg") \

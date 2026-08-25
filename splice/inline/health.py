@@ -127,6 +127,13 @@ class HealthFinding:
     builds_with: List[str] = field(default_factory=list)
     builds_without: List[str] = field(default_factory=list)
     detail: str = ""
+    #: route gaps only: the crossings where the circuit IS covered — the
+    #: finding lives within one harness, and presentation must say so
+    crossings: List[str] = field(default_factory=list)
+
+    @property
+    def within_harness(self) -> bool:
+        return self.kind == "route_window_gap"
 
     @property
     def fingerprint(self) -> str:
@@ -379,6 +386,7 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
                     inline=connector, cavity="", circuit=circuit,
                     harness_with=h_name, harness_without=h_name,
                     window=gap, builds_with=_parts(gap_builds),
+                    crossings=elsewhere,
                     detail=(f"{circuit} is live on {h_name} in window {gap} "
                             f"(it crosses {', '.join(elsewhere)}) but has no "
                             f"variant at {connector} there — "
@@ -463,8 +471,12 @@ def render_report(result: HealthResult, baseline: dict) -> bytes:
     dispositions = baseline.get("dispositions", {})
     for f in result.findings:
         d = dispositions.get(f.fingerprint, {})
+        # A route gap lives within ONE harness; printing the harness in both
+        # columns read as "BODY LEFT ↔ BODY LEFT" (field report, 2026-08-24).
+        missing_on = (f"(within {f.harness_with} — no variant at {f.inline})"
+                      if f.within_harness else f.harness_without)
         ws.append([f.severity, f.kind, f.inline, f.cavity, f.circuit, f.window,
-                   f.harness_with, f.harness_without,
+                   f.harness_with, missing_on,
                    ", ".join(f.builds_with), ", ".join(f.builds_without),
                    f.detail, d.get("verdict", "OPEN"), d.get("reason", ""),
                    d.get("by", ""), f.fingerprint])
