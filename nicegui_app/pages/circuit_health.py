@@ -383,10 +383,15 @@ def page() -> None:
             _diagram(f)
 
             if f.window:
-                ui.label("Option window with no wire") \
+                ui.label("Option window with no wire (minimized)") \
                     .classes("text-xs font-bold sx-muted mt-1")
-                ui.label(f.window).classes("text-xs sx-mono p-2 rounded w-full") \
+                ui.label(f.window_display).classes(
+                    "text-sm sx-mono p-2 rounded w-full") \
                     .style(f"background:{theme.CANVAS}")
+                if f.window_short and f.window_short != f.window:
+                    with ui.expansion("raw expression").classes("w-full") \
+                            .props("dense header-class=text-xs"):
+                        ui.label(f.window).classes("text-xs sx-mono break-all")
             ui.label(f.detail).classes("text-sm sx-muted")
 
             with ui.row().classes("w-full gap-4 flex-wrap mt-1"):

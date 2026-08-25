@@ -37,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from splice.inline import salescode
+from splice.inline import boolmin, salescode
 from splice.inline.model import CircuitEnd, Harness, InlinePair
 from splice.inline.validate import run_study
 
@@ -130,6 +130,13 @@ class HealthFinding:
     #: route gaps only: the crossings where the circuit IS covered — the
     #: finding lives within one harness, and presentation must say so
     crossings: List[str] = field(default_factory=list)
+    #: minimal boolean form of ``window`` for display; the raw window stays
+    #: on ``window`` because fingerprints (and stored dispositions) hash it
+    window_short: str = ""
+
+    @property
+    def window_display(self) -> str:
+        return self.window_short or self.window
 
     @property
     def within_harness(self) -> bool:
@@ -315,6 +322,7 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
                 window = window_minus(u_have, u_lack)
                 if window is None:
                     continue  # lacking side unconditional: covered by definition
+                short = boolmin.minimize(window)
                 lacking = builds_where(h_lack, window)
                 having = builds_where(h_have, window)
                 if lacking:
@@ -323,9 +331,9 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
                         inline=f"{pair.connector_a} ↔ {pair.connector_b}",
                         cavity=cavity, circuit=circuits,
                         harness_with=n_have, harness_without=n_lack,
-                        window=window,
+                        window=window, window_short=short,
                         builds_with=_parts(having), builds_without=_parts(lacking),
-                        detail=(f"In window {window}, {n_have} has a wire at "
+                        detail=(f"In window {short}, {n_have} has a wire at "
                                 f"{c_have} cavity {cavity} but {n_lack} builds "
                                 f"{len(lacking)} part number(s) with no wire at "
                                 f"{c_lack}."),
@@ -336,15 +344,16 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
                         inline=f"{pair.connector_a} ↔ {pair.connector_b}",
                         cavity=cavity, circuit=circuits,
                         harness_with=n_have, harness_without=n_lack,
-                        window=window, builds_with=_parts(having),
-                        detail=(f"Window {window} builds only on {n_have} "
+                        window=window, window_short=short,
+                        builds_with=_parts(having),
+                        detail=(f"Window {short} builds only on {n_have} "
                                 f"({len(having)} build(s)); {n_lack} has no "
                                 "build there — possible revision/config skew."),
                     ))
                 else:
                     result.cleared.append(ClearedProof(
                         inline=f"{pair.connector_a} ↔ {pair.connector_b}",
-                        cavity=cavity, window=window,
+                        cavity=cavity, window=short,
                         detail=(f"Window never builds on either harness — "
                                 f"{n_have}'s extra coverage is provably unreachable."),
                     ))
@@ -380,14 +389,16 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
                 gap_builds = builds_where(harness, gap)
                 if not gap_builds:
                     continue
+                short = boolmin.minimize(gap)
                 elsewhere = sorted(set(at_connector) - {connector})
                 result.findings.append(HealthFinding(
                     severity=SEV_HIGH, kind="route_window_gap",
                     inline=connector, cavity="", circuit=circuit,
                     harness_with=h_name, harness_without=h_name,
-                    window=gap, builds_with=_parts(gap_builds),
+                    window=gap, window_short=short,
+                    builds_with=_parts(gap_builds),
                     crossings=elsewhere,
-                    detail=(f"{circuit} is live on {h_name} in window {gap} "
+                    detail=(f"{circuit} is live on {h_name} in window {short} "
                             f"(it crosses {', '.join(elsewhere)}) but has no "
                             f"variant at {connector} there — "
                             f"{len(gap_builds)} build(s) affected."),
@@ -475,7 +486,8 @@ def render_report(result: HealthResult, baseline: dict) -> bytes:
         # columns read as "BODY LEFT ↔ BODY LEFT" (field report, 2026-08-24).
         missing_on = (f"(within {f.harness_with} — no variant at {f.inline})"
                       if f.within_harness else f.harness_without)
-        ws.append([f.severity, f.kind, f.inline, f.cavity, f.circuit, f.window,
+        ws.append([f.severity, f.kind, f.inline, f.cavity, f.circuit,
+                   f.window_display,
                    f.harness_with, missing_on,
                    ", ".join(f.builds_with), ", ".join(f.builds_without),
                    f.detail, d.get("verdict", "OPEN"), d.get("reason", ""),
