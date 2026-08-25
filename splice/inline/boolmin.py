@@ -124,39 +124,96 @@ def _format(cover: List[Tuple[int, int]], names: List[str]) -> str:
 # --------------------------------------------------------------------------- api
 
 @lru_cache(maxsize=4096)
-def minimize(expression: str) -> str:
+def minimize(expression: str, configurations: tuple = ()) -> str:
     """The minimal display form of ``expression`` — or the original whenever
-    minimization is unsafe, impossible, or simply not shorter."""
+    minimization is unsafe, impossible, or simply not shorter.
+
+    ``configurations`` — optional tuple of ``(codes, vocabulary)`` frozenset
+    pairs describing the builds the relevant complexity tables actually ship
+    (vocabulary = the codes that harness tracks; a window code outside it is
+    treated as present, mirroring ``builds_where``). When given, only the
+    assignments realizable by those builds are *cares*; every unbuildable
+    combination is a don't-care Quine-McCluskey may exploit. This is what
+    lets XZ2≡XZ3 complexities collapse ``-XZ2&(.../XZ3)`` to
+    ``-XZ2&-XZ3&(...)``-style forms: the XZ3-without-XZ2 branch is
+    unbuildable, so it need not be represented. Equivalence is then
+    guaranteed on every buildable configuration (and only claimed there).
+    """
     if not expression or not expression.strip():
         return expression
     try:
         names = sorted(salescode.codes_in(expression))
         if not names or len(names) > MAX_VARS:
             return expression
-
         n = len(names)
+
+        # project the buildable configurations onto the window's codes
+        cares: set[int] | None = None
+        if configurations:
+            cares = set()
+            for codes, vocabulary in configurations:
+                assignment = 0
+                for i, name in enumerate(names):
+                    known = vocabulary is None or name in vocabulary
+                    if (name in codes) or not known:
+                        assignment |= 1 << i
+                cares.add(assignment)
+            if not cares:
+                cares = None
+
         table: List[bool] = []
         minterms: List[int] = []
+        care_true = care_false = 0
         for assignment in range(1 << n):
             on = {names[i] for i in range(n) if assignment & (1 << i)}
             value = salescode.evaluate(expression, on)
             table.append(value)
             if value:
                 minterms.append(assignment)
+            if cares is not None and assignment in cares:
+                if value:
+                    care_true += 1
+                else:
+                    care_false += 1
         if not minterms or len(minterms) == 1 << n:
             return expression  # never/always true: keep the evidence verbose
 
-        primes = _prime_implicants(minterms, n)
-        short = _format(_cover(primes, minterms), names)
+        if cares is not None:
+            if not care_true or not care_false:
+                # constant on every buildable configuration — a constant
+                # display would hide the evidence; keep the raw window
+                cares = None
+            else:
+                cover_terms = [m for m in minterms if m in cares]
+                dont_cares = [a for a in range(1 << n) if a not in cares]
+                primes = _prime_implicants(cover_terms + dont_cares, n)
+                short = _format(_cover(primes, cover_terms), names)
+        if cares is None:
+            primes = _prime_implicants(minterms, n)
+            short = _format(_cover(primes, minterms), names)
         if not short or len(short) >= len(expression):
             return expression
 
-        # safety: the short form must agree with the original on EVERY
-        # assignment under the engine's evaluator, or the original is kept
-        for assignment in range(1 << n):
+        # safety: the short form must agree with the original on every
+        # assignment that matters (all of them, or the buildable cares)
+        checked = cares if cares is not None else range(1 << n)
+        for assignment in checked:
             on = {names[i] for i in range(n) if assignment & (1 << i)}
             if salescode.evaluate(short, on) != table[assignment]:
                 return expression
         return short
     except Exception:
         return expression
+
+
+def care_configurations(*harnesses) -> tuple:
+    """Hashable build/vocabulary pairs for :func:`minimize`, from Harness
+    objects (duplicates collapse; harnesses without builds contribute none)."""
+    pairs = set()
+    for harness in harnesses:
+        if harness is None or not getattr(harness, "builds", None):
+            continue
+        vocabulary = frozenset(getattr(harness, "complexity_codes", ()) or ())
+        for build in harness.builds:
+            pairs.add((frozenset(build.codes), vocabulary or None))
+    return tuple(sorted(pairs, key=str))

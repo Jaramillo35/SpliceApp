@@ -322,7 +322,8 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
                 window = window_minus(u_have, u_lack)
                 if window is None:
                     continue  # lacking side unconditional: covered by definition
-                short = boolmin.minimize(window)
+                short = boolmin.minimize(
+                    window, boolmin.care_configurations(h_have, h_lack))
                 lacking = builds_where(h_lack, window)
                 having = builds_where(h_have, window)
                 if lacking:
@@ -389,7 +390,8 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
                 gap_builds = builds_where(harness, gap)
                 if not gap_builds:
                     continue
-                short = boolmin.minimize(gap)
+                short = boolmin.minimize(
+                    gap, boolmin.care_configurations(harness))
                 elsewhere = sorted(set(at_connector) - {connector})
                 result.findings.append(HealthFinding(
                     severity=SEV_HIGH, kind="route_window_gap",

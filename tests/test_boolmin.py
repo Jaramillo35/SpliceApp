@@ -53,6 +53,54 @@ class TestReductions:
         assert len(short) <= len("(X&(/A/B))/(X&A)")
 
 
+class TestDontCares:
+    """Reduction constrained to the buildable configurations of the
+    complexity tables (field question 2026-08-25: XZ2 and XZ3 share the same
+    applicability in Body Left, so windows must not display phantom
+    XZ3-without-XZ2 branches)."""
+
+    def _bl(self):
+        from splice.inline.model import Build, Harness
+        return Harness(name="BODY LEFT", def_id="1", builds=[
+            Build("B1", codes=frozenset({"XZ2", "XZ3", "RHH"})),
+            Build("B2", codes=frozenset({"XZ2", "XZ3", "RTC"})),
+            Build("B3", codes=frozenset({"XZ2", "XZ3", "RDU"})),
+            Build("B4", codes=frozenset({"XZ2", "XZ3"})),
+            Build("B5", codes=frozenset({"RHH"})),
+            Build("B6", codes=frozenset({"RTC"})),
+            Build("B7", codes=frozenset({"RDU"})),
+            Build("B8", codes=frozenset()),
+        ], complexity_codes={"XZ2", "XZ3", "RHH", "RTC", "RDU"})
+
+    def test_co_occurring_codes_collapse_the_phantom_branch(self):
+        from splice.inline.boolmin import care_configurations
+        raw = ("(((XZ2&(RHH/RTC/RDU))/(XZ2&-RHH&-RDU))/"
+               "(((RHH/RTC/RDU)&-XZ2&-XZ3)/((XZ2/XZ3)&(-RHH&-RDU))/"
+               "(XZ2/XZ3&(/RHH/RTC/RDU)))/"
+               "(((RHH/RTC/RDU)&-XZ2&-XZ3)/(XZ2/XZ3&(RHH/RTC/RDU))))"
+               "&-((XZ2&(RHH/RTC/RDU))/(XZ2&-RHH&-RDU))")
+        short = minimize(raw, care_configurations(self._bl()))
+        assert short == "-XZ2&(RDU/RHH/RTC)"
+
+    def test_constrained_form_selects_the_same_builds(self):
+        from splice.inline.boolmin import care_configurations
+        from splice.inline.health import builds_where
+        bl = self._bl()
+        raw = "((XZ2/XZ3)&(-RHH&-RDU))&-((XZ2)&(-RHH&-RDU))"
+        short = minimize(raw, care_configurations(bl))
+        raw_builds = {b.part_number for b in builds_where(bl, raw)}
+        short_builds = {b.part_number for b in builds_where(bl, short)}
+        assert raw_builds == short_builds
+
+    def test_constant_on_buildables_keeps_the_raw_evidence(self):
+        from splice.inline.boolmin import care_configurations
+        bl = self._bl()
+        # XZ3&-XZ2 never builds: the window is false on every buildable
+        # configuration — a constant display would hide the evidence
+        raw = "XZ3&-XZ2&RHH"
+        assert minimize(raw, care_configurations(bl)) == raw
+
+
 class TestSafety:
     def test_result_is_always_equivalent(self):
         cases = [
@@ -90,7 +138,9 @@ class TestHealthIntegration:
             LEFT_BUILDS, RIGHT_BUILDS,
         )
         f = next(x for x in result.findings if x.kind == "one_sided_window")
-        assert f.window_short == "CG3&-CYC&-CYF"
+        # complexity-constrained: CG3 is in every build and CYC in none, so
+        # both literals are vacuous on the buildable set — only -CYF remains
+        assert f.window_short == "-CYF"
         assert f.window_short in f.detail
         assert f.window == "((CG3))&-((CG3&(CYC/CYF)))"  # raw preserved
         # the fingerprint hashes the RAW window — dispositions survive
@@ -116,4 +166,4 @@ class TestHealthIntegration:
         hdr = rows[0]
         windows = [str(r[hdr.index("Window (sales)")]) for r in rows[1:]
                    if r[hdr.index("Kind")] == "one_sided_window"]
-        assert "CG3&-CYC&-CYF" in windows
+        assert "-CYF" in windows
