@@ -189,6 +189,16 @@ def page() -> None:
                  "The review workbench: the charts are the filters — click a "
                  "matrix cell, a kind, or a circuit to scope the queue."):
 
+        with ui.expansion("ℹ️ How this tool works — SE review guide") \
+                .classes("w-full sx-card px-2").props("dense"):
+            for title, lines in health.REVIEWER_GUIDE:
+                ui.label(title).classes("text-sm font-bold mt-2")
+                for line in lines:
+                    ui.label(f"• {line}").classes("text-xs sx-muted")
+            ui.label("The exported report carries this guide as its Read Me "
+                     "sheet, so reviewers without the app see it too.") \
+                .classes("text-xs sx-muted mt-2 italic")
+
         # -------- metrics + progress (rendered inside the workbench) -------
         def metrics_strip(r, baseline) -> None:
             open_f = r.open_findings(baseline)

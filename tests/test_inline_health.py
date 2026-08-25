@@ -205,8 +205,13 @@ class TestReport:
         disposition(baseline, result.findings[0], "Defect", "file SECR", "SE")
         data = render_report(result, baseline)
         wb = openpyxl.load_workbook(io.BytesIO(data))
-        assert set(wb.sheetnames) == {"Findings", "Scorecard", "Inputs",
-                                      "Cleared proofs", "Sign-off"}
+        assert set(wb.sheetnames) == {"Read Me", "Findings", "Scorecard",
+                                      "Inputs", "Cleared proofs", "Sign-off"}
+        # the reviewer guide ships inside the report itself
+        readme = " ".join(str(c.value) for row in wb["Read Me"].iter_rows()
+                          for c in row if c.value)
+        assert "Technical considerations" in readme
+        assert "minimized against the BUILDABLE" in readme
         rows = list(wb["Findings"].iter_rows(values_only=True))
         assert rows[1][11] == "Defect"  # disposition column round-trips
 

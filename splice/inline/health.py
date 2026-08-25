@@ -465,6 +465,70 @@ def sign_off(baseline: dict, by: str, note: str = "") -> dict:
 # Report workbook
 # ---------------------------------------------------------------------------
 
+#: The reviewer guide embedded in every report (and shown in the app).
+#: (title, lines) sections; keep in sync with the workbench guide.
+REVIEWER_GUIDE = [
+    ("What this report is", [
+        "Every inline crossing was checked three ways: cavity continuity "
+        "(wire on one side, nothing on the other), option-window coverage "
+        "(both sides wired, but their sales conditions cover different "
+        "vehicles), and route completeness (a circuit live on a harness in a "
+        "window at some crossings but absent at another).",
+        "A finding exists ONLY if real build part numbers satisfy its window "
+        "— everything is validated against the Harness Complexity tables.",
+    ]),
+    ("Severities", [
+        "Blocker: builds exist with a wire on one side and nothing opposite "
+        "— a vehicle will be built with a dead-ended circuit. Review first.",
+        "High: route gaps (within ONE harness) and configuration skew — "
+        "usually real, but routing can legitimately differ by option; these "
+        "need engineering judgment.",
+        "Review: attribute or bookkeeping differences worth a look.",
+        "Auto-cleared: the algebra PROVED the window never builds on either "
+        "harness — no action needed; kept in its own sheet for audit.",
+    ]),
+    ("Technical considerations for the review", [
+        "Files are matched by the DEF id INSIDE each complexity file, never "
+        "by filename; unusable files are listed on the Inputs sheet.",
+        "Check the Inputs sheet dates first: findings that involve a stale "
+        "complexity revision may reflect old data, not defects. A skew above "
+        "30 days is flagged.",
+        "Window expressions are minimized against the BUILDABLE "
+        "configurations: codes carried by every build (or by none) vanish as "
+        "vacuous, and co-occurring codes collapse (if XZ2 and XZ3 always "
+        "ship together, -XZ2 implies -XZ3). The raw expression is preserved "
+        "internally and the minimal form is machine-verified equivalent on "
+        "every buildable configuration.",
+        "Codes a harness's complexity does not track are treated as PRESENT "
+        "(unknown, not absent) — silence never manufactures a finding, but "
+        "it can hide one: if a code matters to a harness, its complexity "
+        "must track it.",
+        "The build lists are the evidence: 'Builds w/o wire' names the part "
+        "numbers that would carry a dead-ended circuit (list capped; the "
+        "Detail column carries the full count).",
+        "A route gap lives WITHIN one harness — 'Missing on' says so "
+        "explicitly. The question to answer: should this circuit cross this "
+        "inline in this window, or does it legitimately route elsewhere?",
+        "Dispositions are remembered by fingerprint: re-running with the "
+        "same inputs re-surfaces only new findings. If engineering edits a "
+        "sales expression, its finding returns as new — by design, because "
+        "the evidence changed.",
+        "Sign-off is only possible with zero open Blockers/Highs; this "
+        "report's Findings sheet carries each disposition, reason, and "
+        "reviewer as the audit trail.",
+        "Attribute marks (suffix/size/sales differences inside continuous "
+        "cavities) are recorded in the Continuity audit, pending the "
+        "wire-attribute equivalence table — they are notes, not verdicts.",
+    ]),
+    ("Suggested review order", [
+        "1. Inputs sheet: completeness and revision skew.",
+        "2. Blockers, largest affected-build counts first.",
+        "3. Route gaps, grouped by harness.",
+        "4. Review items, then spot-check a few auto-cleared proofs.",
+    ]),
+]
+
+
 def render_report(result: HealthResult, baseline: dict) -> bytes:
     import openpyxl
     from openpyxl.styles import Font
@@ -472,8 +536,23 @@ def render_report(result: HealthResult, baseline: dict) -> bytes:
     wb = openpyxl.Workbook()
     bold = Font(bold=True)
 
-    ws = wb.active
-    ws.title = "Findings"
+    ws0 = wb.active
+    ws0.title = "Read Me"
+    row = 1
+    for title, lines in REVIEWER_GUIDE:
+        cell = ws0.cell(row=row, column=1, value=title)
+        cell.font = bold
+        row += 1
+        for line in lines:
+            ws0.cell(row=row, column=1, value=line)
+            row += 1
+        row += 1
+    ws0.column_dimensions["A"].width = 110
+    for r in ws0.iter_rows(min_col=1, max_col=1):
+        for cell in r:
+            cell.alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
+
+    ws = wb.create_sheet("Findings")
     headers = ["Severity", "Kind", "Inline", "Cavity", "Circuit(s)",
                "Window (sales)", "Has wire", "Missing on",
                "Builds w/ wire", "Builds w/o wire", "Detail",
