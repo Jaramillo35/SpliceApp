@@ -274,14 +274,12 @@ class TestPresentation:
                 assert "within" in missing_on
 
 
-class TestConflictedCavityDedup:
-    def test_inconsistent_cavity_yields_one_finding_not_two(self):
-        """Field report (L206/N0 @ X103A cav 14): a cavity whose circuits
-        disagree must not ALSO get a window finding — the window algebra
-        would compare the coverage of two different circuits."""
+class TestConflictedCavityMerge:
+    def test_inconsistent_cavity_yields_one_complete_finding(self):
+        """Field reports (L206/N0 @ X103A cav 14): first double-reported,
+        then suppressed the window — the fix is ONE finding carrying the
+        identity conflict AND the merged coverage picture."""
         result = _analyze(
-            # different circuits face each other, with a coverage hole that
-            # WOULD trigger a one_sided_window if not suppressed
             [{"circuit": "N0", "cnum": "X10A", "cav": "14", "sc": "CG3"}],
             [{"circuit": "L206", "cnum": "Y10A", "cav": "14",
               "sc": "CG3&(CYC/CYF)"}],
@@ -289,7 +287,37 @@ class TestConflictedCavityDedup:
         )
         at_cavity = [f for f in result.findings if f.cavity == "14"]
         assert len(at_cavity) == 1
-        assert at_cavity[0].kind == "cavity"
-        assert "suppressed" in at_cavity[0].detail
-        assert not [f for f in result.findings
-                    if f.kind == "one_sided_window" and f.cavity == "14"]
+        f = at_cavity[0]
+        assert f.kind == "cavity" and f.severity == SEV_BLOCKER
+        assert "Coverage also differs" in f.detail
+        assert f.builds_without and "R-CY3" in f.builds_without
+        assert f.window_short  # merged window shown, raw window stays ""
+        assert f.window == ""  # fingerprint basis unchanged
+
+
+class TestIntegrityGrouping:
+    def test_rows_sharing_a_root_cause_collapse_to_one_finding(self):
+        """Field report (R5/A942B/P968): one truncated part number in the
+        summary columns flagged every row marking that build — group them."""
+        result = _analyze(
+            [{"circuit": "R5", "cnum": "X10A", "cav": "1", "sc": "",
+              "builds": ["L-CYF"]},
+             {"circuit": "A942", "cnum": "X10A", "cav": "2", "sc": "",
+              "builds": ["L-CYF"]}],
+            [{"circuit": "R5", "cnum": "Y10A", "cav": "1", "sc": ""},
+             {"circuit": "A942", "cnum": "Y10A", "cav": "2", "sc": ""}],
+            LEFT_BUILDS, RIGHT_BUILDS,
+        )
+        groups = [f for f in result.findings if f.kind == "integrity"]
+        assert len(groups) == 1
+        g = groups[0]
+        assert "2 row(s)" in g.circuit
+        assert "A942" in g.circuit and "R5" in g.circuit
+        assert "L-CY3" in g.detail  # the expression-only build is named
+
+    def test_truncation_hint_names_the_twin_pns(self):
+        from splice.inline.health import _truncation_hint
+        hint = _truncation_hint(("687894643A",), ("687894643AA",))
+        assert "687894643A" in hint and "687894643AA" in hint
+        assert "truncated" in hint
+        assert _truncation_hint(("AAA",), ("BBB",)) == ""

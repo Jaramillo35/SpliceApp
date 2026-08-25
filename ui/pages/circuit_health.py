@@ -36,6 +36,7 @@ KIND_LABEL = {
     "cavity": "Cavity mismatch",
     "one_sided_window": "Missing variant window",
     "route_window_gap": "Route gap",
+    "integrity": "Applicability mismatch",
 }
 
 
@@ -67,17 +68,17 @@ be built. This page checks that three ways:
 1. **Cavity mismatch** — one harness has a wire in a cavity and the mate has
    nothing (or a different circuit) there. The classic, visible defect.
 2. **Missing variant window** — both sides have wires, *but their sales-code
-   conditions don't cover the same vehicles*. Example: Body_Left sends `R732`
-   for every `CG3` vehicle, but Body_Right only receives it for `CG3&(CYC/CYF)`
-   — so a `CG3&CY3` vehicle builds a wire on the left that dead-ends at the
+   conditions don't cover the same vehicles*. Example: the left harness sends `Cx1`
+   for every `S1` vehicle, but the mating harness only receives it for `S1&(S2/S3)`
+   — so an `S1&S4` vehicle builds a wire on the left that dead-ends at the
    inline. The tool unions each side's conditions, subtracts one from the
    other, and checks the leftover *window* against the complexity tables: if
    real build part numbers exist in that window on the side with no wire,
    that's a finding — with the affected part numbers listed as evidence.
 3. **Route gap** — a circuit is live on a harness in some option window (it
    crosses other inlines there) but has **no variant at one of its crossings**
-   in that same window. This found the `A960` defect: present for
-   `XZ2` vehicles at two inlines, absent at the Body_Left↔Body_Right one.
+   in that same window. Example: a circuit present for
+   `S1` vehicles at two inlines, absent at the left↔right harness one.
 
 **What it needs.** The program **Circuit Summary** (the wires and their sales
 codes) plus **one Harness Complexity file per harness** (which part numbers
@@ -161,7 +162,7 @@ def _finding_row(f, baseline, idx):
     d = baseline.get("dispositions", {}).get(f.fingerprint)
     with st.expander(_finding_title(f), expanded=False):
         st.write(f.detail)
-        if f.window:
+        if getattr(f, "window_short", "") or f.window:
             st.code(getattr(f, "window_short", "") or f.window, language=None)
         cols = st.columns(2)
         if f.builds_with:

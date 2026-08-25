@@ -206,6 +206,42 @@ class HealthResult:
 # Gate 0 — inputs
 # ---------------------------------------------------------------------------
 
+_INTEGRITY_LISTS = re.compile(
+    r"Only in columns: (\[.*?\]|—); only in the expression: (\[.*?\]|—)")
+
+
+def _integrity_sets(reason: str) -> tuple:
+    """The two part-number sets out of an integrity finding's reason text."""
+    import ast as _ast
+    m = _INTEGRITY_LISTS.search(reason or "")
+    if not m:
+        return (), ()
+
+    def parse(chunk: str) -> tuple:
+        if not chunk.startswith("["):
+            return ()
+        try:
+            return tuple(sorted(str(x) for x in _ast.literal_eval(chunk)))
+        except Exception:
+            return (chunk,)
+
+    return parse(m.group(1)), parse(m.group(2))
+
+
+def _truncation_hint(cols: tuple, expr: tuple) -> str:
+    """When a column PN and an expression PN differ only by a trailing
+    fragment, the likely root cause is a truncated part number in one
+    source — say so (field report: '687894643A' vs '687894643AA')."""
+    for a in cols:
+        for b in expr:
+            if a != b and (a.startswith(b) or b.startswith(a)):
+                return (f" The pair '{a}' / '{b}' differs only by a trailing "
+                        "fragment — likely a truncated part number in the "
+                        "Circuit Summary column header or the complexity "
+                        "table; fix that one cell and every row here clears.")
+    return ""
+
+
 def file_date(filename: str) -> Optional[datetime]:
     m = _DATE_IN_NAME.search(filename or "")
     if not m:
@@ -277,26 +313,50 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
     study = run_study(summary, ends, complexity, pairs, unmated)
     result.study = study
     # Cavities whose circuits disagree (or are never built together) get ONE
-    # finding: running the window algebra on top compares the coverage of two
-    # DIFFERENT circuits and double-reports the same cavity (field report:
-    # L206/N0 at X103A cavity 14 produced two Blocker rows).
-    conflicted: Set[tuple] = set()
+    # finding carrying the complete picture: the identity conflict AND the
+    # coverage windows, merged (field reports: L206/N0 at X103A cavity 14
+    # first double-reported, then lost the window when suppressed).
+    conflicted: Dict[tuple, HealthFinding] = {}
+    integrity_groups: Dict[tuple, list] = {}
     for f in study.findings:
         sev = _VERDICT_SEVERITY.get(f.verdict)
         if sev is None or f.verdict == "Continuous":
             continue
         if sev == SEV_INFO:
             continue  # unmated-connector notes belong to Gate 0 context
-        detail = f.reason
-        if f.verdict in ("Inconsistent definition", "Conditions exclusive"):
-            conflicted.add((f.connector_a, f.connector_b, f.cavity))
-            detail = (f"{f.reason} (Option-window analysis is suppressed at "
-                      "this cavity until the circuit conflict is resolved.)")
-        result.findings.append(HealthFinding(
+        if f.verdict == "Applicability sources disagree":
+            # hundreds of rows can share ONE root cause (e.g. a truncated
+            # part number in a summary column header) — group them
+            cols, expr = _integrity_sets(f.reason)
+            integrity_groups.setdefault(
+                (f.harness_a, cols, expr), []).append(f)
+            continue
+        finding = HealthFinding(
             severity=sev, kind="cavity", inline=f.inline, cavity=f.cavity,
             circuit=", ".join(sorted(set(f.circuits_a + f.circuits_b))),
             harness_with=f.harness_a, harness_without=f.harness_b,
-            window="", detail=detail,
+            window="", detail=f.reason,
+        )
+        if f.verdict in ("Inconsistent definition", "Conditions exclusive"):
+            conflicted[(f.connector_a, f.connector_b, f.cavity)] = finding
+        result.findings.append(finding)
+
+    for (h_name, cols, expr), group in sorted(integrity_groups.items(),
+                                              key=lambda kv: str(kv[0])):
+        circuits = sorted({c for f in group for c in f.circuits_a})
+        shown = ", ".join(circuits[:6]) + ("…" if len(circuits) > 6 else "")
+        hint = _truncation_hint(cols, expr)
+        result.findings.append(HealthFinding(
+            severity=SEV_HIGH, kind="integrity", inline=h_name, cavity="",
+            circuit=f"{len(group)} row(s): {shown}",
+            harness_with=h_name, harness_without=h_name,
+            window=f"columns:{'/'.join(cols) or '—'} vs "
+                   f"expression:{'/'.join(expr) or '—'}",
+            detail=(f"The Circuit Summary's part-number columns and the "
+                    f"complexity table disagree on {len(group)} row(s) of "
+                    f"{h_name} (circuits {shown}). Marked only in the "
+                    f"columns: {list(cols) or '—'}; resolved only by the "
+                    f"expression: {list(expr) or '—'}.{hint}"),
         ))
 
     # ---- Layer 2: option-window coverage ---------------------------------
@@ -322,8 +382,8 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
             side_a, side_b = ends_a.get(cavity, []), ends_b.get(cavity, [])
             if not side_a or not side_b:
                 continue  # layer 1 already decided fully empty sides
-            if (pair.connector_a, pair.connector_b, cavity) in conflicted:
-                continue  # one finding per conflicted cavity — see above
+            merge_into = conflicted.get((pair.connector_a, pair.connector_b,
+                                         cavity))
             result.cavities_checked += 1
             u_a, u_b = union_expression(side_a), union_expression(side_b)
             circuits = ", ".join(sorted({e.circuit for e in side_a + side_b}))
@@ -338,6 +398,24 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
                     window, boolmin.care_configurations(h_have, h_lack))
                 lacking = builds_where(h_lack, window)
                 having = builds_where(h_have, window)
+                if merge_into is not None:
+                    # conflicted cavity: fold the coverage picture into the
+                    # ONE cavity finding instead of emitting a second row
+                    if lacking:
+                        merge_into.severity = SEV_BLOCKER
+                        merge_into.window_short = merge_into.window_short or short
+                        merge_into.builds_with = list(dict.fromkeys(
+                            merge_into.builds_with
+                            + [b.part_number for b in having]))[:8]
+                        merge_into.builds_without = list(dict.fromkeys(
+                            merge_into.builds_without
+                            + [b.part_number for b in lacking]))[:8]
+                        merge_into.detail += (
+                            f" Coverage also differs: in window {short}, "
+                            f"{n_have} has a wire ({len(having)} build(s)) "
+                            f"while {n_lack} has none ({len(lacking)} "
+                            f"build(s)).")
+                    continue
                 if lacking:
                     result.findings.append(HealthFinding(
                         severity=SEV_BLOCKER, kind="one_sided_window",

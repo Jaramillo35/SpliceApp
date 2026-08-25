@@ -30,7 +30,8 @@ BASELINE_PATH = DATA_DIR / "inline_health" / "baseline.json"
 SEV_KIND = {"Blocker": "blocker", "High": "high", "Review": "review"}
 SEV_ORDER = ["Blocker", "High", "Review"]
 KIND_LABEL = {"cavity": "Cavity mismatch", "one_sided_window": "Missing variant window",
-              "route_window_gap": "Route gap"}
+              "route_window_gap": "Route gap",
+              "integrity": "Applicability mismatch"}
 
 
 # --------------------------------------------------------------------------- pure helpers
@@ -392,7 +393,7 @@ def page() -> None:
 
             _diagram(f)
 
-            if f.window:
+            if f.window_display:
                 ui.label("Option window with no wire (minimized)") \
                     .classes("text-xs font-bold sx-muted mt-1")
                 ui.label(f.window_display).classes(
