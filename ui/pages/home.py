@@ -75,45 +75,41 @@ def transcripts_extras() -> None:
     st.page_link("ui/pages/meeting_transcripts.py", label="Open Meeting Transcripts", icon="🎙️")
     if TRANSCRIPT_RECORDER_ZIP_PATH.exists():
         st.download_button(
-            "Download Standalone Recorder (build kit)",
+            "Download Standalone Recorder (Windows .exe)",
             data=TRANSCRIPT_RECORDER_ZIP_PATH.read_bytes(),
             file_name="teams-transcript-recorder.zip",
             mime="application/zip",
             key="download_transcript_recorder_kit",
         )
-    with st.expander("Build and use the standalone recorder", expanded=False):
+    with st.expander("Run and use the standalone recorder", expanded=False):
         st.markdown(
             """
 A lightweight Windows app with a small **status window** and the same
 anonymized recording as the Meeting Transcripts page — for coworkers who
-don't run Splice.
+don't run Splice. **No install and no Python needed.**
 
-### Build (once, on any Windows PC with Python 3.11+)
+### Run
 
-1. Download and unzip the build kit.
-2. Open a command prompt in the unzipped folder.
-3. `pip install -r requirements.txt`
-4. `pyinstaller recorder_app.spec`
-5. The exe is at `dist\\TeamsTranscriptRecorder.exe` — copy it anywhere and
-   share it; coworkers don't need Python.
+1. Download and unzip the file above.
+2. Double-click **TeamsTranscriptRecorder.exe** — a small window shows the
+   recorder status. (The first time, Windows may show a *"Windows protected
+   your PC"* prompt — click **More info → Run anyway**.)
 
 ### Use
 
-1. Run the exe — a small window shows the recorder status.
-2. In the Teams meeting turn on **Live Captions**
+1. In the Teams meeting turn on **Live Captions**
    (More → Language and speech → Live captions).
-3. If it says **"No captions window detected"** with captions already on,
+2. If it says **"No captions window detected"** with captions already on,
    separate (pop out) the captions window from the meeting window.
-4. Recording starts when captions are detected and finishes when they close.
+3. Recording starts when captions are detected and finishes when they close.
    When a transcript is saved, the **Open Transcripts Folder** button lights
    up and takes you straight to the file.
-5. **Pause** any time — paused speech is not recorded. Closing the window
+4. **Pause** any time — paused speech is not recorded. Closing the window
    stops the recorder.
 
 Speakers are anonymized to Speaker 1..N — names never reach disk — and every
 transcript starts with built-in instructions for an AI assistant, so pasting
-the file into an LLM produces the meeting minutes directly. The full
-`BUILD_WINDOWS.txt` inside the kit has the details.
+the file into an LLM produces the meeting minutes directly.
             """
         )
 

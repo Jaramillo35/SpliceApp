@@ -12,9 +12,9 @@ DOWNLOADS = Path(__file__).resolve().parents[2] / "assets" / "downloads"
 
 ITEMS = [
     ("teams-transcript-recorder.zip",
-     "Standalone transcript recorder (build kit)",
-     "Windows tray-free recorder with a status window; build once with "
-     "PyInstaller, share the exe. Anonymized like the Transcripts page."),
+     "Standalone transcript recorder (Windows .exe)",
+     "Windows recorder with a status window — download, unzip, and run the "
+     ".exe (no install, no Python). Anonymized like the Transcripts page."),
     ("ispeed-dtcr-downloader.zip",
      "iSpeed DTCR Downloader (Chrome extension)",
      "Captures iSpeed DTCR search results, attachments, and a summary CSV in "
