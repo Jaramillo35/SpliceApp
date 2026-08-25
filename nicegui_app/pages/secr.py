@@ -45,7 +45,7 @@ def page() -> None:
 
 
 def _browse() -> None:
-    with c.card("Search", "D2784J, A937F, 50319, D50319A, IP …"):
+    with c.card("Search", "CNUM, circuit, connector PN, DTCR, SECR #, or harness family…"):
         query = ui.input(placeholder="Search every change in the database") \
             .classes("w-full").props("clearable dense")
         table_holder = ui.column().classes("w-full")

@@ -196,7 +196,7 @@ with st.expander("Marked differences inside continuous cavities"):
         st.caption("None.")
     else:
         st.caption(
-            "One row per circuit — a cavity holding A934A and A934B shows both. "
+            "One row per circuit — a cavity holding two circuits shows both. "
             "Recorded, not judged: these wait on the wire-attribute equivalence "
             "table. **no counterpart** means that wire has no mate at the cavity, "
             "which the cavity's other option still covers."

@@ -365,7 +365,7 @@ def _browse() -> None:
         "Search",
         value=filters.get("query", ""),
         key=_k("query_input"),
-        placeholder="D2784J, A937F, 50319, D50319A, IP ...",
+        placeholder="CNUM, circuit, connector PN, DTCR, SECR #, or harness family…",
         help=(
             "Matches a CNUM, circuit, connector part number, DTCR, SECR #, "
             "bulletin, harness family, or any old/new value."
@@ -1628,7 +1628,7 @@ def _report_uploader(reports: List[Dict[str, Any]]) -> None:
         if upload is None:
             return
 
-        # The filename usually carries the scope (…_28RU_X1_vs_X2…); offer it
+        # The filename usually carries the scope (…_<program>_<oldrev>_vs_<newrev>…); offer it
         # rather than making the engineer retype what is already written down.
         guess = library.parse_scope_from_filename(upload.name)
         left, middle, right = st.columns(3)

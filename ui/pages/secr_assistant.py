@@ -25,11 +25,11 @@ from ui.support import render_support_panel, session_id
 
 #: Questions that show what the assistant is for. Clicking one asks it.
 EXAMPLE_QUESTIONS = [
-    "When did circuit A111 change?",
-    "Has connector D2784J changed before?",
+    "When did a given circuit last change?",
+    "Has a specific connector changed before?",
     "Which harness family has the most changes?",
-    "What changed in SECR D50319A?",
-    "What did DTCR 50319 change?",
+    "What changed in a given SECR?",
+    "What did a specific DTCR change?",
 ]
 
 #: Columns worth showing in the evidence table, when present.

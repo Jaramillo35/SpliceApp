@@ -10,8 +10,8 @@ from nicegui_app import components as c
 from nicegui_app import theme
 
 EXAMPLES = [
-    "When did circuit A111 change?",
-    "Has connector D2784J changed before?",
+    "When did a given circuit last change?",
+    "Has a specific connector changed before?",
     "Which harness family has the most changes?",
 ]
 

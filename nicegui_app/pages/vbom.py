@@ -42,8 +42,8 @@ def page() -> None:
                  "workbook bundle."):
         with c.card("Inputs"):
             with ui.row().classes("w-full gap-4 flex-wrap items-end"):
-                my = ui.input("Model year", value="26").classes("w-28")
-                program = ui.input("Program", value="RU").classes("w-28")
+                my = ui.input("Model year", placeholder="e.g. 26").classes("w-28")
+                program = ui.input("Program", placeholder="program code").classes("w-28")
                 source = ui.select(["DoAll", "BuildSpec"], value="DoAll",
                                    label="Input type").classes("w-36")
             with ui.row().classes("w-full gap-4 flex-wrap"):

@@ -30,8 +30,8 @@ render_feedback_widget(
 )
 
 with st.form("vbom_streamlit_form"):
-    my = st.text_input("Model Year (MY)", value="27")
-    program = st.text_input("Program", value="RU")
+    my = st.text_input("Model Year (MY)", placeholder="e.g. 27")
+    program = st.text_input("Program", placeholder="program code")
     source_type = st.radio("Input source", ["DoAll", "BuildSpec"], horizontal=True)
     input_upload = st.file_uploader(
         "DoAll / BuildSpec file",
