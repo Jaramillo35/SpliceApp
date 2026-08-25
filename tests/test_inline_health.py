@@ -272,3 +272,24 @@ class TestPresentation:
                 has_wire = str(r[hdr.index("Has wire")])
                 assert missing_on != has_wire
                 assert "within" in missing_on
+
+
+class TestConflictedCavityDedup:
+    def test_inconsistent_cavity_yields_one_finding_not_two(self):
+        """Field report (L206/N0 @ X103A cav 14): a cavity whose circuits
+        disagree must not ALSO get a window finding — the window algebra
+        would compare the coverage of two different circuits."""
+        result = _analyze(
+            # different circuits face each other, with a coverage hole that
+            # WOULD trigger a one_sided_window if not suppressed
+            [{"circuit": "N0", "cnum": "X10A", "cav": "14", "sc": "CG3"}],
+            [{"circuit": "L206", "cnum": "Y10A", "cav": "14",
+              "sc": "CG3&(CYC/CYF)"}],
+            LEFT_BUILDS, RIGHT_BUILDS,
+        )
+        at_cavity = [f for f in result.findings if f.cavity == "14"]
+        assert len(at_cavity) == 1
+        assert at_cavity[0].kind == "cavity"
+        assert "suppressed" in at_cavity[0].detail
+        assert not [f for f in result.findings
+                    if f.kind == "one_sided_window" and f.cavity == "14"]

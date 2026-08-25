@@ -276,17 +276,27 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
     # ---- Layer 1: cavity continuity, via the existing engine -------------
     study = run_study(summary, ends, complexity, pairs, unmated)
     result.study = study
+    # Cavities whose circuits disagree (or are never built together) get ONE
+    # finding: running the window algebra on top compares the coverage of two
+    # DIFFERENT circuits and double-reports the same cavity (field report:
+    # L206/N0 at X103A cavity 14 produced two Blocker rows).
+    conflicted: Set[tuple] = set()
     for f in study.findings:
         sev = _VERDICT_SEVERITY.get(f.verdict)
         if sev is None or f.verdict == "Continuous":
             continue
         if sev == SEV_INFO:
             continue  # unmated-connector notes belong to Gate 0 context
+        detail = f.reason
+        if f.verdict in ("Inconsistent definition", "Conditions exclusive"):
+            conflicted.add((f.connector_a, f.connector_b, f.cavity))
+            detail = (f"{f.reason} (Option-window analysis is suppressed at "
+                      "this cavity until the circuit conflict is resolved.)")
         result.findings.append(HealthFinding(
             severity=sev, kind="cavity", inline=f.inline, cavity=f.cavity,
             circuit=", ".join(sorted(set(f.circuits_a + f.circuits_b))),
             harness_with=f.harness_a, harness_without=f.harness_b,
-            window="", detail=f.reason,
+            window="", detail=detail,
         ))
 
     # ---- Layer 2: option-window coverage ---------------------------------
@@ -312,6 +322,8 @@ def analyze(summary: Dict[str, Harness], ends: List[CircuitEnd],
             side_a, side_b = ends_a.get(cavity, []), ends_b.get(cavity, [])
             if not side_a or not side_b:
                 continue  # layer 1 already decided fully empty sides
+            if (pair.connector_a, pair.connector_b, cavity) in conflicted:
+                continue  # one finding per conflicted cavity — see above
             result.cavities_checked += 1
             u_a, u_b = union_expression(side_a), union_expression(side_b)
             circuits = ", ".join(sorted({e.circuit for e in side_a + side_b}))
