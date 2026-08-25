@@ -4,13 +4,19 @@ setlocal enabledelayedexpansion
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%..\..") do set "PROJECT_ROOT=%%~fI"
 
+rem cmd.exe cannot parse ( ) & or ^ expanded inside if-blocks — a folder like
+rem "SpliceApp-Windows-BuildKit (1)" breaks the script with
+rem "... was unexpected at this time". Fail early with a clear message.
+echo(!PROJECT_ROOT!| findstr /C:"(" /C:")" /C:"&" /C:"^^" >nul
+if not errorlevel 1 goto :badpath
+
 set "REQ_FILE=%SCRIPT_DIR%requirements.txt"
 if not exist "%REQ_FILE%" set "REQ_FILE=%PROJECT_ROOT%\requirements.txt"
 
 if not exist "%REQ_FILE%" (
   echo Could not find requirements.txt. Checked:
-  echo   %SCRIPT_DIR%requirements.txt
-  echo   %PROJECT_ROOT%\requirements.txt
+  echo   !SCRIPT_DIR!requirements.txt
+  echo   !PROJECT_ROOT!\requirements.txt
   echo.
   echo Put requirements.txt in packaging\windows\ or project root.
   pause
@@ -19,7 +25,7 @@ if not exist "%REQ_FILE%" (
 
 if not exist "%PROJECT_ROOT%\packaging\windows\SpliceApp.spec" (
   echo Could not find PyInstaller spec file at:
-  echo   %PROJECT_ROOT%\packaging\windows\SpliceApp.spec
+  echo   !PROJECT_ROOT!\packaging\windows\SpliceApp.spec
   pause
   exit /b 1
 )
@@ -90,7 +96,7 @@ if errorlevel 1 goto :fail
 set "EXE_DIR=dist\SpliceApp"
 set "EXE_PATH=%EXE_DIR%\SpliceApp.exe"
 if not exist "%EXE_PATH%" (
-  echo Build completed but executable was not found at %EXE_PATH%
+  echo Build completed but executable was not found at !EXE_PATH!
   goto :fail
 )
 
@@ -122,6 +128,19 @@ echo SHA-256 file:      %CD%\dist\windows\SpliceApp-Executable.zip.sha256
 echo.
 pause
 exit /b 0
+
+:badpath
+echo.
+echo The folder path contains a character cmd.exe cannot handle in batch
+echo scripts ^( ^) ^& or ^^:
+echo   !PROJECT_ROOT!
+echo.
+echo Move or rename the folder to a simple path with none of those
+echo characters, for example:  C:\SpliceApp
+echo Then run this script again from there.
+echo.
+pause
+exit /b 1
 
 :fail
 echo.
