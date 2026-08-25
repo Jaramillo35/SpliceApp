@@ -137,7 +137,7 @@ def _render_gate0(result, rejected):
     inputs = result.inputs
     if inputs.rows:
         st.dataframe(pd.DataFrame([r.__dict__ for r in inputs.rows]),
-                     use_container_width=True, hide_index=True)
+                     width="stretch", hide_index=True)
     issues = []
     if rejected:
         issues.append(f"{len(rejected)} file(s) not usable: " + "; ".join(rejected))
@@ -219,7 +219,7 @@ def _render_results(result):
             st.caption("Windows the algebra proved unreachable — no SE action "
                        "needed; kept for audit.")
             st.dataframe(pd.DataFrame([p.__dict__ for p in result.cleared]),
-                         use_container_width=True, hide_index=True)
+                         width="stretch", hide_index=True)
 
     st.subheader("4 · Sign-off & report")
     c1, c2, c3 = st.columns([2, 1, 1])

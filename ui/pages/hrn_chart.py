@@ -191,7 +191,7 @@ def render() -> None:
         'CMP': j['cmp'].name if j['cmp'] else '—',
         'Output': f"{engine.output_basename(j['hrn'].name)}.xlsx",
     } for j in jobs])
-    st.dataframe(preview, use_container_width=True, hide_index=True)
+    st.dataframe(preview, width="stretch", hide_index=True)
 
     runnable = [j for j in jobs if j['csv'] is not None]
     skipped = len(jobs) - len(runnable)

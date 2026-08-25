@@ -59,9 +59,9 @@ def render() -> None:
         )
         col_a, col_b, _ = st.columns([1, 1, 2])
         col_a.button("▶ Start recording", type="primary", disabled=True,
-                     use_container_width=True,
+                     width="stretch",
                      help="Available on the Windows install of Splice")
-        col_b.button("⏹ Finish transcript", disabled=True, use_container_width=True,
+        col_b.button("⏹ Finish transcript", disabled=True, width="stretch",
                      help="Available on the Windows install of Splice")
     else:
         _render_controls(recorder)
@@ -79,25 +79,25 @@ def _render_controls(recorder: rec.Recorder) -> None:
 
     with col_a:
         if state in ("idle", "error"):
-            if st.button("▶ Start recording", type="primary", use_container_width=True):
+            if st.button("▶ Start recording", type="primary", width="stretch"):
                 recorder.start()
                 st.rerun(scope="fragment")
         elif state == "waiting":
-            if st.button("✕ Cancel", use_container_width=True):
+            if st.button("✕ Cancel", width="stretch"):
                 recorder.stop()
                 st.rerun(scope="fragment")
         elif state == "recording":
-            if st.button("⏸ Pause", use_container_width=True):
+            if st.button("⏸ Pause", width="stretch"):
                 recorder.pause()
                 st.rerun(scope="fragment")
         elif state == "paused":
-            if st.button("▶ Resume", type="primary", use_container_width=True):
+            if st.button("▶ Resume", type="primary", width="stretch"):
                 recorder.resume()
                 st.rerun(scope="fragment")
 
     with col_b:
         if state in ("recording", "paused"):
-            if st.button("⏹ Finish transcript", use_container_width=True):
+            if st.button("⏹ Finish transcript", width="stretch"):
                 recorder.stop()
                 st.rerun(scope="fragment")
 
@@ -128,7 +128,7 @@ def _render_controls(recorder: rec.Recorder) -> None:
 def _render_library() -> None:
     head_l, head_r = st.columns([3, 1])
     head_l.subheader("Saved transcripts")
-    if head_r.button("📂 Open transcripts folder", use_container_width=True):
+    if head_r.button("📂 Open transcripts folder", width="stretch"):
         try:
             rec.open_transcripts_folder()
         except Exception:
