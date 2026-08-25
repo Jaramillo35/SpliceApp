@@ -259,4 +259,11 @@ def run_vbom_workflow(
         "review_case_count": int(len(review_df)),
         "defe_output_name": defe_output_name,
         "metrics_stats": metrics_stats,
+        # In-memory frames for the in-app review gate (splice.vbom.review):
+        # the same data the review workbook carries, without a file round-trip.
+        "review_df": review_df,
+        "selections_df": selections_df,
+        "vin_matrix_df": vin_matrix_df,
+        "my": my,
+        "program": program,
     }

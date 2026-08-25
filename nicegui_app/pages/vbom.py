@@ -31,8 +31,11 @@ class _Upload:
 
 @ui.page("/vbom")
 def page() -> None:
+    from splice.vbom import review as review_engine
+
     state: dict = {"input": None, "complexity": [], "zip": None,
-                   "files": [], "note": ""}
+                   "files": [], "result": None,
+                   "resolutions": {}, "notes": {}, "defe": None}
 
     with c.frame("VBOM Risk Matrix",
                  "DoAll / BuildSpec + harness complexity files → the VBOM "
@@ -57,13 +60,129 @@ def page() -> None:
         def render_result() -> None:
             if not state["zip"]:
                 return
-            with c.card("Generated files"):
+            with c.card("Generated files",
+                        "The bundle includes the macro-enabled review workbook — "
+                        "resolve in Excel there, or right here below."):
                 for name in state["files"]:
                     ui.label(f"• {name}").classes("text-sm sx-muted")
-                if state["note"]:
-                    ui.label(state["note"]).classes("text-sm") \
-                        .style("color:#c98500")
                 c.download_button("VBOM_Risk_Matrix_Bundle.zip", lambda: state["zip"])
+            review_workbench()
+
+        def review_workbench() -> None:
+            r = state["result"]
+            review_df = r["review_df"]
+            total = len(review_df)
+            resolved = len(state["resolutions"])
+
+            with c.card("Review gate",
+                        "The DEFE template is withheld until every flagged "
+                        "selection has a decision — same rule as the Excel "
+                        "workbook's macro."):
+                if total == 0:
+                    c.chip("ok", "No uncertain selections — the DEFE template "
+                                 "is ready to generate")
+                else:
+                    with ui.row().classes("w-full h-2 rounded-full overflow-hidden gap-0"):
+                        ok, open_c = c.theme.STATUS["ok"], c.theme.STATUS["high"]
+                        if resolved:
+                            ui.element("div").style(
+                                f"background:{ok};width:{resolved / total * 100:.1f}%")
+                        ui.element("div").style(
+                            f"background:{open_c};width:{(total - resolved) / total * 100:.1f}%")
+                    ui.label(f"{resolved} of {total} flagged selection(s) resolved") \
+                        .classes("text-xs sx-muted")
+                    with ui.row().classes("gap-2 flex-wrap"):
+                        for reason, n in review_engine.reason_counts(review_df).items():
+                            c.chip("high", f"{n} · {reason}")
+                    for _, case in review_df.iterrows():
+                        review_case(case)
+
+                done = total == 0 or resolved == total
+                with ui.row().classes("items-center gap-3 mt-2 flex-wrap"):
+                    ui.button(f"Generate {r['defe_output_name']}",
+                              icon="assignment_turned_in",
+                              on_click=lambda: make_defe()) \
+                        .props("unelevated").set_enabled(done)
+                    if not done:
+                        c.chip("high", f"{total - resolved} selection(s) still open")
+                    if state["defe"]:
+                        c.download_button(state["defe"][0], lambda: state["defe"][1])
+
+        def review_case(case) -> None:
+            rid = str(case["ReviewID"])
+            resolved_pn = state["resolutions"].get(rid)
+            with ui.expansion().classes("w-full").props("dense") as exp:
+                with exp.add_slot("header"):
+                    with ui.row().classes("items-center gap-3 w-full py-1 flex-wrap"):
+                        c.chip("ok" if resolved_pn else "high",
+                               resolved_pn or "open")
+                        ui.label(f"{case['VIN']}").classes("text-sm sx-mono")
+                        ui.label(str(case["HarnessFamily"])) \
+                            .classes("text-sm font-semibold")
+                        ui.label(str(case["ReviewReason"])) \
+                            .classes("text-xs sx-muted")
+                for label, key in [("Engine recommendation", "EngineRecommendation"),
+                                   ("Required codes", "RequiredSalesCodes"),
+                                   ("Missing codes", "MissingSalesCodes"),
+                                   ("Extra codes", "ExtraSalesCodes"),
+                                   ("Giveaway", "Giveaway")]:
+                    value = str(case.get(key) or "").strip()
+                    if value:
+                        with ui.row().classes("gap-2"):
+                            ui.label(label).classes("text-xs sx-muted w-40")
+                            ui.label(value).classes("text-xs sx-mono")
+                details = str(case.get("CandidateDetails") or "")
+                if details:
+                    ui.label(details).classes(
+                        "text-xs sx-mono p-2 rounded w-full whitespace-pre-line") \
+                        .style(f"background:{c.theme.CANVAS}")
+                options = review_engine.allowed_pns(case)
+                pn_sel = ui.select(options,
+                                   value=resolved_pn if resolved_pn in options
+                                   else (case["EngineRecommendation"]
+                                         if case["EngineRecommendation"] in options
+                                         else None),
+                                   label="Resolved PN").classes("w-64") \
+                    .props("dense")
+                note_in = ui.input("Reviewer note",
+                                   value=state["notes"].get(rid, "")) \
+                    .classes("w-full").props("dense")
+
+                def resolve(rid=rid, pn_sel=pn_sel, note_in=note_in) -> None:
+                    if not pn_sel.value:
+                        ui.notify("Pick a PN first", type="warning")
+                        return
+                    state["resolutions"][rid] = pn_sel.value
+                    state["notes"][rid] = note_in.value or ""
+                    state["defe"] = None  # decisions changed; regenerate
+                    render_result.refresh()
+
+                def reopen(rid=rid) -> None:
+                    state["resolutions"].pop(rid, None)
+                    state["defe"] = None
+                    render_result.refresh()
+
+                with ui.row().classes("gap-2"):
+                    ui.button("Resolve", icon="check", on_click=resolve) \
+                        .props("outline dense")
+                    if resolved_pn:
+                        ui.button("Reopen", icon="undo", on_click=reopen) \
+                            .props("flat dense")
+
+        async def make_defe() -> None:
+            r = state["result"]
+
+            def work():
+                resolved_df = review_engine.apply_resolutions(
+                    r["selections_df"], state["resolutions"])
+                return review_engine.generate_defe(
+                    r["my"], r["program"], resolved_df, r["vin_matrix_df"])
+
+            out = await c.run_engine(work, running="Generating the DEFE template…",
+                                     done="DEFE template ready")
+            if out is not None:
+                state["defe"] = out
+                render_result.refresh()
 
         render_result()
 
@@ -91,17 +210,11 @@ def page() -> None:
                             if path and Path(path).is_file():
                                 zf.write(path, arcname=Path(path).name)
                                 names.append(Path(path).name)
-                    note = ""
-                    if result.get("review_case_count"):
-                        note = (f"Open Harness_Selection_Review and resolve the "
-                                f"{result['review_case_count']} flagged selection(s); "
-                                f"the DEFE template "
-                                f"({result.get('defe_output_name', 'DEFE')}) is "
-                                "withheld until Pending Reviews reaches 0.")
-                    return buf.getvalue(), names, note
+                    return result, buf.getvalue(), names
 
-            r = await c.run_engine(work, running="Running the VBOM workflow…",
-                                   done="VBOM bundle ready")
-            if r is not None:
-                state["zip"], state["files"], state["note"] = r
+            out = await c.run_engine(work, running="Running the VBOM workflow…",
+                                     done="VBOM bundle ready")
+            if out is not None:
+                state["result"], state["zip"], state["files"] = out
+                state["resolutions"], state["notes"], state["defe"] = {}, {}, None
                 render_result.refresh()
