@@ -162,7 +162,7 @@ def _finding_row(f, baseline, idx):
     with st.expander(_finding_title(f), expanded=False):
         st.write(f.detail)
         if f.window:
-            st.code(f.window, language=None)
+            st.code(getattr(f, "window_short", "") or f.window, language=None)
         cols = st.columns(2)
         if f.builds_with:
             cols[0].caption(f"Builds with the wire ({f.harness_with}): "
