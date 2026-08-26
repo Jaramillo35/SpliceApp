@@ -21,6 +21,7 @@ NAV = [
     ("Workflows", [
         ("Splice Generation", "cable", "/splice-generation"),
         ("DTx Compare", "difference", "/dtx-compare"),
+        ("Harness Complexity", "table_view", "/harness-complexity"),
         ("HRN Chart Builder", "stacked_bar_chart", "/hrn-chart"),
         ("VBOM Risk Matrix", "grid_on", "/vbom"),
         ("Circuit Health", "monitor_heart", "/circuit-health"),
@@ -40,8 +41,9 @@ def _feedback_dialog() -> ui.dialog:
     with ui.dialog() as dialog, ui.card().classes("w-[28rem] sx-card"):
         ui.label("Report a problem or idea").classes("text-base font-bold")
         area = ui.select(
-            ["General", "Splice Generation", "DTx Compare", "HRN Chart Builder",
-             "VBOM Risk Matrix", "Circuit Health", "SECR Database", "Transcripts"],
+            ["General", "Splice Generation", "DTx Compare", "Harness Complexity",
+             "HRN Chart Builder", "VBOM Risk Matrix", "Circuit Health",
+             "SECR Database", "Transcripts"],
             value="General", label="Area").classes("w-full")
         text = ui.textarea("What happened, or what would help?").classes("w-full")
         name = ui.input("Your name (optional)").classes("w-full")

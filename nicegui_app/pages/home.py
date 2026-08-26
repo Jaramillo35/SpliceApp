@@ -14,6 +14,9 @@ TOOLS = [
     ("DTx Compare", "difference", "/dtx-compare",
      "OLD vs NEW DTx with DTCR tagging — the WEAVE change workbook and the "
      "PreOrder list."),
+    ("Harness Complexity", "table_view", "/harness-complexity",
+     "Individual harness-complexity .xlsm files from the master workbook — "
+     "reviewed matrix, combined-expression decisions, macros preserved."),
     ("HRN Chart Builder", "stacked_bar_chart", "/hrn-chart",
      "Batch HRN + CSV (+ CMP) conversion into chart workbooks with supplier "
      "prefixes."),
