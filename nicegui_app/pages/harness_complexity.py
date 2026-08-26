@@ -227,8 +227,9 @@ def page() -> None:
 
             ui.label("Applicability matrix").classes("text-sm font-semibold mt-2")
             ui.label("Edit a part number or an X/G mark directly — every proposed "
-                     "value shows how it was derived. Select rows to exclude "
-                     "them from the file.").classes("text-xs sx-muted")
+                     "value shows how it was derived. Tick the boxes (or the "
+                     "header box for all) to remove several rows at once.") \
+                .classes("text-xs sx-muted")
 
             code_cols = [sc.code for sc in m.sales_codes]
             rows = []
@@ -246,7 +247,8 @@ def page() -> None:
                 rows.append(row)
 
             col_defs = [
-                {"field": "Symbol", "width": 90, "pinned": "left"},
+                {"field": "Symbol", "width": 110, "pinned": "left",
+                 "checkboxSelection": True, "headerCheckboxSelection": True},
                 {"field": "Harness PN", "editable": True, "width": 150,
                  "pinned": "left", "cellStyle": {"fontWeight": "600"}},
                 {"field": "Previous", "width": 130},
@@ -260,6 +262,7 @@ def page() -> None:
             grid = ui.aggrid({
                 "columnDefs": col_defs, "rowData": rows,
                 "rowSelection": "multiple",
+                "suppressRowClickSelection": True,   # only the checkboxes select
                 "defaultColDef": {"resizable": True, "sortable": True,
                                   "suppressMovable": True},
             }).classes("w-full").style("height: 22rem")
@@ -316,12 +319,13 @@ def page() -> None:
                             m.rows[i].current_reason = "excluded by the SE"
                             n += 1
                     state["files"] = []
-                    ui.notify(f"Excluded {n} part number(s)",
+                    ui.notify(f"Removed {n} part number(s) — they will not appear "
+                              "in the generated file" if n else "Tick rows first",
                               type="positive" if n else "warning")
                     render_families.refresh()
 
                 ui.button("Add PN", icon="add", on_click=add_pn).props("outline dense")
-                ui.button("Exclude selected", icon="block",
+                ui.button("Remove selected", icon="delete_sweep",
                           on_click=exclude_selected).props("outline dense color=negative")
 
         def _render_combined(m) -> None:
