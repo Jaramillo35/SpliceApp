@@ -1,11 +1,17 @@
 """Teams Transcript Recorder — standalone Windows app with a small status GUI.
 
-Records Microsoft Teams Live Captions into anonymized markdown transcripts,
-exactly like Splice's Meeting Transcripts page: participant names never reach
-disk (speakers become Speaker 1..N), filenames carry only a timestamp, and
-partially transcribed captions fold into their final sentence. Every
-transcript starts with instructions for an AI assistant, so pasting the file
-into an LLM produces meeting minutes directly.
+Records Microsoft Teams Live Captions into markdown transcripts, exactly like
+Splice's Meeting Transcripts page. By default they are anonymized: participant
+names never reach disk (speakers become Speaker 1..N), filenames carry only a
+timestamp, and partially transcribed captions fold into their final sentence.
+Every transcript starts with instructions for an AI assistant, so pasting the
+file into an LLM produces meeting minutes directly.
+
+Recording real names is opt-in behind a privacy gate: the user must confirm
+they told the participants the meeting is being transcribed for minutes and
+that permission was granted, signed with their name. The app supplies the
+message to send participants, and writes the whole attestation into the
+transcript as the compliance record.
 
 The window shows what the recorder is doing (no captions window detected /
 recording / paused), and when a meeting ends it offers a button straight to
@@ -46,6 +52,65 @@ TRANSCRIPTS_DIR = get_base_dir() / "Transcripts"
 # --------------------------------------------------------------------------
 
 _INLINE_SPEAKER_RE = re.compile(r"^(?P<name>[^:]{1,60}?)\s*:\s*(?P<text>.+)$", re.S)
+
+PARTICIPANT_NOTICE = (
+    "Hi all — before we start: I'm going to capture this meeting's live "
+    "captions so I can produce written minutes (summary, decisions, and "
+    "action items) afterwards.\n\n"
+    "What this means:\n"
+    "• The captions text is saved, together with who said what.\n"
+    "• It is used only to write up the minutes for this meeting and is kept "
+    "with our normal project records.\n"
+    "• No audio or video is recorded by this tool — captions text only.\n"
+    "• If you would rather not be identified by name, tell me and I'll switch "
+    "to the anonymized mode, where speakers appear only as \"Speaker 1\", "
+    "\"Speaker 2\", and so on.\n\n"
+    "If anyone objects, say so now (or message me privately) and I will turn "
+    "it off. Thanks!"
+)
+
+ATTESTATIONS = (
+    ("announced",
+     "I told everyone in the meeting that it is being transcribed and that the "
+     "transcript will be used to generate a minute report."),
+    ("permission_granted",
+     "I asked the participants for permission to record their names, and no "
+     "one objected."),
+)
+
+
+@dataclass
+class Consent:
+    """The recording person's privacy attestation for a NAMED recording."""
+
+    announced: bool = False
+    permission_granted: bool = False
+    attested_by: str = ""
+    attested_at: Optional[datetime] = None
+    notice_text: str = PARTICIPANT_NOTICE
+    notes: str = ""
+
+    @property
+    def missing(self) -> List[str]:
+        gaps: List[str] = []
+        if not self.announced:
+            gaps.append("participants have not been told the meeting is being "
+                        "transcribed for minutes")
+        if not self.permission_granted:
+            gaps.append("permission to record names has not been requested and "
+                        "granted")
+        if not str(self.attested_by).strip():
+            gaps.append("the attestation is unsigned (enter your name)")
+        return gaps
+
+    @property
+    def complete(self) -> bool:
+        return not self.missing
+
+    def sign(self, by: str, when: Optional[datetime] = None) -> "Consent":
+        self.attested_by = " ".join(str(by).split())
+        self.attested_at = when or datetime.now()
+        return self
 
 
 def looks_like_name(text: str) -> bool:
@@ -96,8 +161,16 @@ class Transcript:
     started: datetime = field(default_factory=datetime.now)
     entries: List[Entry] = field(default_factory=list)
     anonymizer: SpeakerAnonymizer = field(default_factory=SpeakerAnonymizer)
+    record_names: bool = False
+    consent: Optional[Consent] = None
     _current_speaker: str = ""
     _seen: set = field(default_factory=set)
+
+    def _label(self, name: str) -> str:
+        alias = self.anonymizer.alias(name)   # keeps the count and known() memory
+        if self.record_names:
+            return " ".join(str(name).split())
+        return alias
 
     def add_caption(self, item: str) -> bool:
         item = str(item).strip()
@@ -106,14 +179,14 @@ class Transcript:
         self._seen.add(item)
 
         if self.anonymizer.known(item) or looks_like_name(item):
-            self._current_speaker = self.anonymizer.alias(item)
+            self._current_speaker = self._label(item)
             return False
 
         speaker = self._current_speaker
         text = item
         m = _INLINE_SPEAKER_RE.match(item)
         if m and (self.anonymizer.known(m.group("name")) or looks_like_name(m.group("name"))):
-            speaker = self.anonymizer.alias(m.group("name"))
+            speaker = self._label(m.group("name"))
             self._current_speaker = speaker
             text = m.group("text").strip()
 
@@ -147,21 +220,70 @@ class Transcript:
             "mentioned); 4) pending or unresolved items; 5) risks, concerns, "
             "and other relevant information. Keep the Speaker N labels exactly "
             "as written and do not invent names. If a section has no content, "
-            'write "None recorded."',
+            'write "None recorded."'
+            if not self.record_names else
+            "**Instructions for the assistant:** produce meeting minutes from "
+            "the transcript that follows: 1) a concise summary of what was "
+            "discussed and concluded; 2) decisions made; 3) action points as a "
+            "table (action, owner, due date if mentioned); 4) pending or "
+            "unresolved items; 5) risks, concerns, and other relevant "
+            "information. Use the participant names exactly as written and do "
+            'not invent names. If a section has no content, write "None '
+            'recorded."',
             "",
             f"**Started:** {self.started.strftime('%Y-%m-%d %H:%M:%S')}",
-            f"**Speakers:** {self.anonymizer.count} (anonymized as Speaker 1..N; "
-            "names spoken mid-sentence are not removed)",
-            "",
-            "---",
+            f"**Speakers:** {self.anonymizer.count} "
+            + ("(recorded by name — see the privacy record below)"
+               if self.record_names else
+               "(anonymized as Speaker 1..N; names spoken mid-sentence are "
+               "not removed)"),
             "",
         ]
+        lines += self._privacy_lines()
+        lines += ["---", ""]
         for e in self.entries:
             prefix = f"**{e.speaker}** " if e.speaker else ""
             lines.append(f"- **[{e.time}]** {prefix}{e.text}")
         if ended is not None:
             lines += ["", "---", "", f"**Ended:** {ended.strftime('%Y-%m-%d %H:%M:%S')}"]
         return "\n".join(lines) + "\n"
+
+    def _privacy_lines(self) -> List[str]:
+        """The privacy record written into every transcript."""
+        if not self.record_names:
+            return [
+                "**Privacy:** anonymized recording — participant names were "
+                "never written to disk, so no consent was required.",
+                "",
+            ]
+        c = self.consent or Consent()
+        signed = (c.attested_at or self.started).strftime("%Y-%m-%d %H:%M:%S")
+        out = [
+            "## Privacy record — participant names recorded",
+            "",
+            "This transcript identifies participants by name. Before recording "
+            "started, the person below confirmed:",
+            "",
+            f"- [{'x' if c.announced else ' '}] {ATTESTATIONS[0][1]}",
+            f"- [{'x' if c.permission_granted else ' '}] {ATTESTATIONS[1][1]}",
+            "",
+            f"**Attested by:** {c.attested_by or 'unknown'}  ",
+            f"**Attested at:** {signed}",
+            "",
+        ]
+        if c.notes.strip():
+            out += [f"**Notes from the recorder:** {c.notes.strip()}", ""]
+        out += [
+            "**Notice given to participants** (sent before recording):",
+            "",
+            "> " + "\n> ".join((c.notice_text or PARTICIPANT_NOTICE).splitlines()),
+            "",
+            "_Handle this file according to your organisation's personal-data "
+            "policy: keep it only as long as the minutes require it, and share "
+            "it only with people entitled to see it._",
+            "",
+        ]
+        return out
 
 
 def _write_atomic(path: Path, content: str) -> None:
@@ -188,6 +310,10 @@ class SharedState:
         self.speakers = 0
         self.current_file = ""
         self.last_saved = ""
+        # Privacy mode for the NEXT/current meeting. Anonymized until the user
+        # completes the consent dialog; reset to anonymized on request.
+        self.record_names = False
+        self.consent: Optional[Consent] = None
 
 
 state = SharedState()
@@ -219,7 +345,12 @@ def _extract_text(ctrl, out: list) -> None:
 
 def _record_one_meeting(window) -> None:
     TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
-    transcript = Transcript()
+    with state.lock:
+        # A named recording needs a complete attestation; anything else is
+        # anonymized, so a half-filled consent can never leak names.
+        consent = state.consent
+        named = bool(state.record_names and consent and consent.complete)
+    transcript = Transcript(record_names=named, consent=consent if named else None)
     out_path = TRANSCRIPTS_DIR / f"Meeting_{transcript.started.strftime('%Y-%m-%d_%H-%M')}.md"
     window_name = window.Name
     with state.lock:
@@ -276,6 +407,8 @@ GREEN = "#1F7A33"
 ORANGE = "#B96A00"
 GRAY = "#5A5A60"
 
+RED = "#A32020"
+
 NO_CAPTIONS_HELP = (
     "In your Teams meeting turn on Live Captions:\n"
     "More → Language and speech → Live captions.\n\n"
@@ -285,20 +418,124 @@ NO_CAPTIONS_HELP = (
 )
 
 
+def open_consent_dialog(parent) -> None:
+    """Privacy gate for named recording.
+
+    Gives the user the message to send participants, then asks them to confirm
+    they announced the recording and got permission, signed with their name.
+    Only a complete attestation switches the mode — and it is written into the
+    transcript as the compliance record.
+    """
+    win = tk.Toplevel(parent)
+    win.title("Record participant names")
+    win.configure(bg=BG)
+    win.grab_set()
+
+    tk.Label(win, text="Record participant names", bg=BG, fg="#1D1D1F",
+             font=("Segoe UI", 12, "bold")).pack(pady=(12, 2), padx=14, anchor="w")
+    tk.Label(win, text="Names on disk are personal data. Confirm you have told the "
+                       "participants\nand have their permission — your confirmation is "
+                       "written into the transcript.",
+             bg=BG, fg=GRAY, font=("Segoe UI", 9), justify="left") \
+        .pack(padx=14, anchor="w")
+
+    tk.Label(win, text="1 · Send this to the participants", bg=BG, fg="#1D1D1F",
+             font=("Segoe UI", 10, "bold")).pack(pady=(12, 2), padx=14, anchor="w")
+    notice = tk.Text(win, width=74, height=11, wrap="word", font=("Segoe UI", 9))
+    notice.insert("1.0", PARTICIPANT_NOTICE)
+    notice.pack(padx=14)
+
+    def copy_notice() -> None:
+        parent.clipboard_clear()
+        parent.clipboard_append(notice.get("1.0", "end-1c"))
+        copy_btn.config(text="✔ Copied — paste it in the meeting chat")
+
+    copy_btn = tk.Button(win, text="Copy message", width=34, command=copy_notice)
+    copy_btn.pack(pady=(6, 0))
+    tk.Label(win, text="Edit it if you said something different — what is here is what "
+                       "the transcript records as the notice given.",
+             bg=BG, fg=GRAY, font=("Segoe UI", 8), justify="left") \
+        .pack(padx=14, anchor="w")
+
+    tk.Label(win, text="2 · Confirm what you did", bg=BG, fg="#1D1D1F",
+             font=("Segoe UI", 10, "bold")).pack(pady=(12, 2), padx=14, anchor="w")
+    vars_ = []
+    for _key, text in ATTESTATIONS:
+        v = tk.BooleanVar(value=False)
+        vars_.append(v)
+        tk.Checkbutton(win, text=text, variable=v, bg=BG, wraplength=520,
+                       justify="left", font=("Segoe UI", 9)) \
+            .pack(padx=14, anchor="w")
+
+    row = tk.Frame(win, bg=BG)
+    row.pack(padx=14, pady=(8, 0), anchor="w", fill="x")
+    tk.Label(row, text="Your name:", bg=BG, font=("Segoe UI", 9)).pack(side="left")
+    signer = tk.Entry(row, width=32, font=("Segoe UI", 9))
+    signer.pack(side="left", padx=6)
+
+    row2 = tk.Frame(win, bg=BG)
+    row2.pack(padx=14, pady=(6, 0), anchor="w", fill="x")
+    tk.Label(row2, text="Notes (optional):", bg=BG, font=("Segoe UI", 9)).pack(side="left")
+    notes = tk.Entry(row2, width=44, font=("Segoe UI", 9))
+    notes.pack(side="left", padx=6)
+
+    problem = tk.Label(win, text="", bg=BG, fg=RED, font=("Segoe UI", 9),
+                       wraplength=520, justify="left")
+    problem.pack(padx=14, pady=(6, 0), anchor="w")
+
+    def confirm() -> None:
+        consent = Consent(
+            announced=vars_[0].get(), permission_granted=vars_[1].get(),
+            notice_text=notice.get("1.0", "end-1c") or PARTICIPANT_NOTICE,
+            notes=notes.get().strip())
+        consent.sign(signer.get())
+        if not consent.complete:
+            problem.config(text="Cannot start: " + "; ".join(consent.missing) + ".")
+            return
+        with state.lock:
+            state.record_names = True
+            state.consent = consent
+        win.destroy()
+
+    btns = tk.Frame(win, bg=BG)
+    btns.pack(pady=(10, 14))
+    tk.Button(btns, text="Cancel", width=14, command=win.destroy).pack(side="left", padx=6)
+    tk.Button(btns, text="Record with names", width=22, command=confirm) \
+        .pack(side="left", padx=6)
+
+
 def main() -> None:
     threading.Thread(target=recorder_worker, daemon=True).start()
 
     root = tk.Tk()
     root.title("Teams Transcript Recorder")
-    root.geometry("430x330")
+    root.geometry("430x420")
     root.resizable(False, False)
     root.configure(bg=BG)
 
     tk.Label(root, text="Teams Transcript Recorder", bg=BG, fg="#1D1D1F",
              font=("Segoe UI", 14, "bold")).pack(pady=(14, 2))
-    tk.Label(root, text="Transcripts are anonymized: speakers become Speaker 1..N,\n"
-                        "names are never saved.", bg=BG, fg=GRAY,
-             font=("Segoe UI", 9)).pack()
+    mode_lbl = tk.Label(root, text="", bg=BG, font=("Segoe UI", 9, "bold"),
+                        justify="center")
+    mode_lbl.pack()
+
+    mode_row = tk.Frame(root, bg=BG)
+    mode_row.pack(pady=(6, 0))
+
+    def use_names() -> None:
+        open_consent_dialog(root)
+
+    def use_anonymized() -> None:
+        with state.lock:
+            state.record_names = False
+            state.consent = None
+
+    names_btn = tk.Button(mode_row, text="Record with names…", width=20,
+                          command=use_names)
+    names_btn.pack(side="left", padx=6)
+    anon_btn = tk.Button(mode_row, text="Back to anonymized", width=20,
+                         command=use_anonymized)
+    anon_btn.pack(side="left", padx=6)
 
     status_lbl = tk.Label(root, text="", bg=BG, font=("Segoe UI", 12, "bold"))
     status_lbl.pack(pady=(14, 2))
@@ -334,6 +571,23 @@ def main() -> None:
             status = state.status
             entries, speakers = state.entries, state.speakers
             current, last = state.current_file, state.last_saved
+            named = bool(state.record_names and state.consent
+                         and state.consent.complete)
+            attester = state.consent.attested_by if named and state.consent else ""
+
+        if named:
+            mode_lbl.config(
+                text=f"Names ARE being recorded — attested by {attester}",
+                fg=ORANGE)
+        else:
+            mode_lbl.config(
+                text="Anonymized: speakers become Speaker 1..N, names are never saved.",
+                fg=GRAY)
+        # Switching mode mid-meeting would split one conversation across two
+        # privacy regimes, so the choice is locked while a meeting records.
+        recording_now = status == "recording"
+        names_btn.config(state="disabled" if (recording_now or named) else "normal")
+        anon_btn.config(state="normal" if (named and not recording_now) else "disabled")
 
         if status == "recording" and pause_event.is_set():
             status_lbl.config(text="⏸  Paused", fg=ORANGE)

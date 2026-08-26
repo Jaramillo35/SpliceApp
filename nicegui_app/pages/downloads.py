@@ -14,7 +14,8 @@ ITEMS = [
     ("teams-transcript-recorder.zip",
      "Standalone transcript recorder (Windows .exe)",
      "Windows recorder with a status window — download, unzip, and run the "
-     ".exe (no install, no Python). Anonymized like the Transcripts page."),
+     ".exe (no install, no Python). Anonymized by default; recording names is "
+     "opt-in behind the same privacy attestation as the Transcripts page."),
     ("ispeed-dtcr-downloader.zip",
      "iSpeed DTCR Downloader (Chrome extension)",
      "Captures iSpeed DTCR search results, attachments, and a summary CSV in "

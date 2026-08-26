@@ -11,6 +11,7 @@ from datetime import datetime
 from nicegui import ui
 
 from nicegui_app import components as c
+from nicegui_app import theme
 from splice.transcripts import recorder as rec
 
 _recorder = rec.Recorder()  # one per process, like the Streamlit cache_resource
@@ -23,6 +24,8 @@ def page() -> None:
                  "names never on disk), with built-in LLM instructions for "
                  "minutes."):
 
+        consent_dialog = _consent_dialog(lambda cs: _start_named(cs, render))
+
         with c.card("Recorder"):
             if not rec.CAPTURE_AVAILABLE:
                 c.chip("info", "Capture runs on the Windows install — this "
@@ -34,6 +37,9 @@ def page() -> None:
                 btn_start = ui.button("Start recording", icon="fiber_manual_record",
                                       on_click=lambda: (_recorder.start(), render())) \
                     .props("unelevated")
+                btn_named = ui.button("Record with names…", icon="badge",
+                                      on_click=consent_dialog.open) \
+                    .props("outline")
                 btn_pause = ui.button("Pause", icon="pause",
                                       on_click=lambda: (_recorder.pause(), render())) \
                     .props("outline")
@@ -54,6 +60,11 @@ def page() -> None:
                             "waiting": "info", "error": "blocker"}.get(state, "info")
                     c.chip(kind, state.capitalize() if state != "waiting"
                            else "Waiting for a captions window")
+                    # The mode is the privacy-relevant fact — always visible.
+                    if state in ("recording", "paused", "waiting"):
+                        c.chip("high" if s["record_names"] else "ok",
+                               "Names recorded (attested)" if s["record_names"]
+                               else "Anonymized — Speaker 1..N")
                     if state in ("recording", "paused"):
                         ui.label(f"{s['entries']} entries · {s['speakers']} speakers "
                                  f"→ {s['output'].rsplit('/', 1)[-1]}") \
@@ -66,6 +77,7 @@ def page() -> None:
                         ui.label(line).classes("text-xs sx-mono sx-muted")
                 running = _recorder.running
                 btn_start.set_enabled(rec.CAPTURE_AVAILABLE and not running)
+                btn_named.set_enabled(rec.CAPTURE_AVAILABLE and not running)
                 btn_pause.set_visibility(state == "recording")
                 btn_resume.set_visibility(state == "paused")
                 btn_finish.set_visibility(state in ("recording", "paused", "waiting"))
@@ -102,9 +114,94 @@ def page() -> None:
                      "minutes (summary, decisions, action points, pending "
                      "items, risks) come back directly.").classes("text-sm sx-muted")
 
+        with c.card("Privacy",
+                    "Anonymized is the default and needs no permission."):
+            ui.markdown(
+                "**Anonymized (default).** Speakers become Speaker 1..N and no "
+                "name ever reaches the disk, so there is no personal data to "
+                "protect.\n\n"
+                "**With names.** Real names on disk are personal data. Use "
+                "*Record with names* only after you have told the participants "
+                "the meeting is being transcribed for a minute report **and** "
+                "asked their permission — the dialog gives you a message to "
+                "send them. Your confirmation, your name, the time, and the "
+                "exact notice you sent are written into the transcript, so the "
+                "file is its own compliance record. Anyone who objects is "
+                "reason enough to stay anonymized.\n\n"
+                "Names spoken inside a sentence are never removed in either "
+                "mode — the captions give no reliable way to detect them."
+            ).classes("text-sm")
+
 
 def _open_folder() -> None:
     try:
         rec.open_transcripts_folder()
     except Exception as exc:
         ui.notify(f"Could not open a file manager: {exc}", type="warning")
+
+
+def _start_named(consent: rec.Consent, render) -> None:
+    """Start a named recording; the engine refuses an incomplete attestation."""
+    try:
+        _recorder.start(record_names=True, consent=consent)
+    except Exception as exc:
+        ui.notify(str(exc), type="negative", multi_line=True, close_button=True)
+        return
+    ui.notify("Recording with participant names — the attestation is written "
+              "into the transcript.", type="positive", multi_line=True)
+    render()
+
+
+def _consent_dialog(on_confirm) -> ui.dialog:
+    """Privacy gate for named recording: send the notice, then attest to it."""
+    with ui.dialog() as dialog, ui.card().classes("w-[42rem] sx-card"):
+        ui.label("Record participant names").classes("text-base font-bold")
+        ui.label("Names on disk are personal data. Confirm you have told the "
+                 "participants and have their permission — your confirmation "
+                 "is written into the transcript as the compliance record.") \
+            .classes("text-sm sx-muted")
+
+        ui.label("1 · Send this to the participants").classes(
+            "text-sm font-semibold mt-2")
+        notice = ui.textarea(value=rec.PARTICIPANT_NOTICE) \
+            .classes("w-full").props("outlined autogrow dense")
+        ui.label("Edit it if you said something different — what you send here "
+                 "is what the transcript records as the notice given.") \
+            .classes("text-xs sx-muted")
+        with ui.row().classes("gap-2"):
+            ui.button("Copy message", icon="content_copy",
+                      on_click=lambda: (
+                          ui.clipboard.write(notice.value or ""),
+                          ui.notify("Message copied — paste it in the meeting "
+                                    "chat", type="positive"))) \
+                .props("outline dense")
+
+        ui.label("2 · Confirm what you did").classes("text-sm font-semibold mt-2")
+        boxes = [ui.checkbox(text).classes("text-sm")
+                 for _key, text in rec.ATTESTATIONS]
+        signer = ui.input("Your name (signs the attestation)") \
+            .classes("w-full").props("dense outlined")
+        notes = ui.input("Notes (optional — e.g. who agreed, or who opted out)") \
+            .classes("w-full").props("dense outlined")
+
+        blockers = ui.label("").classes("text-xs") \
+            .style(f"color:{theme.STATUS['blocker']}")
+
+        def confirm() -> None:
+            consent = rec.Consent(
+                announced=boxes[0].value, permission_granted=boxes[1].value,
+                notice_text=notice.value or rec.PARTICIPANT_NOTICE,
+                notes=notes.value or "")
+            consent.sign(signer.value or "")
+            if not consent.complete:
+                blockers.set_text("Cannot start: " + "; ".join(consent.missing) + ".")
+                return
+            blockers.set_text("")
+            dialog.close()
+            on_confirm(consent)
+
+        with ui.row().classes("justify-end w-full gap-2 mt-2"):
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+            ui.button("Start recording with names", icon="fiber_manual_record",
+                      on_click=confirm).props("unelevated")
+    return dialog

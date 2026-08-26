@@ -6,9 +6,11 @@ Splice pages are used. Capture needs Windows (the captions are read from the
 Teams window on this machine's screen); browsing and downloading previously
 saved transcripts works everywhere.
 
-Transcripts never contain participant names — speakers are anonymized to
-"Speaker N" — so a file can be pasted into an LLM to produce meeting minutes
-without disclosing who attended.
+Transcripts are anonymized by default — speakers become "Speaker N" and no
+name reaches disk — so a file can be pasted into an LLM to produce meeting
+minutes without disclosing who attended. Recording real names is opt-in and
+gated on a privacy attestation (see :data:`splice.transcripts.recorder.Consent`),
+which the transcript then carries as its compliance record.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from datetime import datetime
 
 import streamlit as st
 
+from splice.common.errors import SpliceError
 from splice.transcripts import recorder as rec
 
 MINUTES_PROMPT = """You are given an anonymized meeting transcript (speakers are \
@@ -70,6 +73,43 @@ def render() -> None:
     _render_minutes_help()
 
 
+def _render_consent_gate(recorder: rec.Recorder) -> None:
+    """Opt-in to recording real names, gated on a privacy attestation.
+
+    The engine refuses a named recording without a complete attestation; this
+    form collects it and hands the user the notice to send participants.
+    """
+    with st.expander("🪪 Record participant names instead (needs permission)"):
+        st.caption(
+            "Names on disk are personal data. Send the participants the notice "
+            "below and confirm you did — your confirmation, your name, the "
+            "time, and this exact notice are written into the transcript as "
+            "the compliance record."
+        )
+        st.markdown("**1 · Send this to the participants**")
+        notice = st.text_area("Notice", value=rec.PARTICIPANT_NOTICE, height=200,
+                              key="mt_notice", label_visibility="collapsed")
+        st.caption("Edit it if you said something different — what is here is "
+                   "what the transcript records as the notice given.")
+        st.markdown("**2 · Confirm what you did**")
+        checks = [st.checkbox(text, key=f"mt_att_{key}")
+                  for key, text in rec.ATTESTATIONS]
+        signer = st.text_input("Your name (signs the attestation)", key="mt_signer")
+        notes = st.text_input("Notes (optional — e.g. who agreed, or who opted out)",
+                              key="mt_notes")
+        if st.button("▶ Start recording with names", width="stretch"):
+            consent = rec.Consent(
+                announced=checks[0], permission_granted=checks[1],
+                notice_text=notice or rec.PARTICIPANT_NOTICE, notes=notes or "")
+            consent.sign(signer or "")
+            try:
+                recorder.start(record_names=True, consent=consent)
+            except SpliceError as exc:
+                st.error(str(exc))
+                return
+            st.rerun(scope="fragment")
+
+
 @st.fragment(run_every=2)
 def _render_controls(recorder: rec.Recorder) -> None:
     status = recorder.status()
@@ -82,6 +122,7 @@ def _render_controls(recorder: rec.Recorder) -> None:
             if st.button("▶ Start recording", type="primary", width="stretch"):
                 recorder.start()
                 st.rerun(scope="fragment")
+            _render_consent_gate(recorder)
         elif state == "waiting":
             if st.button("✕ Cancel", width="stretch"):
                 recorder.stop()
