@@ -245,7 +245,8 @@ def run_vbom_workflow(
     excluded_codes = sorted(list(vin_code_set - complexity_code_set))
     excluded_df = pd.DataFrame({"SalesCode_Not_In_Any_Harness": excluded_codes})
 
-    family_stats_df, global_code_df = vbom_main_app.build_salescode_statistics(per_file_families)
+    family_stats_df, _global_code_df = vbom_main_app.build_salescode_statistics(
+        per_file_families)
     selected_codes_by_family = {
         fam["family"]: set(fam["header_codes"]) for fam in per_file_families
     }
@@ -282,7 +283,8 @@ def run_vbom_workflow(
         final_bom_df.to_excel(writer, sheet_name="Final_BOM_By_VIN", index=False)
         if not family_stats_df.empty:
             family_stats_df.to_excel(writer, sheet_name="Family_Code_Stats", index=False)
-            global_code_df.to_excel(writer, sheet_name="Global_Code_Overview", index=False)
+        # Global_Code_Overview is deliberately not emitted: it restated the
+        # per-family stats programme-wide and no one worked from it.
 
     # Formatting walks every cell of every sheet, and the master workbook has
     # one sheet per harness — so this reports per sheet rather than sitting on

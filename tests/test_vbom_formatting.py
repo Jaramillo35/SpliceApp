@@ -133,3 +133,15 @@ class TestFormatWorkbookProgress:
 
         vbom.format_workbook_output(path, explode)
         assert load_workbook(path)["Sheet1"].cell(row=1, column=1).font.bold
+
+
+class TestSelectionsWorkbookSheets:
+    """Global_Code_Overview was dropped from the selections workbook."""
+
+    def test_global_code_overview_is_not_written(self):
+        import inspect
+        from splice.vbom.workflow import run_vbom_workflow
+        source = inspect.getsource(run_vbom_workflow)
+        assert 'sheet_name="Global_Code_Overview"' not in source
+        # the per-family stats sheet it summarised is still emitted
+        assert 'sheet_name="Family_Code_Stats"' in source
