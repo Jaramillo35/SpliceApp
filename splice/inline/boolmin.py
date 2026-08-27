@@ -9,7 +9,11 @@ is logically tiny but textually huge. :func:`minimize` reduces such an
 expression to its minimal sum-of-products via a truth table and
 Quine-McCluskey, then factors literals common to every term, yielding e.g.
 
-    -XZ2&-XZ3&(RDU/RHH/RTC)
+    -XZ2&(RDU/RHH/RTC/XZ3)
+
+A shorter form is possible only where the loaded complexity tables prove
+some branch unbuildable — see the ``configurations`` argument. Nothing about
+which codes travel together is assumed here; it is read from the data.
 
 Guarantees:
 
@@ -134,10 +138,14 @@ def minimize(expression: str, configurations: tuple = ()) -> str:
     treated as present, mirroring ``builds_where``). When given, only the
     assignments realizable by those builds are *cares*; every unbuildable
     combination is a don't-care Quine-McCluskey may exploit. This is what
-    lets XZ2≡XZ3 complexities collapse ``-XZ2&(.../XZ3)`` to
-    ``-XZ2&-XZ3&(...)``-style forms: the XZ3-without-XZ2 branch is
-    unbuildable, so it need not be represented. Equivalence is then
-    guaranteed on every buildable configuration (and only claimed there).
+    lets a branch that no loaded build can reach drop out of the display.
+
+    Co-occurrence is never assumed programme-wide: it is derived per call
+    from the harnesses passed in. If one harness's table shows two codes
+    always travelling together but another in the same window can build one
+    without the other, the branch stays a *care* and survives the reduction.
+    Equivalence is guaranteed on every buildable configuration in the care
+    set (and only claimed there).
     """
     if not expression or not expression.strip():
         return expression

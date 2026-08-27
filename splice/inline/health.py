@@ -584,9 +584,12 @@ REVIEWER_GUIDE = [
         "complexity revision may reflect old data, not defects. A skew above "
         "30 days is flagged.",
         "Window expressions are minimized against the BUILDABLE "
-        "configurations: codes carried by every build (or by none) vanish as "
-        "vacuous, and co-occurring codes collapse (if XZ2 and XZ3 always "
-        "ship together, -XZ2 implies -XZ3). The raw expression is preserved "
+        "configurations of the complexity files loaded for THAT finding: "
+        "codes carried by every build (or by none) vanish as vacuous, and "
+        "two codes that no loaded build ever separates collapse into one. "
+        "That is read from the data per finding, never assumed programme-"
+        "wide — if any harness in the window can build one code without the "
+        "other, both stay in the expression. The raw expression is preserved "
         "internally and the minimal form is machine-verified equivalent on "
         "every buildable configuration.",
         "Codes a harness's complexity does not track are treated as PRESENT "

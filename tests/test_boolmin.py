@@ -54,10 +54,15 @@ class TestReductions:
 
 
 class TestDontCares:
-    """Reduction constrained to the buildable configurations of the
-    complexity tables (field question 2026-08-25: XZ2 and XZ3 share the same
-    applicability in Body Left, so windows must not display phantom
-    XZ3-without-XZ2 branches)."""
+    """Reduction constrained to the buildable configurations of the complexity
+    tables that were actually loaded.
+
+    The XZ2/XZ3 co-occurrence below is a property of BODY LEFT's own table and
+    nothing more — it is NOT true of the programme (field correction
+    2026-08-26). These tests therefore pin both directions: the branch
+    collapses where that harness's data supports it, and survives as soon as
+    any harness in the same window can build one code without the other.
+    """
 
     def _bl(self):
         from splice.inline.model import Build, Harness
@@ -91,6 +96,27 @@ class TestDontCares:
         raw_builds = {b.part_number for b in builds_where(bl, raw)}
         short_builds = {b.part_number for b in builds_where(bl, short)}
         assert raw_builds == short_builds
+
+    def test_co_occurrence_is_not_applied_beyond_the_harness_that_shows_it(self):
+        """The collapse must not generalise: another harness in the same
+        window that builds XZ3 without XZ2 makes the branch real again."""
+        from splice.inline.model import Build, Harness
+        from splice.inline.boolmin import care_configurations
+        independent = Harness(name="OTHER", def_id="2", builds=[
+            Build("C1", codes=frozenset({"XZ3"})),   # XZ3 without XZ2 builds here
+            Build("C2", codes=frozenset({"XZ2"})),
+        ], complexity_codes={"XZ2", "XZ3", "RHH", "RTC", "RDU"})
+        raw = ("(((XZ2&(RHH/RTC/RDU))/(XZ2&-RHH&-RDU))/"
+               "(((RHH/RTC/RDU)&-XZ2&-XZ3)/((XZ2/XZ3)&(-RHH&-RDU))/"
+               "(XZ2/XZ3&(/RHH/RTC/RDU)))/"
+               "(((RHH/RTC/RDU)&-XZ2&-XZ3)/(XZ2/XZ3&(RHH/RTC/RDU))))"
+               "&-((XZ2&(RHH/RTC/RDU))/(XZ2&-RHH&-RDU))")
+        alone = minimize(raw, care_configurations(self._bl()))
+        together = minimize(raw, care_configurations(self._bl(), independent))
+        assert "XZ3" not in alone, "BODY LEFT's own data supports the collapse"
+        assert "XZ3" in together, (
+            "XZ3 must survive once a harness in the window builds it without "
+            f"XZ2 — got {together!r}")
 
     def test_constant_on_buildables_keeps_the_raw_evidence(self):
         from splice.inline.boolmin import care_configurations
