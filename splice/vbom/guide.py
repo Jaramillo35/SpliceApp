@@ -62,8 +62,8 @@ Resolving to **N/A** is a valid answer and is recorded as such.
 ## How a part number is chosen
 
 A VIN carries a set of sales codes. Each part number in a complexity file
-carries the codes marked `X` in its row (a `G` mark means *giveaway* — the code
-is carried, but it came along with the part rather than being ordered). A part
+carries the codes marked `X` (or `O`) in its row — a `G` mark means *giveaway*:
+the code is carried, but it came along with the part rather than being ordered. A part
 that carries every code the VIN requires is a candidate; candidates are scored
 on how exactly they match, and the best-scoring one wins. A part missing a
 required code is incomplete, which is what raises the first review reason.
@@ -73,10 +73,11 @@ required code is incomplete, which is what raises the first review reason.
 * **`Excluded_SalesCodes`** lists codes present in the build data that no
   uploaded harness knows about. A long list usually means a complexity file is
   missing from the upload, not that the codes are irrelevant.
-* **Only `X` and `G` count as marks.** A cell holding anything else — `O` is
-  the one that turns up in practice — is read as *not applicable*, silently.
-  If a harness is missing from a VIN you expected it on, check the marks in
-  that complexity file first.
+* **Marks that count:** `X` means the part carries the code, and `O` is
+  accepted as the same thing (it is a hand-entered variant that appears in real
+  files). `G` means *giveaway*. Case does not matter. **Any other character is
+  read as not-applicable** — so if a harness is missing from a VIN you expected
+  it on, check the marks in that complexity file first.
 * **Check `SalesCode_Diff`** when the results look wrong across the board; it
   is usually an input mismatch rather than a selection bug.
 """

@@ -919,6 +919,13 @@ def derive_sorted_unique_codes(series: pd.Series):
 # =========================================
 # Read Complexity and extract header/PN map
 # =========================================
+#: Cell values that mean "this part number carries this sales code".
+#: "X" is the standard mark; "O" is a hand-entered variant seen in the wild.
+APPLICABLE_MARKS = frozenset({"X", "O"})
+#: "Giveaway": the code is carried, but came with the part rather than ordered.
+GIVEAWAY_MARK = "G"
+
+
 def read_complexity_sheet(path: str):
     """
     Returns:
@@ -966,9 +973,13 @@ def read_complexity_sheet(path: str):
         for j, val in enumerate(row_vals):
             if j in colidx_to_code:
                 val_up = (val if isinstance(val, str) else ("" if _is_nullish(val) else str(val))).strip().upper()
-                if val_up == "X":
+                # "O" is a hand-entered stand-in for "X" that turns up in real
+                # complexity files. It means the part carries the code, so it
+                # is normalised here rather than being silently dropped, which
+                # used to make a harness vanish from VINs that needed it.
+                if val_up in APPLICABLE_MARKS:
                     pn_codes.add(colidx_to_code[j])
-                elif val_up == "G":
+                elif val_up == GIVEAWAY_MARK:
                     pn_giveaway_codes.add(colidx_to_code[j])
         rows.append((pn, pn_codes, pn_giveaway_codes))
 
