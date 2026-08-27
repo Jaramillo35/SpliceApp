@@ -145,3 +145,41 @@ class TestSelectionsWorkbookSheets:
         assert 'sheet_name="Global_Code_Overview"' not in source
         # the per-family stats sheet it summarised is still emitted
         assert 'sheet_name="Family_Code_Stats"' in source
+
+
+class TestGuide:
+    """The instructions ship with the bundle, so they must stay accurate."""
+
+    def test_guide_names_every_output_file(self):
+        from splice.vbom.guide import GUIDE_MD
+        for stem in ("Harness_Selection_Review", "VIN_to_Harness_Selection",
+                     "VIN_Salescode_matrix", "Master_Combined_Harness_Complexity",
+                     "VBOM_Template_for_DEFE"):
+            assert stem in GUIDE_MD, f"{stem} is not documented"
+
+    def test_guide_names_every_review_reason(self):
+        # The reasons the engine can raise must all be explained.
+        from splice.vbom.guide import GUIDE_MD
+        for reason in ("No complete PN covers every required sales code",
+                       "Multiple PNs share the best score",
+                       "N/A conflicts with an available base/default PN"):
+            assert reason in GUIDE_MD, f"unexplained review reason: {reason}"
+
+    def test_guide_documents_the_sheets_that_are_written(self):
+        from splice.vbom.guide import GUIDE_MD
+        for sheet in ("Selections", "AllCandidates", "Excluded_SalesCodes",
+                      "Final_BOM_By_VIN", "Family_Code_Stats", "SalesCode_Diff"):
+            assert sheet in GUIDE_MD
+        # ...and not the one that was removed
+        assert "Global_Code_Overview" not in GUIDE_MD
+
+    def test_bundle_readme_is_stamped_with_the_run(self):
+        from splice.vbom.guide import bundle_readme
+        text = bundle_readme("28_DT", "28_DT_VBOM_Template_for_DEFE.xlsx", 7)
+        assert "28_DT" in text and "7 selection(s)" in text
+        assert "28_DT_VBOM_Template_for_DEFE.xlsx" in text
+
+    def test_bundle_readme_handles_a_clean_run(self):
+        from splice.vbom.guide import bundle_readme
+        text = bundle_readme("28_DT", "x.xlsx", 0)
+        assert "flagged **no** selections" in text

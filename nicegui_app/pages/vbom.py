@@ -29,6 +29,15 @@ class _Upload:
         return self._data
 
 
+def _guide() -> None:
+    """How the tool works and what each output file is for."""
+    from splice.vbom.guide import GUIDE_MD
+    with ui.expansion("How the VBOM works, and what each output file is for "
+                      "— read me first", icon="school") \
+            .classes("w-full").props("dense"):
+        ui.markdown(GUIDE_MD).classes("text-sm")
+
+
 @ui.page("/vbom")
 def page() -> None:
     from splice.vbom import review as review_engine
@@ -40,6 +49,7 @@ def page() -> None:
     with c.frame("VBOM Risk Matrix",
                  "DoAll / BuildSpec + harness complexity files → the VBOM "
                  "workbook bundle."):
+        _guide()
         with c.card("Inputs"):
             with ui.row().classes("w-full gap-4 flex-wrap items-end"):
                 my = ui.input("Model year", placeholder="e.g. 26").classes("w-28")
@@ -196,7 +206,7 @@ def page() -> None:
                 return
 
             def work(report):
-                from splice.vbom import run_vbom_workflow
+                from splice.vbom import guide, run_vbom_workflow
                 with tempfile.TemporaryDirectory(prefix="ng_vbom_") as td:
                     result = run_vbom_workflow(
                         my=my.value, program=program.value,
@@ -214,6 +224,13 @@ def page() -> None:
                             if path and Path(path).is_file():
                                 zf.write(path, arcname=Path(path).name)
                                 names.append(Path(path).name)
+                        # The bundle gets emailed on, so it carries its own
+                        # instructions rather than relying on this page.
+                        zf.writestr(guide.README_FILENAME, guide.bundle_readme(
+                            f"{result['my'][-2:]}_{result['program']}",
+                            result.get("defe_output_name", ""),
+                            result.get("review_case_count", 0)))
+                        names.append(guide.README_FILENAME)
                     return result, buf.getvalue(), names
 
             out = await c.run_engine_progress(

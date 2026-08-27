@@ -13,7 +13,7 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 from feedback_system import FeedbackStore, render_feedback_widget
-from splice.vbom import run_vbom_workflow
+from splice.vbom import guide, run_vbom_workflow
 
 st.title("VBOM Risk Matrix")
 st.caption(
@@ -28,6 +28,10 @@ render_feedback_widget(
     store=feedback_store,
     key_prefix="vbom_feedback",
 )
+
+with st.expander("ℹ️ How the VBOM works, and what each output file is for — read me first"):
+    from splice.vbom.guide import GUIDE_MD
+    st.markdown(GUIDE_MD)
 
 with st.form("vbom_streamlit_form"):
     my = st.text_input("Model Year (MY)", placeholder="e.g. 27")
@@ -84,6 +88,13 @@ if generate_clicked:
                             safe_name = Path(path).name
                             archive.write(path, arcname=safe_name)
                             generated_files.append(safe_name)
+                    # The bundle gets emailed on, so it carries its own
+                    # instructions rather than relying on this page.
+                    archive.writestr(guide.README_FILENAME, guide.bundle_readme(
+                        f"{my[-2:]}_{program}",
+                        result.get("defe_output_name", ""),
+                        result.get("review_case_count", 0)))
+                    generated_files.append(guide.README_FILENAME)
                 st.session_state["vbom_archive_bytes"] = archive_bytes.getvalue()
                 st.session_state["vbom_generated_files"] = generated_files
             progress_bar.empty()
