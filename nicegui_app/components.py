@@ -192,3 +192,45 @@ def empty(message: str, icon: str = "upload_file") -> None:
     with ui.column().classes("items-center w-full py-8 gap-1 sx-muted"):
         ui.icon(icon).classes("text-4xl opacity-40")
         ui.label(message).classes("text-sm text-center")
+
+
+async def run_engine_progress(fn: Callable, container, *, running: str,
+                              done: str = "Done"):
+    """Run an engine call that reports progress, showing a real progress bar.
+
+    ``fn`` receives one argument: a ``progress(fraction, message)`` callback it
+    may call from its worker thread. That callback only writes into a shared
+    cell — the bar and its label are updated from a UI timer, because NiceGUI
+    elements must never be touched from a thread other than the event loop's.
+
+    Returns the result, or None after notifying the error.
+    """
+    cell = {"fraction": 0.0, "message": running}
+
+    def report(fraction: float, message: str) -> None:
+        cell["fraction"], cell["message"] = fraction, message
+
+    container.clear()
+    with container:
+        with ui.row().classes("items-center justify-between w-full"):
+            label = ui.label(running).classes("text-xs sx-muted")
+            percent = ui.label("0%").classes("text-xs sx-mono sx-muted")
+        bar = ui.linear_progress(value=0.0, show_value=False) \
+            .props("rounded size=8px")
+
+    def tick() -> None:
+        bar.set_value(cell["fraction"])
+        label.set_text(cell["message"])
+        percent.set_text(f"{cell['fraction'] * 100:.0f}%")
+
+    timer = ui.timer(0.1, tick)
+    try:
+        result = await run.io_bound(fn, report)
+        ui.notify(done, type="positive")
+        return result
+    except Exception as exc:  # noqa: BLE001 - engine errors surface to the user
+        ui.notify(f"{exc}", type="negative", multi_line=True, close_button=True)
+        return None
+    finally:
+        timer.deactivate()
+        container.clear()

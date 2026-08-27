@@ -50,35 +50,43 @@ if generate_clicked:
     if input_upload is None or not complexity_uploads:
         st.error("Please upload an input file and at least one harness complexity file.")
     else:
+        # A real VBOM run is minutes long; a bare spinner reads as a hang, so
+        # the engine reports each stage and drives the bar below.
+        progress_bar = st.progress(0.0, text="Starting the VBOM workflow…")
+
+        def report_progress(fraction: float, message: str) -> None:
+            progress_bar.progress(fraction, text=message)
+
         try:
-            with st.spinner("Generating VBOM outputs..."):
-                with tempfile.TemporaryDirectory(prefix="splice_vbom_") as output_dir:
-                    result = run_vbom_workflow(
-                        my=my,
-                        program=program,
-                        source_type=source_type,
-                        input_upload=input_upload,
-                        complexity_uploads=complexity_uploads,
-                        output_dir=Path(output_dir),
-                    )
-                    output_paths = [
-                        ("Master complexity workbook", result.get("master_path")),
-                        ("VIN / SalesCode matrix", result.get("vin_matrix_path")),
-                        ("Harness selection workbook", result.get("selections_path")),
-                        ("Selection review workbook", result.get("review_path")),
-                    ]
-                    archive_bytes = io.BytesIO()
-                    generated_files: list[str] = []
-                    with zipfile.ZipFile(
-                        archive_bytes, "w", zipfile.ZIP_DEFLATED
-                    ) as archive:
-                        for _, path in output_paths:
-                            if path is not None and Path(path).is_file():
-                                safe_name = Path(path).name
-                                archive.write(path, arcname=safe_name)
-                                generated_files.append(safe_name)
-                    st.session_state["vbom_archive_bytes"] = archive_bytes.getvalue()
-                    st.session_state["vbom_generated_files"] = generated_files
+            with tempfile.TemporaryDirectory(prefix="splice_vbom_") as output_dir:
+                result = run_vbom_workflow(
+                    my=my,
+                    program=program,
+                    source_type=source_type,
+                    input_upload=input_upload,
+                    complexity_uploads=complexity_uploads,
+                    output_dir=Path(output_dir),
+                    progress=report_progress,
+                )
+                output_paths = [
+                    ("Master complexity workbook", result.get("master_path")),
+                    ("VIN / SalesCode matrix", result.get("vin_matrix_path")),
+                    ("Harness selection workbook", result.get("selections_path")),
+                    ("Selection review workbook", result.get("review_path")),
+                ]
+                archive_bytes = io.BytesIO()
+                generated_files: list[str] = []
+                with zipfile.ZipFile(
+                    archive_bytes, "w", zipfile.ZIP_DEFLATED
+                ) as archive:
+                    for _, path in output_paths:
+                        if path is not None and Path(path).is_file():
+                            safe_name = Path(path).name
+                            archive.write(path, arcname=safe_name)
+                            generated_files.append(safe_name)
+                st.session_state["vbom_archive_bytes"] = archive_bytes.getvalue()
+                st.session_state["vbom_generated_files"] = generated_files
+            progress_bar.empty()
             review_cases = result.get("review_case_count", 0)
             defe_name = result.get("defe_output_name", "the DEFE template")
             st.success("VBOM workbook bundle generated.")
@@ -90,6 +98,7 @@ if generate_clicked:
                 f"is complete."
             )
         except Exception as exc:  # noqa: BLE001 - surface any failure cleanly
+            progress_bar.empty()
             st.error(f"VBOM workflow failed: {exc}")
 
 vbom_archive_bytes = st.session_state.get("vbom_archive_bytes")

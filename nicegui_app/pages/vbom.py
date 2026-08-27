@@ -55,6 +55,9 @@ def page() -> None:
                               accept=".xlsx,.xlsm,.xls", multiple=True)
             ui.button("Generate VBOM bundle", icon="play_arrow",
                       on_click=lambda: generate()).props("unelevated")
+            # Filled by run_engine_progress while the workflow runs; a long
+            # VBOM run is minutes of silence otherwise.
+            progress_box = ui.column().classes("w-full gap-1")
 
         @ui.refreshable
         def render_result() -> None:
@@ -192,7 +195,7 @@ def page() -> None:
                           type="warning")
                 return
 
-            def work():
+            def work(report):
                 from splice.vbom import run_vbom_workflow
                 with tempfile.TemporaryDirectory(prefix="ng_vbom_") as td:
                     result = run_vbom_workflow(
@@ -201,6 +204,7 @@ def page() -> None:
                         input_upload=state["input"],
                         complexity_uploads=list(state["complexity"]),
                         output_dir=Path(td),
+                        progress=report,
                     )
                     buf, names = io.BytesIO(), []
                     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -212,8 +216,9 @@ def page() -> None:
                                 names.append(Path(path).name)
                     return result, buf.getvalue(), names
 
-            out = await c.run_engine(work, running="Running the VBOM workflow…",
-                                     done="VBOM bundle ready")
+            out = await c.run_engine_progress(
+                work, progress_box, running="Running the VBOM workflow…",
+                done="VBOM bundle ready")
             if out is not None:
                 state["result"], state["zip"], state["files"] = out
                 state["resolutions"], state["notes"], state["defe"] = {}, {}, None

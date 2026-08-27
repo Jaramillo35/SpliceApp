@@ -5,9 +5,32 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import pandas as pd
+
+#: Progress callback: ``(fraction 0..1, human-readable stage)``.
+ProgressFn = Callable[[float, str], None]
+
+
+class _Progress:
+    """Reports workflow progress, and never lets a UI callback break the run.
+
+    Stage fractions are calibrated to observed cost, not spaced evenly: reading
+    the complexity files and the VIN/harness matching dominate a real run, so
+    they own most of the bar.
+    """
+
+    def __init__(self, callback: ProgressFn | None) -> None:
+        self._callback = callback
+
+    def __call__(self, fraction: float, message: str) -> None:
+        if self._callback is None:
+            return
+        try:
+            self._callback(max(0.0, min(1.0, float(fraction))), str(message))
+        except Exception:  # noqa: BLE001 - progress must never fail the workflow
+            pass
 
 
 def _build_short_sheet_name(base_name: str) -> str:
@@ -136,7 +159,10 @@ def run_vbom_workflow(
     input_upload,
     complexity_uploads: Iterable,
     output_dir: Path | None = None,
+    progress: ProgressFn | None = None,
 ) -> dict:
+    report = _Progress(progress)
+    report(0.0, "Loading the VBOM engine…")
     vbom_main_app = _load_vbom_module()
 
     target_dir = output_dir or Path(tempfile.mkdtemp(prefix="vbom_streamlit_", dir=str(Path.cwd())))
@@ -144,6 +170,7 @@ def run_vbom_workflow(
 
     input_name = getattr(input_upload, "name", "input_file") or "input_file"
     input_path = target_dir / Path(input_name).name
+    report(0.03, f"Saving {Path(input_name).name}…")
     _write_uploaded_file(input_upload, input_path)
 
     complexity_paths = []
@@ -157,13 +184,18 @@ def run_vbom_workflow(
         raise ValueError("At least one harness complexity file is required.")
 
     source_mode = "buildspec" if source_type.lower() == "buildspec" else "doall"
+    report(0.06, f"Building the VIN / sales-code matrix from {Path(input_name).name}…")
     vin_matrix_df, vin_codes_sorted = vbom_main_app.build_vin_matrix(str(input_path), source_type=source_mode)
 
     per_file_master = []
     per_file_families = []
     all_complexity_codes = set()
 
-    for complexity_path in complexity_paths:
+    total_complexity = len(complexity_paths)
+    for index, complexity_path in enumerate(complexity_paths, start=1):
+        report(0.15 + 0.30 * (index - 1) / total_complexity,
+               f"Reading harness complexity {index} of {total_complexity} — "
+               f"{Path(complexity_path).name}")
         df_comp, header_codes, pn_rows = vbom_main_app.read_complexity_sheet(str(complexity_path))
         family = vbom_main_app.try_get_harness_family(str(complexity_path))
         per_file_master.append((str(complexity_path), df_comp))
@@ -176,6 +208,7 @@ def run_vbom_workflow(
         )
         all_complexity_codes.update(header_codes)
 
+    report(0.45, "Comparing sales codes across the VIN matrix and the harnesses…")
     vin_code_set = set(vin_codes_sorted)
     complexity_code_set = set(all_complexity_codes)
     diff_df = vbom_main_app.build_salescode_diff(vin_code_set, complexity_code_set)
@@ -188,6 +221,8 @@ def run_vbom_workflow(
     }
     families_for_matching = vbom_main_app.filter_per_file_families(per_file_families, selected_codes_by_family)
 
+    report(0.52, f"Matching {len(vin_matrix_df)} VIN(s) against "
+                 f"{len(families_for_matching)} harness family(ies)…")
     selections_df, all_candidates_df, final_bom_df = vbom_main_app.build_outputs(vin_matrix_df, families_for_matching)
 
     # Program-qualified naming: every output carries the {MY_last2}_{Program}
@@ -198,15 +233,18 @@ def run_vbom_workflow(
     vin_matrix_path = target_dir / f"VIN_Salescode_matrix_{tag}.xlsx"
     selections_path = target_dir / f"VIN_to_Harness_Selection_{tag}.xlsx"
 
+    report(0.72, "Writing the combined master complexity workbook…")
     used_sheetnames = set()
     with pd.ExcelWriter(master_path, engine="openpyxl") as writer:
         for complexity_path, df_comp in per_file_master:
             sheet_name = vbom_main_app.safe_sheetname(Path(complexity_path).name, used_sheetnames)
             df_comp.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
 
+    report(0.78, "Writing the VIN sales-code matrix…")
     vin_matrix_df.to_excel(vin_matrix_path, index=False, engine="openpyxl")
     vbom_main_app.write_df_to_excel_append(str(vin_matrix_path), "SalesCode_Diff", diff_df)
 
+    report(0.83, "Writing the harness selections workbook…")
     with pd.ExcelWriter(selections_path, engine="openpyxl") as writer:
         selections_df.to_excel(writer, sheet_name="Selections", index=False)
         all_candidates_df.to_excel(writer, sheet_name="AllCandidates", index=False)
@@ -216,6 +254,7 @@ def run_vbom_workflow(
             family_stats_df.to_excel(writer, sheet_name="Family_Code_Stats", index=False)
             global_code_df.to_excel(writer, sheet_name="Global_Code_Overview", index=False)
 
+    report(0.88, "Formatting the workbooks…")
     vbom_main_app.format_workbook_output(str(master_path))
     vbom_main_app.format_workbook_output(str(selections_path))
 
@@ -228,9 +267,11 @@ def run_vbom_workflow(
     vba_project_path = vbom_root / vbom_main_app.REVIEW_VBA_PROJECT_FILE
     defe_output_name = f"{tag}_VBOM_Template_for_DEFE.xlsx"
     review_path = target_dir / f"Harness_Selection_Review_{tag}.xlsm"
+    report(0.93, "Building the SE review cases…")
     review_df = vbom_main_app.build_selection_review_cases(
         selections_df, all_candidates_df, families_for_matching
     )
+    report(0.96, "Writing the macro-enabled review workbook…")
     vbom_main_app.create_selection_review_workbook(
         str(review_path),
         review_df,
@@ -240,6 +281,7 @@ def run_vbom_workflow(
         defe_output_name=defe_output_name,
     )
 
+    report(1.0, "Done")
     metrics_stats = {
         # rows_read combines primary input matrix rows and all harness complexity sheet rows.
         "rows_read": int(len(vin_matrix_df) + sum(len(df_comp) for _, df_comp in per_file_master)),
