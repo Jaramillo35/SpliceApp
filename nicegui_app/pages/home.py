@@ -22,6 +22,9 @@ TOOLS = [
      "prefixes."),
     ("VBOM Risk Matrix", "grid_on", "/vbom",
      "DoAll / BuildSpec + complexity files into the VBOM workbook bundle."),
+    ("Circuit Applicability", "rule", "/circuit-applicability",
+     "DTx circuits against each harness's complexity — which part "
+     "numbers carry which circuit, and which conditions no build satisfies."),
     ("Circuit Health", "monitor_heart", "/circuit-health",
      "Missing circuits across inlines: cavity checks, option-window coverage, "
      "route gaps — with SE dispositions and sign-off."),

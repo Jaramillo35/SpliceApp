@@ -56,16 +56,23 @@ def _meta_from_title_block(raw: pd.DataFrame, header_row: int) -> DtxMeta:
 
 def read_dtx_circuits(payload, filename: str = "",
                       sheet: str | None = None) -> Tuple[List[CircuitRow], DtxMeta]:
-    """Parse a DTx export into circuit rows plus the report's own metadata."""
+    """Parse a DTx export into circuit rows plus the report's own metadata.
+
+    Only the first sheet is read — it is the detail report, and it carries the
+    title block stating the vehicle programme and build phase. Pass ``sheet``
+    to override. Programme and phase always come from the file's contents,
+    never from its name.
+    """
     source = io.BytesIO(payload) if isinstance(payload, (bytes, bytearray)) else payload
     try:
         book = pd.read_excel(source, sheet_name=None, header=None, dtype=str)
     except Exception as exc:
         raise SpliceError(f"Could not read {filename or 'the DTx export'}: {exc}") from exc
 
-    # The detail sheet is the one carrying the circuit table; others (e.g. the
-    # duplicate report) are ignored unless a sheet is named explicitly.
-    candidates = [sheet] if sheet else list(book)
+    # The FIRST sheet is the detail report and the only one read: later sheets
+    # (the Duplicate DTx Report) repeat rows under the same headers, and
+    # counting them twice would double every circuit's occurrences.
+    candidates = [sheet] if sheet else list(book)[:1]
     last_error = None
     for name in candidates:
         raw = book.get(name)

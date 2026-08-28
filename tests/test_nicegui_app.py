@@ -13,7 +13,7 @@ nicegui = pytest.importorskip("nicegui")
 EXPECTED_ROUTES = {
     "/", "/splice-generation", "/dtx-compare", "/harness-complexity",
     "/hrn-chart", "/vbom",
-    "/circuit-health", "/secr", "/ask", "/transcripts", "/downloads",
+    "/circuit-applicability", "/circuit-health", "/secr", "/ask", "/transcripts", "/downloads",
 }
 
 

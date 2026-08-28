@@ -24,6 +24,7 @@ NAV = [
         ("Harness Complexity", "table_view", "/harness-complexity"),
         ("HRN Chart Builder", "stacked_bar_chart", "/hrn-chart"),
         ("VBOM Risk Matrix", "grid_on", "/vbom"),
+        ("Circuit Applicability", "rule", "/circuit-applicability"),
         ("Circuit Health", "monitor_heart", "/circuit-health"),
     ]),
     ("Data", [
@@ -42,7 +43,8 @@ def _feedback_dialog() -> ui.dialog:
         ui.label("Report a problem or idea").classes("text-base font-bold")
         area = ui.select(
             ["General", "Splice Generation", "DTx Compare", "Harness Complexity",
-             "HRN Chart Builder", "VBOM Risk Matrix", "Circuit Health",
+             "HRN Chart Builder", "VBOM Risk Matrix", "Circuit Applicability",
+             "Circuit Health",
              "SECR Database", "Transcripts"],
             value="General", label="Area").classes("w-full")
         text = ui.textarea("What happened, or what would help?").classes("w-full")

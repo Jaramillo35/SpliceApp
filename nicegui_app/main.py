@@ -21,8 +21,8 @@ from nicegui import ui
 
 # importing each module registers its route
 from nicegui_app.pages import (  # noqa: F401,E402
-    ask, circuit_health, downloads, dtx_compare, harness_complexity, home,
-    hrn_chart, secr, splice_gen, transcripts, vbom,
+    ask, circuit_applicability, circuit_health, downloads, dtx_compare,
+    harness_complexity, home, hrn_chart, secr, splice_gen, transcripts, vbom,
 )
 
 

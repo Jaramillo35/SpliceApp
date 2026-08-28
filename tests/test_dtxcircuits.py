@@ -229,3 +229,137 @@ class TestDtxReader:
         rows, meta = read_dtx_circuits(data, "invented.xlsx")
         assert len(rows) == len(circuit_rows())
         assert meta.program == "" and meta.phase == ""
+
+
+def _complexity_workbook(year="9000", vehicle="ZZ", phase="X9_A",
+                         harness="BODY_LEFT", def_id="90001",
+                         info_sheet=True) -> bytes:
+    """An invented individual complexity file: build table + Harness PN info."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Complexity"
+    ws.append([f"ID={def_id}", "AAA", "BBB", "CCC"])
+    ws.append(["90000001AA", "X", "", ""])
+    ws.append(["90000002AA", "", "X", ""])
+    if info_sheet:
+        hp = wb.create_sheet("Harness PN")
+        hp.append(["Previous P/N", "New P/N", "Symbol"])
+        hp.append([None, None, None])
+        for label, value in (("year:", year), ("vehicle:", vehicle),
+                             ("phase:", phase), ("harness:", harness),
+                             ("id:", def_id)):
+            hp.append([label, value])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+class TestComplexityIdentity:
+    """Identity comes from the Harness PN sheet, never the filename."""
+
+    def test_reads_the_info_table(self):
+        from splice.dtxcircuits import read_info
+        meta = read_info(_complexity_workbook(), "WRONG-NAME-1234.xlsm")
+        assert (meta.year, meta.vehicle, meta.phase) == ("9000", "ZZ", "X9_A")
+        assert meta.harness == "BODY_LEFT" and meta.def_id == "90001"
+        assert meta.program == "9000ZZ" and meta.complete
+
+    def test_filename_is_ignored_for_identity(self):
+        from splice.dtxcircuits import read_info
+        meta = read_info(_complexity_workbook(phase="X9_A"),
+                         "2.- Harness_Complexity_28RU_X2_IP_99999_01-01-2026.xlsm")
+        assert meta.phase == "X9_A" and meta.harness == "BODY_LEFT"
+
+    def test_missing_info_sheet_is_reported_not_guessed(self):
+        from splice.dtxcircuits import read_info
+        meta = read_info(_complexity_workbook(info_sheet=False), "x.xlsm")
+        assert not meta.complete and meta.program == ""
+
+    def test_read_harness_file_returns_builds_and_identity(self):
+        from splice.dtxcircuits import read_harness_file
+        harness, meta = read_harness_file(_complexity_workbook(), "x.xlsm")
+        assert harness.def_id == "90001"
+        assert {b.part_number for b in harness.builds} == {"90000001AA", "90000002AA"}
+        assert harness.complexity_codes == {"AAA", "BBB", "CCC"}
+        # the harness takes the name the file states, not the filename stem
+        assert harness.name == "BODY_LEFT" and meta.harness == "BODY_LEFT"
+
+
+class TestNormalisation:
+    def test_program_forms_compare_equal(self):
+        from splice.dtxcircuits import normalize_program as n
+        assert n("2028RU") == n("28RU") == n("2028 RU") == "28RU"
+
+    def test_phase_punctuation_is_absorbed(self):
+        from splice.dtxcircuits import normalize_phase as n
+        assert n("X2_A") == n("X2A") == n("x2 a") == "X2A"
+
+    def test_a_shorter_phase_is_not_the_same_phase(self):
+        from splice.dtxcircuits import normalize_phase as n
+        assert n("X2") != n("X2_A")
+
+
+class TestCorrespondence:
+    def _dtx(self):
+        from splice.dtxcircuits.models import DtxMeta
+        return DtxMeta(program="9000ZZ", phase="X9_A")
+
+    def _meta(self, **kw):
+        from splice.dtxcircuits import ComplexityMeta
+        base = dict(year="9000", vehicle="ZZ", phase="X9_A", harness="H",
+                    filename="f.xlsm")
+        base.update(kw)
+        return ComplexityMeta(**base)
+
+    def test_exact_match_passes(self):
+        from splice.dtxcircuits import correspond
+        result = correspond.check(self._dtx(), [self._meta()])
+        assert result.all_match and len(result.matched) == 1
+
+    def test_spelling_difference_warns_but_does_not_block(self):
+        from splice.dtxcircuits import correspond
+        result = correspond.check(self._dtx(), [self._meta(phase="X9A")])
+        assert result.all_match                      # not blocking
+        assert result.files[0].status == correspond.PHASE_SPELLING
+
+    def test_a_different_phase_blocks(self):
+        from splice.dtxcircuits import correspond
+        result = correspond.check(self._dtx(), [self._meta(phase="X9")])
+        assert not result.all_match
+        assert result.files[0].status == correspond.PHASE_MISMATCH
+
+    def test_a_different_program_blocks(self):
+        from splice.dtxcircuits import correspond
+        result = correspond.check(self._dtx(), [self._meta(vehicle="DT")])
+        assert not result.all_match
+        assert result.files[0].status == correspond.PROGRAM_MISMATCH
+
+    def test_unstated_identity_warns_without_blocking(self):
+        from splice.dtxcircuits import correspond
+        result = correspond.check(self._dtx(), [self._meta(year="", vehicle="")])
+        assert result.all_match
+        assert result.files[0].status == correspond.UNKNOWN
+
+
+class TestFirstSheetOnly:
+    def test_only_the_first_sheet_is_read(self):
+        """The Duplicate DTx Report repeats rows under the same headers;
+        reading it too would double every circuit's occurrences."""
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Detailed DTx Circuits Report"
+        ws.append(["Detailed DTx Circuits Report"])
+        ws.append(["Vehicle Program - 9000ZZ"])
+        ws.append(["Build Phase - X9_A"])
+        ws.append([])
+        ws.append(["Harness Family", "Circuit Name", "Sales Code"])
+        ws.append(["BODY_LEFT", "CKT_100", "AAA"])
+        dup = wb.create_sheet("Duplicate DTx Report")
+        dup.append(["Detailed DTx Circuits Report"])
+        dup.append(["Harness Family", "Circuit Name", "Sales Code"])
+        dup.append(["BODY_LEFT", "CKT_100", "AAA"])
+        buf = io.BytesIO()
+        wb.save(buf)
+        rows, meta = read_dtx_circuits(buf.getvalue(), "invented.xlsx")
+        assert len(rows) == 1, "the duplicate sheet must not be counted"
+        assert meta.program == "9000ZZ" and meta.phase == "X9_A"
