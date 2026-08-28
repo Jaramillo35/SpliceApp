@@ -12,14 +12,14 @@ Three stages, in order:
 
 from __future__ import annotations
 
-import re
 
 from nicegui import ui
 
 from nicegui_app import components as c
 from nicegui_app import theme
 
-ROW_H = 52          # px; left, connector and right cells share it so lines align
+ROW_H = 34          # px; every cell in a row shares it so the lines align
+GRID = "grid-template-columns: 1.1fr 64px 1.25fr 1.5fr"
 GREEN = "#3fb950"
 RED = "#f85149"
 
@@ -29,23 +29,19 @@ VERDICT_KIND = {
 }
 
 
-def _norm(name: str) -> str:
-    return re.sub(r"[^A-Z0-9]", "", str(name).upper())
-
-
 def _line(matched: bool) -> str:
     """The connector between a family and its complexity file."""
     if matched:
         return (f'<svg width="100%" height="{ROW_H}">'
                 f'<line x1="0" y1="{ROW_H//2}" x2="100%" y2="{ROW_H//2}" '
                 f'stroke="{GREEN}" stroke-width="2"/>'
-                f'<circle cx="6" cy="{ROW_H//2}" r="4" fill="{GREEN}"/>'
-                f'<circle cx="calc(100% - 6px)" cy="{ROW_H//2}" r="4" fill="{GREEN}"/>'
+                f'<circle cx="6" cy="{ROW_H//2}" r="3" fill="{GREEN}"/>'
+                f'<circle cx="calc(100% - 6px)" cy="{ROW_H//2}" r="3" fill="{GREEN}"/>'
                 f'</svg>')
     return (f'<svg width="100%" height="{ROW_H}">'
             f'<line x1="0" y1="{ROW_H//2}" x2="100%" y2="{ROW_H//2}" '
             f'stroke="{RED}" stroke-width="2" stroke-dasharray="6,5"/>'
-            f'<circle cx="6" cy="{ROW_H//2}" r="4" fill="none" stroke="{RED}" '
+            f'<circle cx="6" cy="{ROW_H//2}" r="3" fill="none" stroke="{RED}" '
             f'stroke-width="2"/></svg>')
 
 
@@ -88,6 +84,7 @@ def page() -> None:
         "metas": {},            # filename -> ComplexityMeta
         "mapping": {},          # family -> filename
         "corr": None, "analyses": {}, "selected": None, "drag": None,
+        "only_open": False,
     }
 
     with c.frame("Circuit Applicability",
@@ -115,114 +112,142 @@ def page() -> None:
         def mapping_view() -> None:
             if not state["families"]:
                 return
+            from splice.dtxcircuits import matching
+
             meta = state["dtx_meta"]
             mapped = state["mapping"]
             pool = [f for f in state["harnesses"] if f not in mapped.values()]
+            labels = {f: (state["metas"][f].harness or state["harnesses"][f].name)
+                      for f in state["harnesses"]}
+            # candidates are drawn from the pool only: a connected file is not
+            # offered again elsewhere
+            suggestions = matching.suggest(
+                [f for f, _n in state["families"]],
+                {f: labels[f] for f in pool})
+            suggested_anywhere = {s.key for v in suggestions.values() for s in v}
+            orphans = [f for f in pool if f not in suggested_anywhere]
 
             with c.card("2 · Map families to complexity files",
                         f"DTx {meta.program or '?'} · phase {meta.phase or '?'} "
                         f"· {len(state['families'])} families · "
-                        f"{len(state['harnesses'])} complexity file(s) loaded"):
-                with ui.row().classes("gap-2 flex-wrap"):
+                        f"{len(state['harnesses'])} file(s)"):
+                with ui.row().classes("gap-2 flex-wrap items-center"):
                     c.chip("ok", f"{len(mapped)} connected")
                     if len(state["families"]) - len(mapped):
                         c.chip("blocker",
-                               f"{len(state['families']) - len(mapped)} not connected")
+                               f"{len(state['families']) - len(mapped)} open")
                     if pool:
                         c.chip("review", f"{len(pool)} file(s) unused")
                     for f in (state["corr"].blocking if state["corr"] else []):
                         c.chip("blocker", f"{f.filename}: {f.detail}")
-                    for f in (state["corr"].warnings if state["corr"] else []):
-                        c.chip("review", f"{f.filename}: {f.detail}")
+                    ui.checkbox("Only unconnected",
+                                value=state["only_open"],
+                                on_change=lambda e: (
+                                    state.update(only_open=e.value),
+                                    mapping_view.refresh())) \
+                        .props("dense").classes("text-xs")
 
-                # header
-                with ui.element("div").classes("w-full grid gap-2 mt-2") \
-                        .style("grid-template-columns: 1fr 120px 1.4fr"):
-                    ui.label("DTx harness family").classes("text-xs font-bold sx-muted")
-                    ui.label("").classes("text-xs")
-                    ui.label("Individual complexity file").classes(
-                        "text-xs font-bold sx-muted")
+                rows = [(f, n) for f, n in state["families"]
+                        if not (state["only_open"] and f in mapped)]
+                if not rows:
+                    c.chip("ok", "Every family is connected")
 
-                for family, n_rows in state["families"]:
-                    filename = mapped.get(family)
-                    with ui.element("div").classes("w-full grid gap-2 items-center") \
-                            .style("grid-template-columns: 1fr 120px 1.4fr"):
-                        # left — the DTx family
-                        with ui.element("div").classes(
-                                "rounded-lg px-3 flex flex-col justify-center") \
-                                .style(f"height:{ROW_H}px;background:{theme.SURFACE_2};"
-                                       f"border:1px solid {theme.LINE}"):
-                            ui.label(family).classes("text-sm font-semibold")
-                            ui.label(f"{n_rows} DTx row(s)").classes("text-xs sx-muted")
-                        # middle — the connector
+                with ui.element("div").classes("w-full grid gap-x-2") \
+                        .style(GRID):
+                    for title in ("DTx harness family", "", "Connected file",
+                                  "Candidates — drag or click to connect"):
+                        ui.label(title).classes(
+                            "text-[10px] font-bold tracking-wide sx-muted")
+                    for family, n_rows in rows:
+                        filename = mapped.get(family)
+                        _family_cell(family, n_rows)
                         ui.html(_line(bool(filename)))
-                        # right — the complexity file, or a drop zone
-                        _target_cell(family, filename)
+                        _target_cell(family, filename, labels)
+                        _candidates_cell(family, suggestions.get(family, []),
+                                         bool(filename))
 
-                if pool:
-                    ui.label("Unmatched complexity files — drag one onto a family") \
-                        .classes("text-xs font-bold sx-muted mt-3")
-                    with ui.row().classes("gap-2 flex-wrap"):
-                        for filename in sorted(pool):
-                            _pool_item(filename)
-                else:
-                    ui.label("Every loaded complexity file is connected.") \
-                        .classes("text-xs sx-muted mt-2")
+                if orphans:
+                    ui.label("No likely family — drag these onto a row yourself") \
+                        .classes("text-[10px] font-bold sx-muted mt-2")
+                    with ui.row().classes("gap-1 flex-wrap"):
+                        for filename in sorted(orphans):
+                            _chip(filename, labels[filename], None)
 
-                with ui.row().classes("items-center gap-3 mt-3"):
+                with ui.row().classes("items-center gap-3 mt-2"):
                     ui.button("Run analysis", icon="play_arrow",
-                              on_click=lambda: run()).props("unelevated") \
+                              on_click=lambda: run()).props("unelevated dense") \
                         .set_enabled(bool(mapped))
                     ui.label("Only connected families are analyzed.") \
-                        .classes("text-xs sx-muted")
+                        .classes("text-[10px] sx-muted")
 
-        def _target_cell(family: str, filename: str | None) -> None:
-            """Right-hand cell: the connected file, or a drop zone."""
-            border = f"1px solid {theme.LINE}" if filename \
-                else f"1px dashed {RED}88"
+        def _family_cell(family: str, n_rows: int) -> None:
+            with ui.element("div").classes(
+                    "rounded px-2 flex items-center justify-between gap-1") \
+                    .style(f"height:{ROW_H}px;background:{theme.SURFACE_2};"
+                           f"border:1px solid {theme.LINE}"):
+                ui.label(family).classes("text-[11px] font-semibold truncate")
+                ui.label(str(n_rows)).classes("text-[10px] sx-muted shrink-0")
+
+        def _target_cell(family: str, filename: str | None, labels) -> None:
+            border = f"1px solid {theme.LINE}" if filename else f"1px dashed {RED}88"
             cell = ui.element("div").classes(
-                "rounded-lg px-3 flex items-center justify-between gap-2") \
+                "rounded px-2 flex items-center justify-between gap-1") \
                 .style(f"height:{ROW_H}px;background:{theme.SURFACE_2};border:{border}")
             with cell:
                 if filename:
-                    meta = state["metas"].get(filename)
                     harness = state["harnesses"].get(filename)
                     with ui.column().classes("gap-0 min-w-0"):
-                        ui.label(filename).classes("text-xs font-semibold truncate")
-                        detail = " · ".join(x for x in (
-                            f"def {harness.def_id}" if harness else "",
-                            f"{len(harness.builds)} build(s)" if harness else "",
-                            f"{len(harness.complexity_codes)} code(s)" if harness else "",
-                            f"{meta.phase}" if meta and meta.phase else "") if x)
-                        ui.label(detail).classes("text-xs sx-muted truncate")
+                        ui.label(labels.get(filename, filename)) \
+                            .classes("text-[11px] font-semibold truncate")
+                        ui.label(f"def {harness.def_id} · {len(harness.builds)}b · "
+                                 f"{len(harness.complexity_codes)}c"
+                                 if harness else filename) \
+                            .classes("text-[10px] sx-muted truncate")
                     ui.button(icon="close", on_click=lambda f=family: _unmap(f)) \
-                        .props("flat dense round size=sm")
+                        .props("flat dense round size=xs").classes("shrink-0")
                 else:
-                    ui.label("drop a complexity file here").classes("text-xs") \
-                        .style(f"color:{RED}")
+                    ui.label("drop here").classes("text-[10px]").style(f"color:{RED}")
             cell.on("dragover.prevent", lambda: None)
             cell.on("drop", lambda _e, f=family: _drop(f))
 
-        def _pool_item(filename: str) -> None:
-            harness = state["harnesses"].get(filename)
-            meta = state["metas"].get(filename)
-            item = ui.element("div").classes(
-                "rounded-lg px-3 py-2 cursor-grab") \
-                .style(f"background:{theme.SURFACE_2};border:1px solid {theme.LINE}")
-            with item:
-                ui.label(meta.harness if meta and meta.harness else filename) \
-                    .classes("text-xs font-semibold")
-                ui.label(f"{filename}" + (f" · {len(harness.builds)} build(s)"
-                                          if harness else "")) \
-                    .classes("text-[10px] sx-muted")
-            item.props("draggable")
-            item.on("dragstart", lambda _e, f=filename: state.update(drag=f))
+        def _candidates_cell(family: str, suggestions, connected: bool) -> None:
+            with ui.element("div").classes(
+                    "flex items-center gap-1 overflow-hidden") \
+                    .style(f"height:{ROW_H}px"):
+                if connected:
+                    return
+                if not suggestions:
+                    ui.label("no candidate").classes("text-[10px] sx-muted")
+                    return
+                for s in suggestions:
+                    _chip(s.key, s.label, s.score, family=family,
+                          tooltip=s.reason)
+
+        def _chip(filename: str, label: str, sscore, *, family: str | None = None,
+                  tooltip: str = "") -> None:
+            """A draggable candidate. Clicking connects it to ``family``."""
+            strong = sscore is not None and sscore >= 0.7
+            colour = GREEN if strong else theme.STATUS["review"]
+            chip = ui.element("div").classes(
+                "rounded px-2 py-0.5 cursor-grab shrink-0 truncate") \
+                .style(f"background:{colour}1f;border:1px solid {colour}66;"
+                       f"max-width:12rem")
+            with chip:
+                text = label if sscore is None else f"{label}  {sscore:.0%}"
+                ui.label(text).classes("text-[10px] font-semibold truncate") \
+                    .style(f"color:{colour}")
+                if tooltip:
+                    ui.tooltip(tooltip)
+            chip.props("draggable")
+            chip.on("dragstart", lambda _e, f=filename: state.update(drag=f))
+            if family:
+                chip.on("click", lambda _e, f=filename, fam=family: (
+                    state.update(drag=f), _drop(fam)))
 
         def _drop(family: str) -> None:
             filename = state.get("drag")
             if not filename:
                 return
-            # a file belongs to one family at a time
             for fam, name in list(state["mapping"].items()):
                 if name == filename:
                     state["mapping"].pop(fam)
@@ -419,12 +444,10 @@ def page() -> None:
                 families = sorted({r.harness_family for r in rows})
                 counts = {f: sum(1 for r in rows if r.harness_family == f)
                           for f in families}
-                by_name = {}
-                for fname, cmeta in metas.items():
-                    key = _norm(cmeta.harness or harnesses[fname].name)
-                    by_name.setdefault(key, fname)
-                mapping = {f: by_name[_norm(f)] for f in families
-                           if _norm(f) in by_name}
+                from splice.dtxcircuits import matching
+                mapping = matching.auto_map(
+                    families,
+                    {f: (metas[f].harness or harnesses[f].name) for f in harnesses})
                 report(1.0, "Done")
                 return (rows, meta, [(f, counts[f]) for f in families],
                         harnesses, metas, mapping, corr, failed)
