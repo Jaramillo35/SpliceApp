@@ -96,6 +96,65 @@ def suggest(families: Iterable[str],
     return out
 
 
+NO_LIKELY_FAMILY = "no likely family"
+
+
+def orphans(candidates: Dict[str, str],
+            suggestions: Dict[str, List[Suggestion]]) -> set:
+    """Candidates no family suggests — the 'No Likely Family' ones.
+
+    They matter most: a suggested file is already visible on the row it
+    belongs to, but these will never surface on their own.
+    """
+    suggested = {s.key for ranked in suggestions.values() for s in ranked}
+    return set(candidates) - suggested
+
+
+def rank_options(family: str,
+                 candidates: Dict[str, str],
+                 suggestions: Dict[str, List[Suggestion]],
+                 no_family: set | None = None) -> List[tuple]:
+    """Dropdown order for one family: ``[(key, label), ...]``.
+
+    'No likely family' candidates lead — nothing else will surface them —
+    then the rest ranked by how strongly they match THIS family, then by
+    name. Every candidate is always offered: a family may legitimately take
+    a harness nothing suggested.
+    """
+    no_family = orphans(candidates, suggestions) if no_family is None else no_family
+    scores = {s.key: s.score for s in suggestions.get(family, [])}
+
+    def label_for(key: str) -> str:
+        name = candidates[key]
+        if key in no_family:
+            return f"{name}  ·  ◇ {NO_LIKELY_FAMILY}"
+        if key in scores:
+            return f"{name}  ·  {scores[key]:.0%} match"
+        return name
+
+    leading = sorted(no_family, key=lambda k: candidates[k])
+    rest = sorted((k for k in candidates if k not in no_family),
+                  key=lambda k: (-scores.get(k, 0.0), candidates[k]))
+    return [(key, label_for(key)) for key in leading + rest]
+
+
+def add_mapping(mapping: Dict[str, List[str]], family: str,
+                key: str) -> Dict[str, List[str]]:
+    """Add one harness to a family, never duplicating it within that row."""
+    chosen = mapping.setdefault(family, [])
+    if key not in chosen:
+        chosen.append(key)
+    return mapping
+
+
+def remove_mapping(mapping: Dict[str, List[str]], family: str,
+                   key: str) -> Dict[str, List[str]]:
+    chosen = mapping.get(family, [])
+    if key in chosen:
+        chosen.remove(key)
+    return mapping
+
+
 def auto_map(families: Iterable[str],
              candidates: Dict[str, str]) -> Dict[str, str]:
     """Connections safe to make without asking: exact name matches only.

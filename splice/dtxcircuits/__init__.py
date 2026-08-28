@@ -5,7 +5,7 @@ unions each circuit's sales-code conditions, and resolves them against that
 harness's own build table to say which part numbers carry which circuits.
 """
 
-from splice.dtxcircuits import correspond
+from splice.dtxcircuits import correspond, matching, report
 from splice.dtxcircuits.analyze import analyze, analyze_harness, union_condition
 from splice.dtxcircuits.complexity import (
     ComplexityMeta,
@@ -30,6 +30,7 @@ from splice.dtxcircuits.models import (
 __all__ = [
     "analyze", "analyze_harness", "union_condition", "read_dtx_circuits",
     "read_harness_file", "read_info", "ComplexityMeta", "correspond",
+    "matching", "report",
     "normalize_phase", "normalize_program",
     "CircuitApplicability", "CircuitRow", "DtxMeta", "HarnessAnalysis",
     "UNCONDITIONAL", "ALL_BUILDS", "VARIANT", "NEVER", "NO_COMPLEXITY",

@@ -3,10 +3,12 @@
 Three stages, in order:
 
 1. **Load** the DTx and the individual complexity files.
-2. **Map** each DTx harness family to its complexity file. Families auto-match
-   by name; the rest are connected by dragging a file from the pool. The
-   analysis runs ONLY where a mapping exists, because attributing one
-   harness's builds to another family produces a confident wrong answer.
+2. **Map** each DTx harness family to its complexity file(s) — a family may
+   take several, since one DTx family is often carried by more than one
+   physical harness. Exact name matches connect themselves; the rest are added
+   from the dropdown or by clicking a suggestion. The analysis runs ONLY where
+   a mapping exists, because attributing one harness's builds to another
+   family produces a confident wrong answer.
 3. **Review** circuits, connectors (CNUM) and sales-code gaps per family.
 """
 
@@ -54,10 +56,19 @@ def _guide() -> None:
             "conditions, and which of that harness's part numbers actually "
             "carry each one?\n\n"
             "**Mapping first.** A DTx family is analyzed only once it is "
-            "connected to a complexity file — a **green solid line**. A **red "
-            "dotted line** means nothing is connected and that family is "
-            "skipped. Drag a file from the pool onto a family to connect it; "
-            "click ✕ to disconnect and return it to the pool.\n\n"
+            "connected to at least one complexity file — a **green solid "
+            "line**. A **red dotted line** means nothing is connected and that "
+            "family is skipped. Add harnesses from the dropdown (files with "
+            "**no likely family** are listed first, since nothing else will "
+            "surface them) or click a suggestion on the right; ✕ removes one. "
+            "A family mapped to several harnesses is resolved against each "
+            "separately, so you can see a circuit that is fine on one and "
+            "never built on another.\n\n"
+            "**Review filters** combine: *Findings*, *Needs review* (a finding "
+            "or a circuit resting on an untracked code), any verdict, and a "
+            "single condition — useful for seeing every circuit that shares "
+            "one sales-code expression. Tick a row to add it to the "
+            "**Complexity Cleanup Notes** column of the exported workbook.\n\n"
             "**Verdicts.** *unconditional* — no sales code, every build has "
             "it. *all builds* — conditioned but true for every build. "
             "*variant* — some part numbers only. **never built** — the "
@@ -75,6 +86,7 @@ def _guide() -> None:
 @ui.page("/circuit-applicability")
 def page() -> None:
     from splice.dtxcircuits import analyze_harness, correspond, read_dtx_circuits
+    from splice.dtxcircuits import report as report_mod
     from splice.dtxcircuits.complexity import read_harness_file
 
     state: dict = {
@@ -82,9 +94,13 @@ def page() -> None:
         "rows": [], "dtx_meta": None, "families": [],
         "harnesses": {},        # filename -> Harness
         "metas": {},            # filename -> ComplexityMeta
-        "mapping": {},          # family -> filename
-        "corr": None, "analyses": {}, "selected": None, "drag": None,
-        "only_open": False,
+        "mapping": {},          # family -> [filename, ...] (a family may take
+                                #            several harnesses)
+        "corr": None, "entries": [], "selected": None, "only_open": False,
+        #: rows ticked for the Complexity Cleanup Notes column, by item key
+        "cleanup": {},
+        "filters": {"findings": False, "needs_review": False,
+                    "verdicts": set(), "condition": None},
     }
 
     with c.frame("Circuit Applicability",
@@ -108,6 +124,10 @@ def page() -> None:
             progress = ui.column().classes("w-full gap-1")
 
         # ---------------------------------------------------------------- map
+        def _labels() -> dict:
+            return {f: (state["metas"][f].harness or state["harnesses"][f].name)
+                    for f in state["harnesses"]}
+
         @ui.refreshable
         def mapping_view() -> None:
             if not state["families"]:
@@ -116,120 +136,124 @@ def page() -> None:
 
             meta = state["dtx_meta"]
             mapped = state["mapping"]
-            pool = [f for f in state["harnesses"] if f not in mapped.values()]
-            labels = {f: (state["metas"][f].harness or state["harnesses"][f].name)
-                      for f in state["harnesses"]}
-            # candidates are drawn from the pool only: a connected file is not
-            # offered again elsewhere
+            labels = _labels()
             suggestions = matching.suggest(
-                [f for f, _n in state["families"]],
-                {f: labels[f] for f in pool})
-            suggested_anywhere = {s.key for v in suggestions.values() for s in v}
-            orphans = [f for f in pool if f not in suggested_anywhere]
+                [f for f, _n in state["families"]], labels)
+            orphans = matching.orphans(labels, suggestions)
+            connected = sum(1 for v in mapped.values() if v)
 
             with c.card("2 · Map families to complexity files",
                         f"DTx {meta.program or '?'} · phase {meta.phase or '?'} "
                         f"· {len(state['families'])} families · "
-                        f"{len(state['harnesses'])} file(s)"):
+                        f"{len(state['harnesses'])} file(s). A family may take "
+                        f"several harnesses."):
                 with ui.row().classes("gap-2 flex-wrap items-center"):
-                    c.chip("ok", f"{len(mapped)} connected")
-                    if len(state["families"]) - len(mapped):
+                    c.chip("ok", f"{connected} connected")
+                    if len(state["families"]) - connected:
                         c.chip("blocker",
-                               f"{len(state['families']) - len(mapped)} open")
-                    if pool:
-                        c.chip("review", f"{len(pool)} file(s) unused")
+                               f"{len(state['families']) - connected} open")
+                    if orphans:
+                        c.chip("review", f"{len(orphans)} with no likely family")
                     for f in (state["corr"].blocking if state["corr"] else []):
                         c.chip("blocker", f"{f.filename}: {f.detail}")
-                    ui.checkbox("Only unconnected",
-                                value=state["only_open"],
+                    ui.checkbox("Only unconnected", value=state["only_open"],
                                 on_change=lambda e: (
                                     state.update(only_open=e.value),
                                     mapping_view.refresh())) \
                         .props("dense").classes("text-xs")
 
                 rows = [(f, n) for f, n in state["families"]
-                        if not (state["only_open"] and f in mapped)]
+                        if not (state["only_open"] and mapped.get(f))]
                 if not rows:
                     c.chip("ok", "Every family is connected")
 
-                with ui.element("div").classes("w-full grid gap-x-2") \
+                with ui.element("div").classes("w-full grid gap-x-2 gap-y-1") \
                         .style(GRID):
-                    for title in ("DTx harness family", "", "Connected file",
-                                  "Candidates — drag or click to connect"):
+                    for title in ("DTx harness family", "",
+                                  "Harness complexity file(s)",
+                                  "Suggested — click to add"):
                         ui.label(title).classes(
                             "text-[10px] font-bold tracking-wide sx-muted")
                     for family, n_rows in rows:
-                        filename = mapped.get(family)
-                        _family_cell(family, n_rows)
-                        ui.html(_line(bool(filename)))
-                        _target_cell(family, filename, labels)
+                        chosen = mapped.get(family, [])
+                        _family_cell(family, n_rows, len(chosen))
+                        ui.html(_line(bool(chosen)))
+                        _select_cell(family, chosen, suggestions, orphans, labels)
                         _candidates_cell(family, suggestions.get(family, []),
-                                         bool(filename))
-
-                if orphans:
-                    ui.label("No likely family — drag these onto a row yourself") \
-                        .classes("text-[10px] font-bold sx-muted mt-2")
-                    with ui.row().classes("gap-1 flex-wrap"):
-                        for filename in sorted(orphans):
-                            _chip(filename, labels[filename], None)
+                                         chosen)
 
                 with ui.row().classes("items-center gap-3 mt-2"):
                     ui.button("Run analysis", icon="play_arrow",
                               on_click=lambda: run()).props("unelevated dense") \
-                        .set_enabled(bool(mapped))
-                    ui.label("Only connected families are analyzed.") \
+                        .set_enabled(any(mapped.values()))
+                    ui.label("Only connected families are analyzed; each "
+                             "family × harness pairing is resolved separately.") \
                         .classes("text-[10px] sx-muted")
 
-        def _family_cell(family: str, n_rows: int) -> None:
+        def _family_cell(family: str, n_rows: int, n_mapped: int) -> None:
             with ui.element("div").classes(
                     "rounded px-2 flex items-center justify-between gap-1") \
-                    .style(f"height:{ROW_H}px;background:{theme.SURFACE_2};"
+                    .style(f"min-height:{ROW_H}px;background:{theme.SURFACE_2};"
                            f"border:1px solid {theme.LINE}"):
                 ui.label(family).classes("text-[11px] font-semibold truncate")
-                ui.label(str(n_rows)).classes("text-[10px] sx-muted shrink-0")
+                text = str(n_rows) if n_mapped < 2 else f"{n_rows} · ×{n_mapped}"
+                ui.label(text).classes("text-[10px] sx-muted shrink-0")
 
-        def _target_cell(family: str, filename: str | None, labels) -> None:
-            border = f"1px solid {theme.LINE}" if filename else f"1px dashed {RED}88"
-            cell = ui.element("div").classes(
-                "rounded px-2 flex items-center justify-between gap-1") \
-                .style(f"height:{ROW_H}px;background:{theme.SURFACE_2};border:{border}")
-            with cell:
-                if filename:
-                    harness = state["harnesses"].get(filename)
-                    with ui.column().classes("gap-0 min-w-0"):
-                        ui.label(labels.get(filename, filename)) \
-                            .classes("text-[11px] font-semibold truncate")
-                        ui.label(f"def {harness.def_id} · {len(harness.builds)}b · "
-                                 f"{len(harness.complexity_codes)}c"
-                                 if harness else filename) \
-                            .classes("text-[10px] sx-muted truncate")
-                    ui.button(icon="close", on_click=lambda f=family: _unmap(f)) \
-                        .props("flat dense round size=xs").classes("shrink-0")
-                else:
-                    ui.label("drop here").classes("text-[10px]").style(f"color:{RED}")
-            cell.on("dragover.prevent", lambda: None)
-            cell.on("drop", lambda _e, f=family: _drop(f))
+        def _select_cell(family: str, chosen: list, suggestions, orphans: set,
+                         labels: dict) -> None:
+            """Multi-select of complexity files, with the picks shown as
+            removable chips beneath it."""
+            with ui.element("div").classes("flex flex-col justify-center gap-1") \
+                    .style(f"min-height:{ROW_H}px"):
+                from splice.dtxcircuits import matching
+                select = ui.select(
+                    dict(matching.rank_options(family, labels, suggestions,
+                                               orphans)),
+                    value=list(chosen), multiple=True,
+                    label=None if chosen else "add harness…",
+                ).props("dense outlined use-chips=false options-dense") \
+                    .classes("w-full text-[11px]")
+                select.on_value_change(
+                    lambda e, fam=family: _set_mapping(fam, e.value))
+                if chosen:
+                    with ui.row().classes("gap-1 flex-wrap"):
+                        for filename in chosen:
+                            _mapped_chip(family, filename, labels)
 
-        def _candidates_cell(family: str, suggestions, connected: bool) -> None:
-            with ui.element("div").classes(
-                    "flex items-center gap-1 overflow-hidden") \
-                    .style(f"height:{ROW_H}px"):
-                if connected:
+        def _mapped_chip(family: str, filename: str, labels: dict) -> None:
+            harness = state["harnesses"].get(filename)
+            detail = (f"def {harness.def_id} · {len(harness.builds)}b · "
+                      f"{len(harness.complexity_codes)}c" if harness else "")
+            with ui.row().classes(
+                    "items-center gap-1 rounded px-2 py-0.5 shrink-0") \
+                    .style(f"background:{GREEN}1f;border:1px solid {GREEN}66"):
+                ui.label(labels.get(filename, filename)) \
+                    .classes("text-[10px] font-semibold").style(f"color:{GREEN}")
+                if detail:
+                    ui.label(detail).classes("text-[10px] sx-muted")
+                ui.button(icon="close",
+                          on_click=lambda f=family, n=filename: _remove(f, n)) \
+                    .props("flat dense round size=xs")
+
+        def _candidates_cell(family: str, suggestions, chosen: list) -> None:
+            with ui.element("div").classes("flex items-center gap-1 flex-wrap") \
+                    .style(f"min-height:{ROW_H}px"):
+                available = [s for s in suggestions if s.key not in chosen]
+                if not available:
+                    ui.label("—" if chosen else "no candidate") \
+                        .classes("text-[10px] sx-muted")
                     return
-                if not suggestions:
-                    ui.label("no candidate").classes("text-[10px] sx-muted")
-                    return
-                for s in suggestions:
+                for s in available:
                     _chip(s.key, s.label, s.score, family=family,
                           tooltip=s.reason)
 
-        def _chip(filename: str, label: str, sscore, *, family: str | None = None,
+        def _chip(filename: str, label: str, sscore, *, family: str,
                   tooltip: str = "") -> None:
-            """A draggable candidate. Clicking connects it to ``family``."""
+            """A suggestion. Clicking adds it to that family's mapping."""
             strong = sscore is not None and sscore >= 0.7
             colour = GREEN if strong else theme.STATUS["review"]
             chip = ui.element("div").classes(
-                "rounded px-2 py-0.5 cursor-grab shrink-0 truncate") \
+                "rounded px-2 py-0.5 cursor-pointer shrink-0 truncate") \
                 .style(f"background:{colour}1f;border:1px solid {colour}66;"
                        f"max-width:12rem")
             with chip:
@@ -238,177 +262,289 @@ def page() -> None:
                     .style(f"color:{colour}")
                 if tooltip:
                     ui.tooltip(tooltip)
-            chip.props("draggable")
-            chip.on("dragstart", lambda _e, f=filename: state.update(drag=f))
-            if family:
-                chip.on("click", lambda _e, f=filename, fam=family: (
-                    state.update(drag=f), _drop(fam)))
+            chip.on("click", lambda _e, f=filename, fam=family: _add(fam, f))
 
-        def _drop(family: str) -> None:
-            filename = state.get("drag")
-            if not filename:
-                return
-            for fam, name in list(state["mapping"].items()):
-                if name == filename:
-                    state["mapping"].pop(fam)
-            state["mapping"][family] = filename
-            state["drag"] = None
-            state["analyses"] = {}
-            mapping_view.refresh()
-            results_view.refresh()
+        def _set_mapping(family: str, values) -> None:
+            # de-duplicate while preserving the order the SE picked
+            state["mapping"][family] = list(dict.fromkeys(values or []))
+            _invalidate()
 
-        def _unmap(family: str) -> None:
-            state["mapping"].pop(family, None)
-            state["analyses"] = {}
+        def _add(family: str, filename: str) -> None:
+            from splice.dtxcircuits import matching
+            matching.add_mapping(state["mapping"], family, filename)
+            _invalidate()
+
+        def _remove(family: str, filename: str) -> None:
+            from splice.dtxcircuits import matching
+            matching.remove_mapping(state["mapping"], family, filename)
+            _invalidate()
+
+        def _invalidate() -> None:
+            """A mapping change makes any existing analysis stale."""
+            state["analyses"], state["entries"] = {}, []
             mapping_view.refresh()
             results_view.refresh()
 
         mapping_view()
 
         # ------------------------------------------------------------ results
+        def _passes(analysis, item, kind: str) -> bool:
+            """Whether one row survives the active filters (they combine)."""
+            f = state["filters"]
+            if f["findings"] and not item.is_finding:
+                return False
+            if f["needs_review"] and not (
+                    item.is_finding or item.relies_on_untracked):
+                return False
+            if f["verdicts"] and item.classification not in f["verdicts"]:
+                return False
+            if f["condition"] is not None and \
+                    (item.expression or "") != f["condition"]:
+                return False
+            return True
+
+        def _clear_filters() -> None:
+            state["filters"] = {"findings": False, "needs_review": False,
+                                "verdicts": set(), "condition": None}
+            results_view.refresh()
+
+        def _toggle_flag(name: str) -> None:
+            state["filters"][name] = not state["filters"][name]
+            results_view.refresh()
+
+        def _toggle_verdict(verdict: str) -> None:
+            verdicts = state["filters"]["verdicts"]
+            verdicts.symmetric_difference_update({verdict})
+            results_view.refresh()
+
+        def _set_condition(value) -> None:
+            state["filters"]["condition"] = value or None
+            results_view.refresh()
+
         @ui.refreshable
         def results_view() -> None:
-            analyses = state["analyses"]
-            if not analyses:
+            entries = state["entries"]
+            if not entries:
                 return
-            names = sorted(analyses)
-            if state["selected"] not in analyses:
-                state["selected"] = names[0]
+            labels = [e.label for e in entries]
+            if state["selected"] not in labels:
+                state["selected"] = labels[0]
+            entry = next(e for e in entries if e.label == state["selected"])
 
             with c.card("3 · Review"):
+                _cleanup_bar()
                 with ui.row().classes("w-full gap-4 items-start no-wrap"):
-                    # master — families
                     with ui.column().classes("gap-1 min-w-[15rem]"):
-                        ui.label("FAMILIES").classes(
+                        ui.label("FAMILY × HARNESS").classes(
                             "text-[10px] font-bold tracking-widest sx-muted")
-                        for name in names:
-                            a = analyses[name]
-                            n_find = len(a.findings) + len(a.cnum_findings)
-                            active = name == state["selected"]
-                            row = ui.element("div").classes(
-                                "rounded-lg px-2 py-1.5 cursor-pointer w-full") \
-                                .style(f"background:{theme.BRAND}26" if active
-                                       else f"background:{theme.SURFACE_2}")
-                            with row:
-                                with ui.row().classes("items-center gap-2 no-wrap"):
-                                    ui.icon("report" if n_find else "check_circle") \
-                                        .classes("text-sm") \
-                                        .style(f"color:{RED if n_find else GREEN}")
-                                    with ui.column().classes("gap-0 min-w-0"):
-                                        ui.label(name).classes("text-xs font-semibold truncate")
-                                        ui.label(f"{len(a.circuits)} ckt · "
-                                                 f"{len(a.cnums)} cnum"
-                                                 + (f" · {n_find} finding(s)" if n_find else "")) \
-                                            .classes("text-[10px] sx-muted")
-                            row.on("click", lambda _e, n=name: (
-                                state.update(selected=n), results_view.refresh()))
-                    # detail
+                        for e in entries:
+                            _master_row(e)
                     with ui.column().classes("flex-1 min-w-0 gap-2"):
-                        _detail(analyses[state["selected"]])
+                        _detail(entry)
 
-        def _detail(a) -> None:
+        def _master_row(entry) -> None:
+            a = entry.analysis
+            n_find = len(a.findings) + len(a.cnum_findings)
+            active = entry.label == state["selected"]
+            row = ui.element("div").classes(
+                "rounded px-2 py-1.5 cursor-pointer w-full") \
+                .style(f"background:{theme.BRAND}26" if active
+                       else f"background:{theme.SURFACE_2}")
+            with row:
+                with ui.row().classes("items-center gap-2 no-wrap"):
+                    ui.icon("report" if n_find else "check_circle") \
+                        .classes("text-sm") \
+                        .style(f"color:{RED if n_find else GREEN}")
+                    with ui.column().classes("gap-0 min-w-0"):
+                        ui.label(entry.family).classes(
+                            "text-xs font-semibold truncate")
+                        ui.label(f"{a.harness} · {len(a.circuits)} ckt"
+                                 + (f" · {n_find} finding(s)" if n_find else "")) \
+                            .classes("text-[10px] sx-muted truncate")
+            row.on("click", lambda _e, lbl=entry.label: (
+                state.update(selected=lbl), results_view.refresh()))
+
+        def _cleanup_bar() -> None:
+            """What is selected for cleanup, and the export that carries it."""
+            selected = state["cleanup"]
+            with ui.row().classes("items-center gap-2 flex-wrap w-full"):
+                c.chip("info" if selected else "ok",
+                       f"{len(selected)} row(s) selected for "
+                       f"{report_mod.CLEANUP_COLUMN}")
+                if selected:
+                    ui.button("Clear selection", icon="clear_all",
+                              on_click=lambda: (state["cleanup"].clear(),
+                                                results_view.refresh())) \
+                        .props("flat dense size=sm")
+                ui.space()
+                ui.button("Export review (.xlsx)", icon="download",
+                          on_click=lambda: _export()).props("outline dense")
+
+        def _export() -> None:
+            data = report_mod.build_report(
+                state["entries"], state["cleanup"],
+                dtx_program=state["dtx_meta"].program if state["dtx_meta"] else "",
+                dtx_phase=state["dtx_meta"].phase if state["dtx_meta"] else "")
+            ui.download(data, "Circuit_Applicability_Review.xlsx")
+
+        def _toggle_cleanup(entry, kind: str, ident: str) -> None:
+            key = report_mod.item_key(entry.family, entry.analysis.harness,
+                                      kind, ident)
+            if key in state["cleanup"]:
+                del state["cleanup"][key]
+            else:
+                selection = report_mod.selection_for(entry, kind, ident)
+                if selection:
+                    state["cleanup"][key] = selection
+            results_view.refresh()
+
+        def _is_selected(entry, kind: str, ident: str) -> bool:
+            return report_mod.item_key(entry.family, entry.analysis.harness,
+                                       kind, ident) in state["cleanup"]
+
+        def _detail(entry) -> None:
+            a = entry.analysis
             with ui.row().classes("gap-2 flex-wrap"):
-                c.chip("info", f"def {a.def_id or '—'} · {a.builds} build(s)")
+                c.chip("info", f"{entry.family} → {a.harness} · def "
+                               f"{a.def_id or '—'} · {a.builds} build(s)")
                 for label, n in a.counts.items():
                     if n:
                         c.chip(VERDICT_KIND.get(label, "info"), f"{n} {label}")
+            _filter_bar(a)
             with ui.tabs().props("dense align=left") as tabs:
                 t_ckt = ui.tab(f"Circuits ({len(a.circuits)})")
                 t_cnum = ui.tab(f"Connectors ({len(a.cnums)})")
                 t_gap = ui.tab(f"Sales-code gaps ({len(a.code_gaps)})")
             with ui.tab_panels(tabs, value=t_ckt).classes("w-full"):
                 with ui.tab_panel(t_ckt).classes("p-0 pt-2"):
-                    _circuit_table(a)
+                    _circuit_table(entry)
                 with ui.tab_panel(t_cnum).classes("p-0 pt-2"):
-                    _cnum_table(a)
+                    _cnum_table(entry)
                 with ui.tab_panel(t_gap).classes("p-0 pt-2"):
-                    _gap_view(a)
+                    _gap_view(entry)
 
-        def _circuit_table(a) -> None:
-            rows = [{
-                "circuit": x.circuit, "verdict": x.classification,
-                "condition": x.expression or "(none)",
-                "builds": f"{len(x.builds_with)}/{x.build_count}" if x.build_count else "—",
-                "carried_by": ", ".join(x.builds_with[:5])
-                              + ("…" if len(x.builds_with) > 5 else ""),
-                "untracked": ", ".join(x.untracked_codes),
-                "pins": ", ".join(x.pins[:4]),
-            } for x in sorted(a.circuits, key=lambda x: (not x.is_finding, x.circuit))]
-            ui.table(rows=rows, columns=[
-                {"name": "circuit", "label": "Circuit", "field": "circuit",
-                 "align": "left", "sortable": True},
-                {"name": "verdict", "label": "Verdict", "field": "verdict",
-                 "align": "left", "sortable": True},
-                {"name": "condition", "label": "Condition", "field": "condition",
-                 "align": "left"},
-                {"name": "builds", "label": "Builds", "field": "builds",
-                 "align": "center", "sortable": True},
-                {"name": "carried_by", "label": "Carried by", "field": "carried_by",
-                 "align": "left"},
-                {"name": "untracked", "label": "Untracked", "field": "untracked",
-                 "align": "left"},
-                {"name": "pins", "label": "Pins", "field": "pins", "align": "left"},
-            ], pagination=20).classes("w-full").props("dense flat")
+        def _filter_bar(a) -> None:
+            f = state["filters"]
+            conditions = sorted({c.expression or "" for c in a.circuits
+                                 if c.expression})
+            with ui.row().classes("items-center gap-2 flex-wrap mt-1"):
+                ui.label("FILTER").classes(
+                    "text-[10px] font-bold tracking-widest sx-muted")
+                _filter_chip("Findings", f["findings"],
+                             lambda: _toggle_flag("findings"),
+                             len([x for x in a.circuits if x.is_finding]))
+                _filter_chip("Needs review", f["needs_review"],
+                             lambda: _toggle_flag("needs_review"),
+                             len([x for x in a.circuits
+                                  if x.is_finding or x.relies_on_untracked]))
+                for verdict, n in a.counts.items():
+                    if n:
+                        _filter_chip(verdict, verdict in f["verdicts"],
+                                     lambda v=verdict: _toggle_verdict(v), n)
+                ui.select({None: "any condition",
+                           **{x: x for x in conditions}},
+                          value=f["condition"], label=None,
+                          on_change=lambda e: _set_condition(e.value)) \
+                    .props("dense outlined options-dense").classes(
+                        "text-[11px] min-w-[12rem]")
+                if f["findings"] or f["needs_review"] or f["verdicts"] \
+                        or f["condition"]:
+                    ui.button("Clear", icon="filter_alt_off",
+                              on_click=_clear_filters).props("flat dense size=sm")
 
-        def _cnum_table(a) -> None:
-            rows = [{
-                "cnum": x.cnum, "connector": x.connector_pn,
-                "verdict": x.classification,
-                "condition": x.expression or "(none)",
-                "builds": f"{len(x.builds_with)}/{x.build_count}" if x.build_count else "—",
-                "circuits": f"{len(x.circuits)}",
-                "circuit_list": ", ".join(x.circuits[:6])
-                                + ("…" if len(x.circuits) > 6 else ""),
-                "untracked": ", ".join(x.untracked_codes),
-            } for x in sorted(a.cnums, key=lambda x: (not x.is_finding, x.cnum))]
-            ui.table(rows=rows, columns=[
-                {"name": "cnum", "label": "CNUM", "field": "cnum",
-                 "align": "left", "sortable": True},
-                {"name": "connector", "label": "Connector PN", "field": "connector",
-                 "align": "left"},
-                {"name": "verdict", "label": "Verdict", "field": "verdict",
-                 "align": "left", "sortable": True},
-                {"name": "condition", "label": "Condition", "field": "condition",
-                 "align": "left"},
-                {"name": "builds", "label": "Builds", "field": "builds",
-                 "align": "center", "sortable": True},
-                {"name": "circuits", "label": "# ckt", "field": "circuits",
-                 "align": "center", "sortable": True},
-                {"name": "circuit_list", "label": "Circuits", "field": "circuit_list",
-                 "align": "left"},
-                {"name": "untracked", "label": "Untracked", "field": "untracked",
-                 "align": "left"},
-            ], pagination=20).classes("w-full").props("dense flat")
+        def _filter_chip(label: str, active: bool, on_click, count: int) -> None:
+            colour = theme.BRAND if active else theme.LINE
+            chip = ui.element("div").classes(
+                "rounded-full px-2 py-0.5 cursor-pointer shrink-0") \
+                .style(f"background:{theme.BRAND}26;border:1px solid {colour}"
+                       if active else
+                       f"background:{theme.SURFACE_2};border:1px solid {colour}")
+            with chip:
+                ui.label(f"{label} · {count}").classes("text-[10px] font-semibold") \
+                    .style(f"color:{theme.BRAND}" if active else "")
+            chip.on("click", lambda _e: on_click())
 
-        def _gap_view(a) -> None:
+        def _circuit_table(entry) -> None:
+            a = entry.analysis
+            shown = [x for x in a.circuits if _passes(a, x, "circuit")]
+            ui.label(f"{len(shown)} of {len(a.circuits)} circuit(s) shown · tick "
+                     f"a row to add it to {report_mod.CLEANUP_COLUMN}") \
+                .classes("text-[10px] sx-muted")
+            if not shown:
+                c.empty("No circuit matches these filters.", icon="filter_alt")
+                return
+            for x in sorted(shown, key=lambda x: (not x.is_finding, x.circuit)):
+                _row(entry, "circuit", x.circuit, x.classification,
+                     x.expression or "(none)",
+                     f"{len(x.builds_with)}/{x.build_count}"
+                     if x.build_count else "—",
+                     ", ".join(x.builds_with[:4]),
+                     ", ".join(x.untracked_codes), x.is_finding)
+
+        def _cnum_table(entry) -> None:
+            a = entry.analysis
+            shown = [x for x in a.cnums if _passes(a, x, "connector")]
+            ui.label(f"{len(shown)} of {len(a.cnums)} connector(s) shown") \
+                .classes("text-[10px] sx-muted")
+            if not shown:
+                c.empty("No connector matches these filters.", icon="filter_alt")
+                return
+            for x in sorted(shown, key=lambda x: (not x.is_finding, x.cnum)):
+                _row(entry, "connector", x.cnum, x.classification,
+                     x.expression or "(none)",
+                     f"{len(x.builds_with)}/{x.build_count}"
+                     if x.build_count else "—",
+                     f"{len(x.circuits)} ckt: " + ", ".join(x.circuits[:4]),
+                     ", ".join(x.untracked_codes), x.is_finding)
+
+        def _row(entry, kind: str, ident: str, verdict: str, condition: str,
+                 builds: str, carried: str, untracked: str,
+                 finding: bool) -> None:
+            selected = _is_selected(entry, kind, ident)
+            with ui.row().classes(
+                    "items-center gap-2 w-full no-wrap rounded px-2 py-1") \
+                    .style(f"background:{theme.BRAND}1a" if selected
+                           else f"background:{theme.SURFACE_2}"):
+                ui.checkbox(value=selected,
+                            on_change=lambda _e, k=kind, i=ident:
+                                _toggle_cleanup(entry, k, i)) \
+                    .props("dense size=xs")
+                ui.label(ident).classes("text-[11px] font-semibold w-24 shrink-0")
+                c.chip(VERDICT_KIND.get(verdict, "info"), verdict)
+                ui.label(condition).classes("text-[10px] sx-mono w-40 truncate")
+                ui.label(builds).classes("text-[10px] sx-muted w-14 shrink-0")
+                ui.label(carried).classes("text-[10px] sx-muted truncate flex-1")
+                if untracked:
+                    c.chip("review", f"untracked: {untracked}")
+
+        def _gap_view(entry) -> None:
+            a = entry.analysis
             ui.label("Sales codes the DTx conditions on for this family that its "
                      "complexity file does not track. They are read as PRESENT, "
                      "so every circuit below applies more widely than the data "
-                     "can justify.").classes("text-xs sx-muted")
+                     "can justify.").classes("text-[10px] sx-muted")
             if not a.code_gaps:
                 c.chip("ok", "Every code the DTx uses here is tracked")
-            else:
-                ui.table(rows=[{
-                    "code": g.code, "uses": g.occurrences,
-                    "circuits": ", ".join(g.circuits[:8])
-                                + ("…" if len(g.circuits) > 8 else ""),
-                    "cnums": ", ".join(g.cnums[:8])
-                             + ("…" if len(g.cnums) > 8 else ""),
-                } for g in a.code_gaps], columns=[
-                    {"name": "code", "label": "Sales code", "field": "code",
-                     "align": "left", "sortable": True},
-                    {"name": "uses", "label": "DTx rows", "field": "uses",
-                     "align": "center", "sortable": True},
-                    {"name": "circuits", "label": "Circuits affected",
-                     "field": "circuits", "align": "left"},
-                    {"name": "cnums", "label": "Connectors affected",
-                     "field": "cnums", "align": "left"},
-                ], pagination=15).classes("w-full").props("dense flat")
+            for g in a.code_gaps:
+                selected = _is_selected(entry, "gap", g.code)
+                with ui.row().classes(
+                        "items-center gap-2 w-full no-wrap rounded px-2 py-1") \
+                        .style(f"background:{theme.BRAND}1a" if selected
+                               else f"background:{theme.SURFACE_2}"):
+                    ui.checkbox(value=selected,
+                                on_change=lambda _e, code=g.code:
+                                    _toggle_cleanup(entry, "gap", code)) \
+                        .props("dense size=xs")
+                    ui.label(g.code).classes("text-[11px] font-semibold w-20")
+                    ui.label(f"{g.occurrences} DTx row(s)") \
+                        .classes("text-[10px] sx-muted w-28")
+                    ui.label("circuits: " + ", ".join(g.circuits[:8])) \
+                        .classes("text-[10px] sx-muted truncate flex-1")
             if a.unused_codes:
-                ui.label("Tracked by the complexity file but never conditioned on "
-                         "by a DTx circuit in this family:").classes(
-                    "text-xs sx-muted mt-2")
-                ui.label(", ".join(a.unused_codes)).classes("text-xs sx-mono")
+                ui.label("Tracked by the complexity file but never conditioned "
+                         "on by a DTx circuit in this family:").classes(
+                    "text-[10px] sx-muted mt-2")
+                ui.label(", ".join(a.unused_codes)).classes("text-[10px] sx-mono")
 
         results_view()
 
@@ -445,9 +581,11 @@ def page() -> None:
                 counts = {f: sum(1 for r in rows if r.harness_family == f)
                           for f in families}
                 from splice.dtxcircuits import matching
-                mapping = matching.auto_map(
+                exact = matching.auto_map(
                     families,
                     {f: (metas[f].harness or harnesses[f].name) for f in harnesses})
+                # a family holds a LIST of harnesses; auto-connect seeds one
+                mapping = {family: [filename] for family, filename in exact.items()}
                 report(1.0, "Done")
                 return (rows, meta, [(f, counts[f]) for f in families],
                         harnesses, metas, mapping, corr, failed)
@@ -459,7 +597,7 @@ def page() -> None:
             rows, meta, families, harnesses, metas, mapping, corr, failed = out
             state.update(rows=rows, dtx_meta=meta, families=families,
                          harnesses=harnesses, metas=metas, mapping=mapping,
-                         corr=corr, analyses={}, selected=None)
+                         corr=corr, entries=[], selected=None, cleanup={})
             for problem in failed[:5]:
                 ui.notify(problem, type="negative", multi_line=True,
                           close_button=True)
@@ -469,26 +607,42 @@ def page() -> None:
             results_view.refresh()
 
         async def run() -> None:
-            if not state["mapping"]:
+            if not any(state["mapping"].values()):
                 ui.notify("Connect at least one family first", type="warning")
                 return
 
             def work(report):
                 rows = state["rows"]
-                mapping = state["mapping"]
-                out = {}
-                for i, (family, filename) in enumerate(sorted(mapping.items()), 1):
-                    report(i / max(len(mapping), 1),
-                           f"Resolving {family} ({i} of {len(mapping)})…")
+                pairs = [(family, filename)
+                         for family, files in sorted(state["mapping"].items())
+                         for filename in files]
+                out = []
+                for index, (family, filename) in enumerate(pairs, start=1):
+                    harness = state["harnesses"][filename]
+                    label = (state["metas"][filename].harness or harness.name)
+                    report(index / max(len(pairs), 1),
+                           f"Resolving {family} → {label} "
+                           f"({index} of {len(pairs)})…")
                     family_rows = [r for r in rows if r.harness_family == family]
-                    out[family] = analyze_harness(
-                        family_rows, state["harnesses"][filename],
-                        harness_name=family)
+                    analysis = analyze_harness(family_rows, harness,
+                                               harness_name=label)
+                    out.append(report_mod.Entry(
+                        label=f"{family} → {label}", family=family,
+                        filename=filename, analysis=analysis))
                 return out
 
             out = await c.run_engine_progress(
                 work, progress, running="Analyzing…", done="Analysis ready")
             if out is not None:
-                state["analyses"] = out
+                state["entries"] = out
                 state["selected"] = None
+                # a selection whose row no longer exists must not survive
+                live = {report_mod.item_key(e.family, e.analysis.harness, k, i)
+                        for e in out
+                        for k, ids in (("circuit", [x.circuit for x in e.analysis.circuits]),
+                                       ("connector", [x.cnum for x in e.analysis.cnums]),
+                                       ("gap", [g.code for g in e.analysis.code_gaps]))
+                        for i in ids}
+                state["cleanup"] = {k: v for k, v in state["cleanup"].items()
+                                    if k in live}
                 results_view.refresh()

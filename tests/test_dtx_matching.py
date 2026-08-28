@@ -116,3 +116,87 @@ class TestAutoMap:
     def test_nothing_to_map_is_empty(self):
         assert auto_map([], {"x.xlsm": "IP"}) == {}
         assert auto_map(["IP"], {}) == {}
+
+
+class TestOrphans:
+    CANDS = {"a.xlsm": "POWERTRAIN GAS", "b.xlsm": "Body_Left",
+             "c.xlsm": "MYSTERY_ONE", "d.xlsm": "ZZ_UNKNOWN"}
+
+    def test_orphans_are_the_files_nothing_suggests(self):
+        sug = suggest(["BODY_LEFT", "POWERTRAIN"], self.CANDS)
+        assert matching.orphans(self.CANDS, sug) == {"c.xlsm", "d.xlsm"}
+
+    def test_no_suggestions_makes_everything_an_orphan(self):
+        assert matching.orphans(self.CANDS, {}) == set(self.CANDS)
+
+
+class TestRankOptions:
+    CANDS = {"a.xlsm": "POWERTRAIN GAS", "b.xlsm": "Body_Left",
+             "c.xlsm": "MYSTERY_ONE", "d.xlsm": "ZZ_UNKNOWN"}
+
+    def _ranked(self, family):
+        sug = suggest(["BODY_LEFT", "POWERTRAIN"], self.CANDS)
+        return matching.rank_options(family, self.CANDS, sug)
+
+    def test_no_likely_family_options_come_first(self):
+        keys = [k for k, _l in self._ranked("BODY_LEFT")]
+        assert keys[:2] == ["c.xlsm", "d.xlsm"], "orphans must lead"
+
+    def test_orphans_are_labelled_as_such(self):
+        labels = dict(self._ranked("BODY_LEFT"))
+        assert matching.NO_LIKELY_FAMILY in labels["c.xlsm"]
+        assert matching.NO_LIKELY_FAMILY not in labels["b.xlsm"]
+
+    def test_the_rest_rank_by_match_for_that_family(self):
+        keys = [k for k, _l in self._ranked("BODY_LEFT")]
+        assert keys[2] == "b.xlsm", "the 100% match leads the remainder"
+        keys = [k for k, _l in self._ranked("POWERTRAIN")]
+        assert keys[2] == "a.xlsm", "ranking is per family, not global"
+
+    def test_every_candidate_is_always_offered(self):
+        # a family may legitimately take a harness nothing suggested
+        keys = {k for k, _l in self._ranked("BODY_LEFT")}
+        assert keys == set(self.CANDS)
+
+    def test_match_percentage_is_shown_for_scored_options(self):
+        labels = dict(self._ranked("BODY_LEFT"))
+        assert "100% match" in labels["b.xlsm"]
+
+    def test_ordering_is_stable_for_equal_scores(self):
+        cands = {"x.xlsm": "BETA", "y.xlsm": "ALPHA"}
+        keys = [k for k, _l in matching.rank_options("NOTHING", cands, {})]
+        assert keys == ["y.xlsm", "x.xlsm"], "ties fall back to name order"
+
+
+class TestMappingMutation:
+    def test_add_appends_and_never_duplicates(self):
+        mapping = {}
+        matching.add_mapping(mapping, "IP", "a")
+        matching.add_mapping(mapping, "IP", "a")
+        matching.add_mapping(mapping, "IP", "b")
+        assert mapping == {"IP": ["a", "b"]}
+
+    def test_one_family_holds_several_harnesses(self):
+        mapping = {}
+        for key in ("a", "b", "c"):
+            matching.add_mapping(mapping, "SEAT_2ND_ROW", key)
+        assert len(mapping["SEAT_2ND_ROW"]) == 3
+
+    def test_a_file_may_serve_more_than_one_family(self):
+        # a shared harness is real; only within-row duplicates are prevented
+        mapping = {}
+        matching.add_mapping(mapping, "Seat_Back_Driver", "shared.xlsm")
+        matching.add_mapping(mapping, "Seat_Back_Driver_2", "shared.xlsm")
+        assert mapping["Seat_Back_Driver"] == ["shared.xlsm"]
+        assert mapping["Seat_Back_Driver_2"] == ["shared.xlsm"]
+
+    def test_remove_takes_one_out_and_leaves_the_rest(self):
+        mapping = {"IP": ["a", "b"]}
+        matching.remove_mapping(mapping, "IP", "a")
+        assert mapping == {"IP": ["b"]}
+
+    def test_removing_something_absent_is_harmless(self):
+        mapping = {"IP": ["a"]}
+        matching.remove_mapping(mapping, "IP", "zzz")
+        matching.remove_mapping(mapping, "NOPE", "a")
+        assert mapping == {"IP": ["a"]}
