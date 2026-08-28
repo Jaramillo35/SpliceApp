@@ -151,6 +151,10 @@ CIRCUITS: Dict[str, List[Circuit]] = {
         Circuit("QK107", "CQ103", "2", "QA1&QA2", "ROOF - DUAL PANEL SENSE"),
         # planted: conditions on a code no complexity file tracks
         Circuit("QK108", "CQ104", "1", "QZ9", "NIGHT VISION - CAMERA FEED"),
+        # planted: MALFORMED — a NOT with no connector before it. Read as
+        # written it is false for every vehicle, so the circuit would look
+        # "never built" until the integrity check repairs it to QB1&-QA1.
+        Circuit("QK109", "CQ104", "2", "QB1-QA1", "AUDIO - ROOFLESS TRIM"),
     ],
     "DASH": [
         Circuit("QK201", "CQ201", "1", "", "DASH - IGNITION FEED"),
@@ -217,6 +221,9 @@ DEMO_NOTES = [
     ("Circuit Applicability", "QK108 (IP) and QK603 (DOOR_FRONT_LEFT) depend "
      "on codes their complexity file does not track (QZ9, QE1) — the "
      "Sales-code gaps tab."),
+    ("Circuit Applicability", "QK109 (IP) carries the malformed expression "
+     "'QB1-QA1' — the Sales-code integrity step catches it before analysis and "
+     "suggests 'QB1&-QA1'."),
     ("Circuit Applicability", "HEADLINER appears in the DTx with no complexity "
      "file — a red dotted row for the mapping demo."),
     ("Circuit Applicability", "The DOOR_FRONT_LEFT file is named "

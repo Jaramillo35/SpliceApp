@@ -87,7 +87,7 @@ def _guide() -> None:
 def page() -> None:
     from splice.dtxcircuits import analyze_harness, correspond, read_dtx_circuits
     from splice.dtxcircuits import report as report_mod
-    from splice.dtxcircuits import store
+    from splice.dtxcircuits import integrity, store
     from splice.dtxcircuits.complexity import read_harness_file
 
     state: dict = {
@@ -102,10 +102,14 @@ def page() -> None:
         "cleanup": {},
         "filters": {"findings": False, "needs_review": False,
                     "verdicts": set(), "condition": None},
+        #: malformed sales-code expressions, and the repairs confirmed for them
+        "issues": [], "fixes": {},
+        "issue_filter": {"unresolved_only": True, "kinds": set()},
         #: what the previous session left behind
         "stored": store.load(),
     }
     state["cleanup"] = store.restore_cleanup(state["stored"].get("cleanup", {}))
+    state["fixes"] = dict(state["stored"].get("fixes", {}))
 
     with c.frame("Circuit Applicability",
                  "DTx circuits × harness complexity — mapped, then resolved "
@@ -127,6 +131,117 @@ def page() -> None:
                       on_click=lambda: load()).props("unelevated")
             progress = ui.column().classes("w-full gap-1")
 
+        # ---------------------------------------------------- sales-code data
+        def _open_issues() -> list:
+            return [i for i in state["issues"]
+                    if i.expression not in state["fixes"]]
+
+        def _resolve(expression: str, replacement: str) -> None:
+            state["fixes"][expression] = replacement
+            state["entries"] = []          # the analysis is now stale
+            _persist()
+            integrity_view.refresh()
+            results_view.refresh()
+
+        def _unresolve(expression: str) -> None:
+            state["fixes"].pop(expression, None)
+            state["entries"] = []
+            _persist()
+            integrity_view.refresh()
+            results_view.refresh()
+
+        @ui.refreshable
+        def integrity_view() -> None:
+            if not state["issues"]:
+                if state["rows"]:
+                    with c.card("2 · Sales-code integrity"):
+                        c.chip("ok", "Every sales-code expression in this DTx "
+                                     "parses — nothing to fix")
+                return
+            f = state["issue_filter"]
+            issues = state["issues"]
+            open_issues = _open_issues()
+            kinds = sorted({i.kind for i in issues})
+            shown = [i for i in issues
+                     if not (f["unresolved_only"] and i.expression in state["fixes"])
+                     and (not f["kinds"] or i.kind in f["kinds"])]
+
+            with c.card("2 · Sales-code integrity",
+                        "Checked before anything is resolved: a malformed "
+                        "expression is false for every configuration, so its "
+                        "circuits would read as 'never built' and look like "
+                        "real defects."):
+                with ui.row().classes("items-center gap-2 flex-wrap"):
+                    c.chip("blocker" if open_issues else "ok",
+                           f"{len(open_issues)} unresolved")
+                    if len(issues) - len(open_issues):
+                        c.chip("ok", f"{len(issues) - len(open_issues)} resolved")
+                    ui.label("FILTER").classes(
+                        "text-[10px] font-bold tracking-widest sx-muted ml-2")
+                    _filter_chip("Unresolved only", f["unresolved_only"],
+                                 lambda: (f.__setitem__("unresolved_only",
+                                                        not f["unresolved_only"]),
+                                          integrity_view.refresh()),
+                                 len(open_issues))
+                    for kind in kinds:
+                        _filter_chip(kind, kind in f["kinds"],
+                                     lambda k=kind: (
+                                         f["kinds"].symmetric_difference_update({k}),
+                                         integrity_view.refresh()),
+                                     sum(1 for i in issues if i.kind == kind))
+                for issue in shown:
+                    _issue_row(issue)
+                if not shown:
+                    c.empty("Nothing matches these filters.", icon="filter_alt")
+
+        def _issue_row(issue) -> None:
+            fixed = state["fixes"].get(issue.expression)
+            with ui.element("div").classes("w-full rounded p-2 mt-1") \
+                    .style(f"background:{theme.SURFACE_2};border:1px solid "
+                           f"{(GREEN if fixed else RED)}55"):
+                with ui.row().classes("items-center gap-2 flex-wrap"):
+                    c.chip("ok" if fixed else "blocker", issue.kind)
+                    ui.label(issue.expression).classes(
+                        "text-[12px] sx-mono font-semibold")
+                    if fixed:
+                        ui.icon("arrow_forward").classes("text-xs")
+                        ui.label(fixed).classes("text-[12px] sx-mono font-semibold") \
+                            .style(f"color:{GREEN}")
+                    ui.label(f"{issue.rows} DTx row(s) · "
+                             f"{len(issue.circuits)} circuit(s) · "
+                             + ", ".join(issue.families[:3])) \
+                        .classes("text-[10px] sx-muted")
+                ui.label(issue.detail).classes("text-[10px] sx-muted")
+                if fixed:
+                    with ui.row().classes("gap-2 items-center"):
+                        ui.button("Undo", icon="undo",
+                                  on_click=lambda e=issue.expression: _unresolve(e)) \
+                            .props("flat dense size=sm")
+                    return
+                with ui.row().classes("gap-2 items-center flex-wrap mt-1"):
+                    for suggestion in issue.suggestions:
+                        ui.button(suggestion.expression,
+                                  icon="auto_fix_high",
+                                  on_click=lambda e=issue.expression,
+                                                  r=suggestion.expression:
+                                      _resolve(e, r)) \
+                            .props("outline dense no-caps") \
+                            .tooltip(suggestion.reason)
+                    manual = ui.input(placeholder="or type the correct expression") \
+                        .props("dense outlined").classes("text-[11px] min-w-[14rem]")
+                    ui.button("Use", icon="check",
+                              on_click=lambda e=issue.expression, m=manual:
+                                  (_resolve(e, m.value.strip())
+                                   if m.value and m.value.strip() else
+                                   ui.notify("Type an expression first",
+                                             type="warning"))) \
+                        .props("flat dense size=sm")
+                if not issue.suggestions:
+                    ui.label("No automatic suggestion — this one needs a human "
+                             "reading.").classes("text-[10px] sx-muted")
+
+        integrity_view()
+
         # ---------------------------------------------------------------- map
         def _identity_of() -> dict:
             """filename -> the identity the mapping is stored under."""
@@ -142,7 +257,8 @@ def page() -> None:
                     "mapping": store.remember_mapping(state["mapping"],
                                                       _identity_of()),
                     "cleanup": store.remember_cleanup(state["cleanup"]),
-                }, )
+                    "fixes": dict(state["fixes"]),
+                })
             except Exception as exc:  # noqa: BLE001 — never block the workbench
                 ui.notify(f"Could not save the workbench: {exc}", type="warning")
 
@@ -164,7 +280,7 @@ def page() -> None:
             orphans = matching.orphans(labels, suggestions)
             connected = sum(1 for v in mapped.values() if v)
 
-            with c.card("2 · Map families to complexity files",
+            with c.card("3 · Map families to complexity files",
                         f"DTx {meta.program or '?'} · phase {meta.phase or '?'} "
                         f"· {len(state['families'])} families · "
                         f"{len(state['harnesses'])} file(s). A family may take "
@@ -211,6 +327,11 @@ def page() -> None:
                     ui.label("Only connected families are analyzed; each "
                              "family × harness pairing is resolved separately.") \
                         .classes("text-[10px] sx-muted")
+                    if _open_issues():
+                        c.chip("blocker",
+                               f"{len(_open_issues())} sales-code expression(s) "
+                               "still malformed — their circuits will read as "
+                               "never built")
 
         def _family_cell(family: str, n_rows: int, n_mapped: int) -> None:
             with ui.element("div").classes(
@@ -354,7 +475,7 @@ def page() -> None:
                 state["selected"] = labels[0]
             entry = next(e for e in entries if e.label == state["selected"])
 
-            with c.card("3 · Review"):
+            with c.card("4 · Review"):
                 _cleanup_bar()
                 with ui.row().classes("w-full gap-4 items-start no-wrap"):
                     with ui.column().classes("gap-1 min-w-[15rem]"):
@@ -608,6 +729,9 @@ def page() -> None:
                     harnesses[fname] = harness
                     metas[fname] = cmeta
 
+                report(0.80, "Checking the Sales Code column…")
+                issues = integrity.scan(rows)
+
                 report(0.85, "Checking programme and phase…")
                 corr = correspond.check(meta, list(metas.values()))
 
@@ -632,17 +756,18 @@ def page() -> None:
                 mapping.update(restored)
                 report(1.0, "Done")
                 return (rows, meta, [(f, counts[f]) for f in families],
-                        harnesses, metas, mapping, corr, failed, len(restored))
+                        harnesses, metas, mapping, corr, failed, len(restored),
+                        issues)
 
             out = await c.run_engine_progress(
                 work, progress, running="Reading files…", done="Files loaded")
             if out is None:
                 return
             (rows, meta, families, harnesses, metas, mapping, corr, failed,
-             restored_count) = out
+             restored_count, issues) = out
             state.update(rows=rows, dtx_meta=meta, families=families,
                          harnesses=harnesses, metas=metas, mapping=mapping,
-                         corr=corr, entries=[], selected=None)
+                         corr=corr, entries=[], selected=None, issues=issues)
             if restored_count:
                 ui.notify(f"Restored {restored_count} mapping(s) from your last "
                           "session", type="info")
@@ -651,6 +776,7 @@ def page() -> None:
                           close_button=True)
             ui.notify(f"{len(mapping)} of {len(families)} families matched "
                       "automatically", type="positive")
+            integrity_view.refresh()
             mapping_view.refresh()
             results_view.refresh()
 
@@ -660,7 +786,9 @@ def page() -> None:
                 return
 
             def work(report):
-                rows = state["rows"]
+                # repairs first: an unfixed expression is false everywhere and
+                # would make its circuits read as never built
+                rows = integrity.apply_fixes(state["rows"], state["fixes"])
                 pairs = [(family, filename)
                          for family, files in sorted(state["mapping"].items())
                          for filename in files]

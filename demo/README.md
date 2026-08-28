@@ -35,6 +35,7 @@ Every section has something real to find. A clean sheet proves nothing.
 | Section | What to point at |
 |---|---|
 | **Circuit Applicability** | `QK107` is conditioned on `QA1&QA2` — the two roof codes are mutually exclusive, so no IP build carries it: a **never built** finding. |
+| **Circuit Applicability** | `QK109` carries the malformed expression `QB1-QA1` (a NOT with no connector). The **Sales-code integrity** step catches it before analysis and suggests `QB1&-QA1`; apply the fix and the verdict flips from a false *never built* to *variant*. The best single moment in the demo. |
 | **Circuit Applicability** | `QK108` needs `QZ9` and `QK603` needs `QE1`, neither tracked by that family's complexity file → the **Sales-code gaps** tab. |
 | **Circuit Applicability** | `HEADLINER` is in the DTx with no complexity file → a **red dotted row**. `DOOR_FRONT_LEFT_MAIN` does not auto-match its family → appears as a **candidate** to drag or click. |
 | **VBOM Risk Matrix** | 8 VINs → **13 review cases**, in two flavours: *no complete PN covers every required sales code*, and *N/A conflicts with an available base/default PN*. The DEFE template stays withheld until they are resolved. |

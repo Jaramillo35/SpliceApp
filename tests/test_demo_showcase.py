@@ -80,8 +80,41 @@ class TestCircuitApplicability:
             next(d.glob("*_IP_*.xlsx")).read_bytes(), "ip")
         analysis = analyze_harness([r for r in rows if r.harness_family == "IP"],
                                    harness, harness_name="IP")
-        # QA1&QA2 — the two roof codes never ship together
-        assert [c.circuit for c in analysis.findings] == ["QK107"]
+        # QA1&QA2 — the two roof codes never ship together. QK109 is also a
+        # finding here, but only because its expression is malformed; the
+        # integrity test below shows the repair clearing it.
+        assert "QK107" in [c.circuit for c in analysis.findings]
+
+    def test_the_malformed_expression_is_caught_and_its_repair_clears_it(self, built):
+        """The planted 'QB1-QA1' reads as never built until it is repaired.
+
+        This is the trap the integrity step exists for: a missing operator
+        looks exactly like a real defect.
+        """
+        from splice.dtxcircuits import analyze_harness, integrity, read_dtx_circuits
+        from splice.dtxcircuits.complexity import read_harness_file
+        d = built / "1_circuit_applicability"
+        rows, _meta = read_dtx_circuits(
+            next(d.glob("DetailedDTx*.xlsx")).read_bytes(), "dtx")
+        harness, _cm = read_harness_file(
+            next(d.glob("*_IP_*.xlsx")).read_bytes(), "ip")
+        ip_rows = [r for r in rows if r.harness_family == "IP"]
+
+        issue = {i.expression: i for i in integrity.scan(rows)}.get("QB1-QA1")
+        assert issue is not None, "the malformed expression must be detected"
+        assert issue.suggestions[0].expression == "QB1&-QA1"
+
+        before = analyze_harness(ip_rows, harness, harness_name="IP")
+        assert "QK109" in [c.circuit for c in before.findings], \
+            "unrepaired, it looks like a defect"
+
+        after = analyze_harness(
+            integrity.apply_fixes(ip_rows, {"QB1-QA1": "QB1&-QA1"}),
+            harness, harness_name="IP")
+        assert "QK109" not in [c.circuit for c in after.findings], \
+            "the repair must clear the false finding"
+        assert "QK107" in [c.circuit for c in after.findings], \
+            "the genuine defect must survive the repair"
 
     def test_planted_code_gap_is_found(self, built):
         from splice.dtxcircuits import analyze_harness, read_dtx_circuits

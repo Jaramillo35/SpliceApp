@@ -1,8 +1,8 @@
 """Persist the applicability workbench between sessions.
 
-Two things are worth keeping: the mapping the SE built by hand, and the rows
-they ticked for cleanup. Both are laborious to redo and neither is derivable
-from the files.
+Three things are worth keeping: the mapping the SE built by hand, the rows
+they ticked for cleanup, and the sales-code repairs they confirmed. All are
+laborious to redo and none is derivable from the files.
 
 The mapping is stored by **harness identity** — the def id inside the
 complexity file, falling back to the harness name — never by filename. A file
@@ -30,7 +30,8 @@ SCHEMA = 1
 
 
 def empty() -> dict:
-    return {"schema": SCHEMA, "mapping": {}, "cleanup": {}, "saved": ""}
+    return {"schema": SCHEMA, "mapping": {}, "cleanup": {}, "fixes": {},
+            "saved": ""}
 
 
 def harness_identity(def_id: str = "", harness_name: str = "") -> str:
@@ -59,6 +60,9 @@ def load(path: Optional[Path] = None) -> dict:
         return empty()
     data.setdefault("mapping", {})
     data.setdefault("cleanup", {})
+    # sales-code repairs are keyed by the raw expression, so they carry over
+    # to any DTx that repeats the same malformed text
+    data.setdefault("fixes", {})
     return data
 
 
