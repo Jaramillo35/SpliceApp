@@ -87,6 +87,7 @@ def _guide() -> None:
 def page() -> None:
     from splice.dtxcircuits import analyze_harness, correspond, read_dtx_circuits
     from splice.dtxcircuits import report as report_mod
+    from splice.dtxcircuits import store
     from splice.dtxcircuits.complexity import read_harness_file
 
     state: dict = {
@@ -101,7 +102,10 @@ def page() -> None:
         "cleanup": {},
         "filters": {"findings": False, "needs_review": False,
                     "verdicts": set(), "condition": None},
+        #: what the previous session left behind
+        "stored": store.load(),
     }
+    state["cleanup"] = store.restore_cleanup(state["stored"].get("cleanup", {}))
 
     with c.frame("Circuit Applicability",
                  "DTx circuits × harness complexity — mapped, then resolved "
@@ -124,6 +128,24 @@ def page() -> None:
             progress = ui.column().classes("w-full gap-1")
 
         # ---------------------------------------------------------------- map
+        def _identity_of() -> dict:
+            """filename -> the identity the mapping is stored under."""
+            return {f: store.harness_identity(
+                        state["harnesses"][f].def_id,
+                        state["metas"][f].harness or state["harnesses"][f].name)
+                    for f in state["harnesses"]}
+
+        def _persist() -> None:
+            """Keep the mapping and the cleanup ticks for next time."""
+            try:
+                store.save({
+                    "mapping": store.remember_mapping(state["mapping"],
+                                                      _identity_of()),
+                    "cleanup": store.remember_cleanup(state["cleanup"]),
+                }, )
+            except Exception as exc:  # noqa: BLE001 — never block the workbench
+                ui.notify(f"Could not save the workbench: {exc}", type="warning")
+
         def _labels() -> dict:
             return {f: (state["metas"][f].harness or state["harnesses"][f].name)
                     for f in state["harnesses"]}
@@ -281,7 +303,8 @@ def page() -> None:
 
         def _invalidate() -> None:
             """A mapping change makes any existing analysis stale."""
-            state["analyses"], state["entries"] = {}, []
+            state["entries"] = []
+            _persist()
             mapping_view.refresh()
             results_view.refresh()
 
@@ -367,13 +390,24 @@ def page() -> None:
         def _cleanup_bar() -> None:
             """What is selected for cleanup, and the export that carries it."""
             selected = state["cleanup"]
+            live = {report_mod.item_key(e.family, e.analysis.harness, k, i)
+                    for e in state["entries"]
+                    for k, ids in (
+                        ("circuit", [x.circuit for x in e.analysis.circuits]),
+                        ("connector", [x.cnum for x in e.analysis.cnums]),
+                        ("gap", [g.code for g in e.analysis.code_gaps]))
+                    for i in ids}
+            here = sum(1 for k in selected if k in live)
             with ui.row().classes("items-center gap-2 flex-wrap w-full"):
                 c.chip("info" if selected else "ok",
                        f"{len(selected)} row(s) selected for "
-                       f"{report_mod.CLEANUP_COLUMN}")
+                       f"{report_mod.CLEANUP_COLUMN}"
+                       + (f" · {len(selected) - here} from another run"
+                          if len(selected) > here else ""))
                 if selected:
                     ui.button("Clear selection", icon="clear_all",
                               on_click=lambda: (state["cleanup"].clear(),
+                                                _persist(),
                                                 results_view.refresh())) \
                         .props("flat dense size=sm")
                 ui.space()
@@ -396,6 +430,7 @@ def page() -> None:
                 selection = report_mod.selection_for(entry, kind, ident)
                 if selection:
                     state["cleanup"][key] = selection
+            _persist()
             results_view.refresh()
 
         def _is_selected(entry, kind: str, ident: str) -> bool:
@@ -586,18 +621,31 @@ def page() -> None:
                     {f: (metas[f].harness or harnesses[f].name) for f in harnesses})
                 # a family holds a LIST of harnesses; auto-connect seeds one
                 mapping = {family: [filename] for family, filename in exact.items()}
+                # a mapping the SE built in an earlier session wins over the
+                # automatic one — it was a decision, this is only a guess
+                identity_of = {f: store.harness_identity(
+                                   harnesses[f].def_id,
+                                   metas[f].harness or harnesses[f].name)
+                               for f in harnesses}
+                restored = store.restore_mapping(
+                    state["stored"].get("mapping", {}), identity_of)
+                mapping.update(restored)
                 report(1.0, "Done")
                 return (rows, meta, [(f, counts[f]) for f in families],
-                        harnesses, metas, mapping, corr, failed)
+                        harnesses, metas, mapping, corr, failed, len(restored))
 
             out = await c.run_engine_progress(
                 work, progress, running="Reading files…", done="Files loaded")
             if out is None:
                 return
-            rows, meta, families, harnesses, metas, mapping, corr, failed = out
+            (rows, meta, families, harnesses, metas, mapping, corr, failed,
+             restored_count) = out
             state.update(rows=rows, dtx_meta=meta, families=families,
                          harnesses=harnesses, metas=metas, mapping=mapping,
-                         corr=corr, entries=[], selected=None, cleanup={})
+                         corr=corr, entries=[], selected=None)
+            if restored_count:
+                ui.notify(f"Restored {restored_count} mapping(s) from your last "
+                          "session", type="info")
             for problem in failed[:5]:
                 ui.notify(problem, type="negative", multi_line=True,
                           close_button=True)
@@ -636,13 +684,7 @@ def page() -> None:
             if out is not None:
                 state["entries"] = out
                 state["selected"] = None
-                # a selection whose row no longer exists must not survive
-                live = {report_mod.item_key(e.family, e.analysis.harness, k, i)
-                        for e in out
-                        for k, ids in (("circuit", [x.circuit for x in e.analysis.circuits]),
-                                       ("connector", [x.cnum for x in e.analysis.cnums]),
-                                       ("gap", [g.code for g in e.analysis.code_gaps]))
-                        for i in ids}
-                state["cleanup"] = {k: v for k, v in state["cleanup"].items()
-                                    if k in live}
+                # Selections are NOT pruned to this run. A tick made against a
+                # family that is not mapped today is still a real cleanup task,
+                # and dropping it here would quietly delete it from the store.
                 results_view.refresh()
