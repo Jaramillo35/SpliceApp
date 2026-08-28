@@ -363,3 +363,65 @@ class TestFirstSheetOnly:
         rows, meta = read_dtx_circuits(buf.getvalue(), "invented.xlsx")
         assert len(rows) == 1, "the duplicate sheet must not be counted"
         assert meta.program == "9000ZZ" and meta.phase == "X9_A"
+
+
+class TestCnumAnalysis:
+    """The same resolution, one level up: per connector rather than per circuit."""
+
+    def test_every_cnum_is_resolved(self, results):
+        cnums = {c.cnum: c for c in results["BODY_LEFT"].cnums}
+        assert set(cnums) == {"C1", "C2", "C3", "C4", "C5"}
+
+    def test_a_cnum_unions_the_conditions_of_its_pins(self, results):
+        # IP's C1 carries CKT_900 (AAA) and CKT_950 (-AAA): together, always
+        c1 = {c.cnum: c for c in results["IP"].cnums}["C1"]
+        assert c1.classification == ALL_BUILDS
+        assert sorted(c1.circuits) == ["CKT_900", "CKT_950"]
+        assert len(c1.builds_with) == 2
+
+    def test_a_cnum_inherits_an_unconditional_circuit(self, results):
+        c1 = {c.cnum: c for c in results["BODY_LEFT"].cnums}["C1"]
+        assert c1.classification == UNCONDITIONAL
+        assert len(c1.builds_with) == 4
+
+    def test_a_conditioned_cnum_is_a_variant(self, results):
+        c4 = {c.cnum: c for c in results["BODY_LEFT"].cnums}["C4"]
+        assert c4.classification == VARIANT
+        assert c4.expression == "(AAA)" and len(c4.builds_with) == 2
+
+    def test_cnum_carries_its_connector_part_number(self, results):
+        assert all(c.connector_pn == "99999999" for c in results["BODY_LEFT"].cnums)
+
+    def test_cnum_findings_are_exposed(self, results):
+        # no connector here is entirely unbuildable, but the accessor must work
+        assert results["BODY_LEFT"].cnum_findings == []
+
+
+class TestCodeGaps:
+    def test_gap_lists_the_untracked_code_and_what_rests_on_it(self, results):
+        gaps = {g.code: g for g in results["BODY_LEFT"].code_gaps}
+        assert set(gaps) == {"ZZZ"}
+        assert gaps["ZZZ"].circuits == ["CKT_600"]
+        assert gaps["ZZZ"].cnums == ["C1"]
+        assert gaps["ZZZ"].occurrences == 1
+
+    def test_a_tracked_code_is_never_a_gap(self, results):
+        # CCC is tracked but unbuilt -> a "never built" finding, not a gap
+        assert "CCC" not in {g.code for g in results["BODY_LEFT"].code_gaps}
+
+    def test_family_without_gaps_reports_none(self, results):
+        assert results["IP"].code_gaps == []
+
+    def test_unused_codes_are_reported(self):
+        from splice.dtxcircuits import analyze_harness
+        from splice.dtxcircuits.models import CircuitRow
+        from fixtures_dtxcircuits import body_left
+        # only AAA is conditioned on; BBB and CCC are tracked but unused
+        a = analyze_harness([CircuitRow("BODY_LEFT", "CKT_1", "AAA")], body_left())
+        assert a.unused_codes == ["BBB", "CCC"]
+
+    def test_gaps_need_a_complexity_file(self):
+        from splice.dtxcircuits import analyze_harness
+        from splice.dtxcircuits.models import CircuitRow
+        a = analyze_harness([CircuitRow("X", "C", "AAA")], None, harness_name="X")
+        assert a.code_gaps == [] and a.unused_codes == []

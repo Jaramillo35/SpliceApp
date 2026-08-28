@@ -64,6 +64,54 @@ class CircuitApplicability:
 
 
 @dataclass
+class CnumApplicability:
+    """One connector (CNUM) resolved against a harness's complexity table.
+
+    A connector is carried when ANY circuit on it is carried, so its condition
+    is the union of its pins' conditions — the same rule a circuit uses across
+    its own pins, one level up.
+    """
+
+    harness: str
+    cnum: str
+    classification: str
+    expression: Optional[str]
+    connector_pn: str = ""
+    circuits: List[str] = field(default_factory=list)
+    builds_with: List[str] = field(default_factory=list)
+    builds_without: List[str] = field(default_factory=list)
+    untracked_codes: List[str] = field(default_factory=list)
+    pins: List[str] = field(default_factory=list)
+
+    @property
+    def build_count(self) -> int:
+        return len(self.builds_with) + len(self.builds_without)
+
+    @property
+    def is_finding(self) -> bool:
+        return self.classification == NEVER
+
+    @property
+    def relies_on_untracked(self) -> bool:
+        return bool(self.untracked_codes)
+
+
+@dataclass
+class CodeGap:
+    """A sales code the DTx uses for a family that its complexity does not track.
+
+    Because unknown codes are treated as present, every circuit depending on
+    one reads as applying more widely than the data can justify. This names the
+    code and everything resting on it.
+    """
+
+    code: str
+    circuits: List[str] = field(default_factory=list)
+    cnums: List[str] = field(default_factory=list)
+    occurrences: int = 0
+
+
+@dataclass
 class HarnessAnalysis:
     """Every circuit the DTx puts on one harness family, resolved."""
 
@@ -71,6 +119,10 @@ class HarnessAnalysis:
     def_id: str = ""
     builds: int = 0
     circuits: List[CircuitApplicability] = field(default_factory=list)
+    cnums: List[CnumApplicability] = field(default_factory=list)
+    code_gaps: List[CodeGap] = field(default_factory=list)
+    #: codes the complexity tracks that no DTx circuit on this family uses
+    unused_codes: List[str] = field(default_factory=list)
 
     def by_class(self, classification: str) -> List[CircuitApplicability]:
         return [c for c in self.circuits if c.classification == classification]
@@ -95,6 +147,10 @@ class HarnessAnalysis:
         for c in self.circuits:
             codes.update(c.untracked_codes)
         return sorted(codes)
+
+    @property
+    def cnum_findings(self) -> List["CnumApplicability"]:
+        return [c for c in self.cnums if c.is_finding]
 
 
 @dataclass

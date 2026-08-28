@@ -23,6 +23,8 @@ from typing import Dict, Iterable, List, Optional
 
 from splice.dtxcircuits.models import (
     ALL_BUILDS,
+    CnumApplicability,
+    CodeGap,
     NEVER,
     NO_COMPLEXITY,
     UNCONDITIONAL,
@@ -57,6 +59,103 @@ def union_condition(rows: Iterable[CircuitRow]) -> Optional[str]:
     return "/".join(sorted(set(parts)))
 
 
+def _resolve(condition: Optional[str], harness: Optional[Harness]):
+    """Classify one condition against a harness's builds.
+
+    Returns ``(classification, builds_with, builds_without, untracked)``.
+    """
+    if harness is None or not harness.builds:
+        return NO_COMPLEXITY, [], [], []
+
+    untracked = [] if condition is None else sorted(
+        code for code in salescode.codes_in(condition)
+        if code not in harness.complexity_codes)
+
+    if condition is None:
+        return UNCONDITIONAL, [b.part_number for b in harness.builds], [], untracked
+
+    with_it, without = [], []
+    for build in harness.builds:
+        # unknown-as-present lives in applies_in; see module docstring
+        if applies_in(condition, build.codes, harness.complexity_codes):
+            with_it.append(build.part_number)
+        else:
+            without.append(build.part_number)
+    if not with_it:
+        return NEVER, with_it, without, untracked
+    if not without:
+        return ALL_BUILDS, with_it, without, untracked
+    return VARIANT, with_it, without, untracked
+
+
+def analyze_cnums(rows: Iterable[CircuitRow],
+                  harness: Optional[Harness],
+                  harness_name: str = "") -> List[CnumApplicability]:
+    """Resolve every connector (CNUM) the DTx puts on one harness family."""
+    by_cnum: Dict[str, List[CircuitRow]] = {}
+    for row in rows:
+        if row.cnum:
+            by_cnum.setdefault(row.cnum, []).append(row)
+
+    out: List[CnumApplicability] = []
+    for cnum in sorted(by_cnum):
+        occurrences = by_cnum[cnum]
+        condition = union_condition(occurrences)
+        classification, with_it, without, untracked = _resolve(condition, harness)
+        out.append(CnumApplicability(
+            harness=harness_name, cnum=cnum, classification=classification,
+            expression=condition,
+            connector_pn=next((o.connector_pn for o in occurrences
+                               if o.connector_pn), ""),
+            circuits=sorted({o.circuit for o in occurrences}),
+            builds_with=with_it, builds_without=without,
+            untracked_codes=untracked,
+            pins=sorted({o.pin for o in occurrences if o.pin})))
+    return out
+
+
+def code_gaps(rows: Iterable[CircuitRow],
+              harness: Optional[Harness]) -> List[CodeGap]:
+    """Sales codes the DTx uses for this family that its complexity omits.
+
+    Reported with everything that depends on them, because each one makes the
+    circuits resting on it read wider than the data can justify.
+    """
+    if harness is None:
+        return []
+    gaps: Dict[str, CodeGap] = {}
+    for row in rows:
+        condition = (row.sales_code or "").strip()
+        if not condition:
+            continue
+        for code in salescode.codes_in(condition):
+            if code in harness.complexity_codes:
+                continue
+            gap = gaps.setdefault(code, CodeGap(code=code))
+            gap.occurrences += 1
+            if row.circuit not in gap.circuits:
+                gap.circuits.append(row.circuit)
+            if row.cnum and row.cnum not in gap.cnums:
+                gap.cnums.append(row.cnum)
+    for gap in gaps.values():
+        gap.circuits.sort()
+        gap.cnums.sort()
+    return [gaps[c] for c in sorted(gaps)]
+
+
+def unused_codes(rows: Iterable[CircuitRow],
+                 harness: Optional[Harness]) -> List[str]:
+    """Codes the complexity tracks that no circuit on this family conditions on."""
+    if harness is None:
+        return []
+    used: set = set()
+    for row in rows:
+        condition = (row.sales_code or "").strip()
+        if condition:
+            used.update(salescode.codes_in(condition))
+    return sorted(harness.complexity_codes - used)
+
+
 def analyze_harness(rows: Iterable[CircuitRow],
                     harness: Optional[Harness],
                     harness_name: str = "") -> HarnessAnalysis:
@@ -79,38 +178,11 @@ def analyze_harness(rows: Iterable[CircuitRow],
         raw = sorted({o.sales_code.strip() for o in occurrences if o.sales_code.strip()})
         pins = sorted({f"{o.cnum}/{o.pin}".strip("/") for o in occurrences if o.cnum or o.pin})
 
-        untracked: List[str] = []
-        if condition is not None and harness is not None:
-            untracked = sorted(
-                code for code in salescode.codes_in(condition)
-                if code not in harness.complexity_codes)
-
-        if harness is None or not harness.builds:
-            applicability = CircuitApplicability(
-                harness=name, circuit=circuit, classification=NO_COMPLEXITY,
-                expression=condition, raw_expressions=raw, pins=pins,
-                untracked_codes=untracked)
-            analysis.circuits.append(applicability)
-            continue
-
-        if condition is None:
-            with_it = [b.part_number for b in harness.builds]
-            without = []
-            classification = UNCONDITIONAL
-        else:
-            with_it, without = [], []
-            for build in harness.builds:
-                # unknown-as-present lives in applies_in; see module docstring
-                if applies_in(condition, build.codes, harness.complexity_codes):
-                    with_it.append(build.part_number)
-                else:
-                    without.append(build.part_number)
-            if not with_it:
-                classification = NEVER
-            elif not without:
-                classification = ALL_BUILDS
-            else:
-                classification = VARIANT
+        classification, with_it, without, untracked = _resolve(condition, harness)
+        if classification == NO_COMPLEXITY and condition is not None \
+                and harness is not None:
+            untracked = sorted(code for code in salescode.codes_in(condition)
+                               if code not in harness.complexity_codes)
 
         analysis.circuits.append(CircuitApplicability(
             harness=name, circuit=circuit, classification=classification,
@@ -118,8 +190,11 @@ def analyze_harness(rows: Iterable[CircuitRow],
             builds_with=with_it, builds_without=without,
             untracked_codes=untracked, pins=pins))
 
-    logger.info("Harness %s: %d circuits -> %s", name, len(analysis.circuits),
-                analysis.counts)
+    analysis.cnums = analyze_cnums(rows, harness, harness_name=name)
+    analysis.code_gaps = code_gaps(rows, harness)
+    analysis.unused_codes = unused_codes(rows, harness)
+    logger.info("Harness %s: %d circuits, %d connectors -> %s", name,
+                len(analysis.circuits), len(analysis.cnums), analysis.counts)
     return analysis
 
 
