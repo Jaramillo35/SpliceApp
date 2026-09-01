@@ -316,7 +316,7 @@ def build_report(entries: Iterable[Entry],
                  *, dtx_program: str = "", dtx_phase: str = "",
                  repairs: Optional[Dict[str, str]] = None,
                  repair_context: Optional[Dict[str, dict]] = None,
-                 quality=None) -> bytes:
+                 quality=None, charts=None) -> bytes:
     """The review workbook, with the cleanup notes folded into every sheet."""
     entries = list(entries)
     wb = Workbook()
@@ -422,6 +422,12 @@ def build_report(entries: Iterable[Entry],
     _sheet(wb, "Sales-code repairs",
            ["Expression as in DTx", "Expression as decided", "Problem",
             "DTx rows", "Families", "Circuits"], repair_rows)
+
+    if charts:
+        # Written last so it sits at the end of the book, but in the exact
+        # layout splice.inline.summary parses: this sheet is also an input.
+        from splice.dtxcircuits.chart import write_chart_sheet
+        write_chart_sheet(wb, charts, dtx_program, dtx_phase)
 
     _sheet(wb, "Complexity Cleanup",
            ["DTx family", "Harness", "Type", "Item", "Verdict", "Condition",

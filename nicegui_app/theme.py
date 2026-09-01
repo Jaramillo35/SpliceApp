@@ -37,6 +37,9 @@ _CSS = f"""
   .sx-mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
   .sx-card {{ background: {SURFACE}; border: 1px solid {LINE}; border-radius: 12px; }}
   .sx-muted {{ color: rgba(232,232,236,0.62); }}
+  /* a circuit chart row no build carries is an empty row — it has to read as
+     a finding rather than as whitespace */
+  .sx-never > td {{ background: {STATUS['blocker']}22 !important; }}
   @media (prefers-reduced-motion: reduce) {{
     .sx-reveal {{ animation: none; }}
     .q-btn {{ transition: none; }}

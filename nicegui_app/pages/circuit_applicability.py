@@ -87,6 +87,7 @@ def _guide() -> None:
 def page() -> None:
     from splice.dtxcircuits import analyze_harness, correspond, read_dtx_circuits
     from splice.dtxcircuits import report as report_mod
+    from splice.dtxcircuits import chart as chart_mod
     from splice.dtxcircuits import integrity, quality as quality_mod, store
     from splice.dtxcircuits.complexity import read_harness_file
 
@@ -106,6 +107,10 @@ def page() -> None:
         "tab": "circuits",
         #: measured on load and again after analysis
         "quality": None,
+        #: one circuit chart per family x harness, built with the analysis
+        "charts": [],
+        #: which chart is expanded, so a refresh does not collapse it
+        "chart_open": None,
         #: keys the SE explicitly unticked — never auto-selected again
         "dismissed": set(),
         #: malformed sales-code expressions, and the repairs confirmed for them
@@ -145,9 +150,10 @@ def page() -> None:
 
         def _resolve(expression: str, replacement: str) -> None:
             state["fixes"][expression] = replacement
-            state["entries"] = []          # the analysis is now stale
+            state["entries"] = state["charts"] = []   # the analysis is now stale
             _persist()
             _measure()
+            chart_view.refresh()
             integrity_view.refresh()
             results_view.refresh()
 
@@ -167,9 +173,10 @@ def page() -> None:
 
         def _unresolve(expression: str) -> None:
             state["fixes"].pop(expression, None)
-            state["entries"] = []
+            state["entries"] = state["charts"] = []
             _persist()
             _measure()
+            chart_view.refresh()
             integrity_view.refresh()
             results_view.refresh()
 
@@ -535,9 +542,10 @@ def page() -> None:
 
         def _invalidate() -> None:
             """A mapping change makes any existing analysis stale."""
-            state["entries"] = []
+            state["entries"] = state["charts"] = []
             _persist()
             _measure()
+            chart_view.refresh()
             mapping_view.refresh()
             results_view.refresh()
 
@@ -656,7 +664,7 @@ def page() -> None:
                 dtx_program=state["dtx_meta"].program if state["dtx_meta"] else "",
                 dtx_phase=state["dtx_meta"].phase if state["dtx_meta"] else "",
                 repairs=state["fixes"], repair_context=context,
-                quality=state["quality"])
+                quality=state["quality"], charts=state["charts"])
             ui.download(data, "Circuit_Applicability_Review.xlsx")
 
         def _toggle_cleanup(entry, kind: str, ident: str) -> None:
@@ -831,6 +839,94 @@ def page() -> None:
         # measured only once an analysis exists, so it is placed after it
         quality_view()
 
+        # ---------------------------------------------------------- 6 · chart
+        @ui.refreshable
+        def chart_view() -> None:
+            charts = state["charts"]
+            if not charts:
+                return
+            with c.card("6 · Circuit chart",
+                        "Which part number carries which wire, per harness "
+                        "family. Same layout as the Circuit Summary that "
+                        "Circuit Health reads, so this workbook can be fed "
+                        "straight back into it."):
+                with ui.row().classes("gap-2 flex-wrap items-center"):
+                    c.chip("info", f"{len(charts)} chart(s) · "
+                                   f"{sum(len(x.rows) for x in charts)} circuit end(s)")
+                    findings = sum(x.findings for x in charts)
+                    c.chip("blocker" if findings else "ok",
+                           f"{findings} row(s) no build carries"
+                           if findings else "Every row is carried by a build")
+                    ui.button("Download chart (.xlsx)", icon="download",
+                              on_click=lambda: _download_chart()) \
+                        .props("outline dense no-caps")
+
+                for chart in charts:
+                    with ui.expansion(
+                            f"{chart.family} → {chart.harness}"
+                            f"   ·  {chart.circuits} circuit(s)"
+                            f"  ·  {len(chart.part_numbers)} part number(s)"
+                            + (f"  ·  {chart.findings} never built"
+                               if chart.findings else ""),
+                            value=state["chart_open"] == chart.block_title) \
+                            .classes("w-full").props("dense") \
+                            .on_value_change(
+                                lambda e, t=chart.block_title:
+                                    state.update(chart_open=t if e.value else None)):
+                        _chart_table(chart)
+
+        def _chart_table(chart) -> None:
+            if not chart.rows:
+                c.empty("No circuit ends for this family.", icon="table_rows")
+                return
+            columns = [
+                {"name": "circuit", "label": "Circuit", "field": "circuit",
+                 "align": "left", "sortable": True},
+                {"name": "cnum", "label": "CNUM", "field": "cnum",
+                 "align": "left", "sortable": True},
+                {"name": "cavity", "label": "Cav", "field": "cavity",
+                 "align": "center"},
+                {"name": "expression", "label": "Sales code",
+                 "field": "expression", "align": "left"},
+            ] + [
+                # the part number's tail is what an SE reads; the full number
+                # stays in the tooltip and in the workbook
+                {"name": pn, "label": pn[-6:], "field": pn, "align": "center",
+                 "headerStyle": f"writing-mode:vertical-rl;color:{theme.BRAND}"}
+                for pn in chart.part_numbers
+            ]
+            rows = []
+            for row in chart.rows:
+                record = {"circuit": row.circuit, "cnum": row.cnum,
+                          "cavity": row.cavity,
+                          "expression": row.expression or "—",
+                          "_never": row.is_finding}
+                record.update(dict(zip(chart.part_numbers,
+                                       row.marks(chart.part_numbers))))
+                rows.append(record)
+            table = ui.table(rows=rows, columns=columns, pagination=25) \
+                .classes("w-full").props("dense flat")
+            # an empty row is the finding, so it must not read as an empty row
+            table.add_slot("body", r"""
+                <q-tr :props="props" :class="props.row._never ? 'sx-never' : ''">
+                  <q-td v-for="col in props.cols" :key="col.name" :props="props">
+                    {{ col.value }}
+                  </q-td>
+                </q-tr>
+            """)
+            ui.label(f"Coverage: " + "  ".join(
+                f"{pn[-6:]} {chart.coverage(pn)}/{len(chart.rows)}"
+                for pn in chart.part_numbers)).classes("text-[10px] sx-mono sx-muted")
+
+        def _download_chart() -> None:
+            meta = state["dtx_meta"]
+            data = chart_mod.build_chart_workbook(
+                state["charts"], meta.program if meta else "",
+                meta.phase if meta else "")
+            ui.download(data, "Circuit_Chart.xlsx")
+
+        chart_view()
+
         # ------------------------------------------------------------ actions
         async def load() -> None:
             if not state["dtx"] or not state["uploads"]:
@@ -894,7 +990,8 @@ def page() -> None:
              restored_count, issues) = out
             state.update(rows=rows, dtx_meta=meta, families=families,
                          harnesses=harnesses, metas=metas, mapping=mapping,
-                         corr=corr, entries=[], selected=None, issues=issues)
+                         corr=corr, entries=[], charts=[], selected=None,
+                         issues=issues)
             if restored_count:
                 ui.notify(f"Restored {restored_count} mapping(s) from your last "
                           "session", type="info")
@@ -982,6 +1079,8 @@ def page() -> None:
                 # gap, go into the review by default — they are exactly what
                 # the customer has to fix in the next export. Anything the SE
                 # has explicitly unticked stays out.
+                state["charts"] = chart_mod.build_charts(
+                    out, integrity.apply_fixes(state["rows"], state["fixes"]))
                 picked = report_mod.auto_select(out, state["dismissed"])
                 added = [k for k in picked if k not in state["cleanup"]]
                 state["cleanup"].update({k: v for k, v in picked.items()
@@ -992,6 +1091,7 @@ def page() -> None:
                               "customer to see", type="info", multi_line=True)
                 _persist()
                 _measure()
+                chart_view.refresh()
                 # Selections are NOT pruned to this run. A tick made against a
                 # family that is not mapped today is still a real cleanup task,
                 # and dropping it here would quietly delete it from the store.
