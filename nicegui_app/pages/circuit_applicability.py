@@ -102,6 +102,8 @@ def page() -> None:
         "cleanup": {},
         "filters": {"findings": False, "needs_review": False,
                     "verdicts": set(), "condition": None},
+        #: which review tab is open, so a refresh does not snap back
+        "tab": "circuits",
         #: malformed sales-code expressions, and the repairs confirmed for them
         "issues": [], "fixes": {},
         "issue_filter": {"unresolved_only": True, "kinds": set()},
@@ -548,10 +550,14 @@ def page() -> None:
                           on_click=lambda: _export()).props("outline dense")
 
         def _export() -> None:
+            context = {i.expression: {"kind": i.kind, "rows": i.rows,
+                                      "families": i.families, "circuits": i.circuits}
+                       for i in state["issues"]}
             data = report_mod.build_report(
                 state["entries"], state["cleanup"],
                 dtx_program=state["dtx_meta"].program if state["dtx_meta"] else "",
-                dtx_phase=state["dtx_meta"].phase if state["dtx_meta"] else "")
+                dtx_phase=state["dtx_meta"].phase if state["dtx_meta"] else "",
+                repairs=state["fixes"], repair_context=context)
             ui.download(data, "Circuit_Applicability_Review.xlsx")
 
         def _toggle_cleanup(entry, kind: str, ident: str) -> None:
@@ -579,16 +585,21 @@ def page() -> None:
                     if n:
                         c.chip(VERDICT_KIND.get(label, "info"), f"{n} {label}")
             _filter_bar(a)
-            with ui.tabs().props("dense align=left") as tabs:
-                t_ckt = ui.tab(f"Circuits ({len(a.circuits)})")
-                t_cnum = ui.tab(f"Connectors ({len(a.cnums)})")
-                t_gap = ui.tab(f"Sales-code gaps ({len(a.code_gaps)})")
-            with ui.tab_panels(tabs, value=t_ckt).classes("w-full"):
-                with ui.tab_panel(t_ckt).classes("p-0 pt-2"):
+            # Tabs are named, and the active one is remembered: ticking a row
+            # refreshes this whole card, and an unnamed tab set would snap back
+            # to Circuits every time — losing your place mid-review.
+            with ui.tabs(value=state["tab"],
+                         on_change=lambda e: state.update(tab=e.value)) \
+                    .props("dense align=left") as tabs:
+                ui.tab("circuits", label=f"Circuits ({len(a.circuits)})")
+                ui.tab("connectors", label=f"Connectors ({len(a.cnums)})")
+                ui.tab("gaps", label=f"Sales-code gaps ({len(a.code_gaps)})")
+            with ui.tab_panels(tabs, value=state["tab"]).classes("w-full"):
+                with ui.tab_panel("circuits").classes("p-0 pt-2"):
                     _circuit_table(entry)
-                with ui.tab_panel(t_cnum).classes("p-0 pt-2"):
+                with ui.tab_panel("connectors").classes("p-0 pt-2"):
                     _cnum_table(entry)
-                with ui.tab_panel(t_gap).classes("p-0 pt-2"):
+                with ui.tab_panel("gaps").classes("p-0 pt-2"):
                     _gap_view(entry)
 
         def _filter_bar(a) -> None:
@@ -799,6 +810,17 @@ def page() -> None:
             mapping_view.refresh()
             results_view.refresh()
 
+        def _conditions_by(rows, attribute: str) -> dict:
+            """Condition per circuit (or per CNUM) exactly as the DTx stated it."""
+            from splice.dtxcircuits.analyze import union_condition
+            grouped: dict = {}
+            for row in rows:
+                key = getattr(row, attribute, "")
+                if key:
+                    grouped.setdefault(key, []).append(row)
+            return {key: (union_condition(group) or "")
+                    for key, group in grouped.items()}
+
         async def run() -> None:
             if not any(state["mapping"].values()):
                 ui.notify("Connect at least one family first", type="warning")
@@ -807,7 +829,8 @@ def page() -> None:
             def work(report):
                 # repairs first: an unfixed expression is false everywhere and
                 # would make its circuits read as never built
-                rows = integrity.apply_fixes(state["rows"], state["fixes"])
+                raw_rows = state["rows"]
+                rows = integrity.apply_fixes(raw_rows, state["fixes"])
                 pairs = [(family, filename)
                          for family, files in sorted(state["mapping"].items())
                          for filename in files]
@@ -821,9 +844,14 @@ def page() -> None:
                     family_rows = [r for r in rows if r.harness_family == family]
                     analysis = analyze_harness(family_rows, harness,
                                                harness_name=label)
+                    # the same unions over the UNREPAIRED rows, so the export can
+                    # show what the DTx said next to what was analysed
+                    original = [r for r in raw_rows if r.harness_family == family]
                     out.append(report_mod.Entry(
                         label=f"{family} → {label}", family=family,
-                        filename=filename, analysis=analysis))
+                        filename=filename, analysis=analysis,
+                        original_circuit_conditions=_conditions_by(original, "circuit"),
+                        original_cnum_conditions=_conditions_by(original, "cnum")))
                 return out
 
             out = await c.run_engine_progress(

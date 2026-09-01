@@ -40,12 +40,20 @@ def item_key(family: str, harness: str, kind: str, ident: str) -> str:
 
 @dataclass
 class Entry:
-    """One analysed pairing: a DTx family resolved against one harness file."""
+    """One analysed pairing: a DTx family resolved against one harness file.
+
+    ``original_*`` hold the conditions as the DTx actually stated them, before
+    any sales-code repair was applied. The analysis runs on repaired rows, so
+    without these the export would only ever show the corrected wording and
+    there would be no record of what was changed or why a verdict moved.
+    """
 
     label: str
     family: str
     filename: str
     analysis: HarnessAnalysis
+    original_circuit_conditions: Dict[str, str] = field(default_factory=dict)
+    original_cnum_conditions: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -177,7 +185,9 @@ def _sheet(wb: Workbook, title: str, headers: List[str], rows: List[list],
 
 def build_report(entries: Iterable[Entry],
                  cleanup: Dict[str, CleanupSelection],
-                 *, dtx_program: str = "", dtx_phase: str = "") -> bytes:
+                 *, dtx_program: str = "", dtx_phase: str = "",
+                 repairs: Optional[Dict[str, str]] = None,
+                 repair_context: Optional[Dict[str, dict]] = None) -> bytes:
     """The review workbook, with the cleanup notes folded into every sheet."""
     entries = list(entries)
     wb = Workbook()
@@ -194,6 +204,12 @@ def build_report(entries: Iterable[Entry],
          "Engineer selected in the workbench. Those rows are also collected on "
          "the Complexity Cleanup sheet as a work list."],
         [""],
+        ["Every circuit and connector shows its condition twice: 'as in DTx' is "
+         "what the export stated, 'as decided' is what was analysed after any "
+         "sales-code repair. 'Repaired' marks the rows where they differ, and "
+         "the Sales-code repairs sheet lists each decision once with what "
+         "depended on it."],
+        [""],
         ["Verdicts: unconditional (no sales code, every build); all builds "
          "(conditioned but true for all); variant (some part numbers); never "
          "built (no build satisfies the condition — a defect or a missing "
@@ -208,15 +224,22 @@ def build_report(entries: Iterable[Entry],
         a = entry.analysis
         for c in a.circuits:
             key = item_key(entry.family, a.harness, KIND_CIRCUIT, c.circuit)
+            decided = c.expression or ""
+            # an absent original means "not recorded", never "changed" — the
+            # Repaired flag must only fire on a difference we actually saw
+            original = entry.original_circuit_conditions.get(c.circuit, decided)
             circuit_rows.append([
                 entry.family, a.harness, a.def_id, c.circuit, c.classification,
-                c.expression or "", len(c.builds_with), c.build_count,
+                original, decided, "yes" if original != decided else "",
+                len(c.builds_with), c.build_count,
                 ", ".join(c.builds_with), ", ".join(c.untracked_codes),
                 ", ".join(c.pins),
                 cleanup[key].note if key in cleanup else "",
             ])
     _sheet(wb, "Circuits", ["DTx family", "Harness", "Def id", "Circuit",
-                            "Verdict", "Condition", "Builds with", "Builds",
+                            "Verdict", "Condition as in DTx",
+                            "Condition as decided", "Repaired",
+                            "Builds with", "Builds",
                             "Carried by", "Untracked codes", "Pins",
                             CLEANUP_COLUMN], circuit_rows)
 
@@ -225,15 +248,19 @@ def build_report(entries: Iterable[Entry],
         a = entry.analysis
         for c in a.cnums:
             key = item_key(entry.family, a.harness, KIND_CONNECTOR, c.cnum)
+            decided = c.expression or ""
+            original = entry.original_cnum_conditions.get(c.cnum, decided)
             cnum_rows.append([
                 entry.family, a.harness, a.def_id, c.cnum, c.connector_pn,
-                c.classification, c.expression or "", len(c.builds_with),
+                c.classification, original, decided,
+                "yes" if original != decided else "", len(c.builds_with),
                 c.build_count, len(c.circuits), ", ".join(c.circuits),
                 ", ".join(c.untracked_codes),
                 cleanup[key].note if key in cleanup else "",
             ])
     _sheet(wb, "Connectors", ["DTx family", "Harness", "Def id", "CNUM",
-                              "Connector PN", "Verdict", "Condition",
+                              "Connector PN", "Verdict", "Condition as in DTx",
+                              "Condition as decided", "Repaired",
                               "Builds with", "Builds", "# circuits", "Circuits",
                               "Untracked codes", CLEANUP_COLUMN], cnum_rows)
 
@@ -250,6 +277,19 @@ def build_report(entries: Iterable[Entry],
     _sheet(wb, "Sales-code gaps", ["DTx family", "Harness", "Def id",
                                    "Sales code", "DTx rows", "Circuits",
                                    "Connectors", CLEANUP_COLUMN], gap_rows)
+
+    repair_rows = []
+    for original in sorted(repairs or {}):
+        context = (repair_context or {}).get(original, {})
+        repair_rows.append([
+            original, (repairs or {})[original],
+            context.get("kind", ""), context.get("rows", ""),
+            ", ".join(context.get("families", [])),
+            ", ".join(context.get("circuits", [])),
+        ])
+    _sheet(wb, "Sales-code repairs",
+           ["Expression as in DTx", "Expression as decided", "Problem",
+            "DTx rows", "Families", "Circuits"], repair_rows)
 
     _sheet(wb, "Complexity Cleanup",
            ["DTx family", "Harness", "Type", "Item", "Verdict", "Condition",

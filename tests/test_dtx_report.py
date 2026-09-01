@@ -80,7 +80,8 @@ class TestWorkbook:
     def test_every_sheet_is_present(self, entries):
         wb = self._book(entries, {})
         assert wb.sheetnames == ["Read Me", "Circuits", "Connectors",
-                                 "Sales-code gaps", "Complexity Cleanup"]
+                                 "Sales-code gaps", "Sales-code repairs",
+                                 "Complexity Cleanup"]
 
     def test_cleanup_column_is_named_exactly(self, entries):
         wb = self._book(entries, {})
@@ -133,3 +134,83 @@ class TestWorkbook:
         ws = self._book(entries, {})["Circuits"]
         headers = [c.value for c in ws[1]]
         assert headers[0] == "DTx family" and headers[1] == "Harness"
+
+
+class TestBothExpressions:
+    """The export must show what the DTx said AND what the SE decided.
+
+    Without the original, a repaired circuit reads as though the DTx always
+    said the corrected thing, and there is no record of the decision that
+    moved its verdict.
+    """
+
+    def _entry_with_repair(self):
+        analysis = analyze(circuit_rows(), harnesses())[0]
+        return report.Entry(
+            label="BODY_LEFT", family="BODY_LEFT", filename="bl.xlsm",
+            analysis=analysis,
+            original_circuit_conditions={"CKT_200": "(AAA-BBB)"},
+            original_cnum_conditions={"C2": "(AAA-BBB)"})
+
+    def _book(self, entries, repairs=None, context=None):
+        data = report.build_report(entries, {}, dtx_program="2030QX",
+                                   dtx_phase="V1_A", repairs=repairs,
+                                   repair_context=context)
+        return load_workbook(io.BytesIO(data))
+
+    def test_circuits_carry_both_conditions(self):
+        ws = self._book([self._entry_with_repair()])["Circuits"]
+        headers = [c.value for c in ws[1]]
+        assert "Condition as in DTx" in headers
+        assert "Condition as decided" in headers
+        assert "Repaired" in headers
+
+    def test_a_repaired_row_is_flagged_and_shows_both(self):
+        ws = self._book([self._entry_with_repair()])["Circuits"]
+        headers = [c.value for c in ws[1]]
+        i_ckt = headers.index("Circuit")
+        i_was = headers.index("Condition as in DTx")
+        i_now = headers.index("Condition as decided")
+        i_flag = headers.index("Repaired")
+        row = next(r for r in ws.iter_rows(min_row=2, values_only=True)
+                   if r[i_ckt] == "CKT_200")
+        assert row[i_was] == "(AAA-BBB)"
+        assert row[i_now] == "(AAA)"
+        assert row[i_flag] == "yes"
+
+    def test_an_untouched_row_is_not_flagged(self):
+        ws = self._book([self._entry_with_repair()])["Circuits"]
+        headers = [c.value for c in ws[1]]
+        i_ckt, i_flag = headers.index("Circuit"), headers.index("Repaired")
+        row = next(r for r in ws.iter_rows(min_row=2, values_only=True)
+                   if r[i_ckt] == "CKT_300")
+        assert not row[i_flag]
+
+    def test_connectors_carry_both_conditions_too(self):
+        ws = self._book([self._entry_with_repair()])["Connectors"]
+        headers = [c.value for c in ws[1]]
+        assert "Condition as in DTx" in headers and "Condition as decided" in headers
+
+    def test_the_repairs_sheet_lists_each_decision_once(self):
+        wb = self._book([self._entry_with_repair()],
+                        repairs={"AAA-BBB": "AAA&-BBB"},
+                        context={"AAA-BBB": {"kind": "missing operator", "rows": 3,
+                                             "families": ["BODY_LEFT"],
+                                             "circuits": ["CKT_200"]}})
+        ws = wb["Sales-code repairs"]
+        assert [c.value for c in ws[1]][:3] == ["Expression as in DTx",
+                                                "Expression as decided", "Problem"]
+        rows = [r for r in ws.iter_rows(min_row=2, values_only=True) if r[0]]
+        assert len(rows) == 1
+        assert rows[0][0] == "AAA-BBB" and rows[0][1] == "AAA&-BBB"
+        assert rows[0][2] == "missing operator" and rows[0][3] == 3
+        assert "CKT_200" in rows[0][5]
+
+    def test_no_repairs_still_produces_the_sheet(self):
+        ws = self._book([self._entry_with_repair()])["Sales-code repairs"]
+        assert ws.max_row == 1          # header only
+
+    def test_read_me_explains_the_two_columns(self):
+        ws = self._book([self._entry_with_repair()])["Read Me"]
+        text = " ".join(str(r[0]) for r in ws.iter_rows(values_only=True) if r[0])
+        assert "as in DTx" in text and "as decided" in text
