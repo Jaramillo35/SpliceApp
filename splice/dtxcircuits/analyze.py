@@ -33,6 +33,7 @@ from splice.dtxcircuits.models import (
     CircuitRow,
     HarnessAnalysis,
 )
+from splice.dtxcircuits import conventions
 from splice.inline import salescode
 from splice.inline.complexity import applies_in
 from splice.inline.model import Harness
@@ -50,7 +51,8 @@ def union_condition(rows: Iterable[CircuitRow]) -> Optional[str]:
     """
     parts: List[str] = []
     for row in rows:
-        condition = (row.sales_code or "").strip()
+        # a bare universal code means the same as a blank cell
+        condition = conventions.effective_condition(row.sales_code)
         if not condition:
             return None
         parts.append(f"({condition})")
@@ -125,7 +127,9 @@ def code_gaps(rows: Iterable[CircuitRow],
         return []
     gaps: Dict[str, CodeGap] = {}
     for row in rows:
-        condition = (row.sales_code or "").strip()
+        # a bare universal code is not a gap: no complexity file lists it, and
+        # reporting it gives the customer nothing they can act on
+        condition = conventions.effective_condition(row.sales_code)
         if not condition:
             continue
         for code in salescode.codes_in(condition):

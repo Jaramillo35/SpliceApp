@@ -855,12 +855,17 @@ def page() -> None:
                 return
             with c.card("6 · Circuit chart",
                         "Which part number carries which wire, per harness "
-                        "family. Same layout as the Circuit Summary that "
-                        "Circuit Health reads, so this workbook can be fed "
-                        "straight back into it."):
+                        "family. The DTx condition flows through the whole "
+                        "circuit and is restated in each harness's own codes; "
+                        "a circuit reaching three or more cavities gets a "
+                        "splice. Same layout as the Circuit Summary that "
+                        "Circuit Health reads, so this feeds straight back."):
                 with ui.row().classes("gap-2 flex-wrap items-center"):
                     c.chip("info", f"{len(charts)} chart(s) · "
                                    f"{sum(len(x.rows) for x in charts)} circuit end(s)")
+                    spliced = sum(len(x.splices) for x in charts)
+                    if spliced:
+                        c.chip("review", f"{spliced} circuit(s) need a splice")
                     findings = sum(x.findings for x in charts)
                     c.chip("blocker" if findings else "ok",
                            f"{findings} row(s) no build carries"
@@ -874,6 +879,8 @@ def page() -> None:
                             f"{chart.family} → {chart.harness}"
                             f"   ·  {chart.circuits} circuit(s)"
                             f"  ·  {len(chart.part_numbers)} part number(s)"
+                            + (f"  ·  {len(chart.splices)} splice(s)"
+                               if chart.splices else "")
                             + (f"  ·  {chart.findings} never built"
                                if chart.findings else ""),
                             value=state["chart_open"] == chart.block_title) \
@@ -894,8 +901,10 @@ def page() -> None:
                  "align": "left", "sortable": True},
                 {"name": "cavity", "label": "Cav", "field": "cavity",
                  "align": "center"},
-                {"name": "expression", "label": "Sales code",
+                {"name": "expression", "label": "Sales code (DTx)",
                  "field": "expression", "align": "left"},
+                {"name": "harness_expression", "label": "…in this harness",
+                 "field": "harness_expression", "align": "left"},
             ] + [
                 # the part number's tail is what an SE reads; the full number
                 # stays in the tooltip and in the workbook
@@ -905,9 +914,13 @@ def page() -> None:
             ]
             rows = []
             for row in chart.rows:
-                record = {"circuit": row.circuit, "cnum": row.cnum,
+                record = {"circuit": row.circuit,
+                          "cnum": ("⚡ " if row.is_splice else "") + row.cnum,
                           "cavity": row.cavity,
                           "expression": row.expression or "—",
+                          "harness_expression": (
+                              row.harness_expression
+                              or ("—" if row.expression else "")),
                           "_never": row.is_finding}
                 record.update(dict(zip(chart.part_numbers,
                                        row.marks(chart.part_numbers))))
@@ -1077,7 +1090,8 @@ def page() -> None:
                         label=f"{family} → {label}", family=family,
                         filename=filename, analysis=analysis,
                         original_circuit_conditions=_conditions_by(original, "circuit"),
-                        original_cnum_conditions=_conditions_by(original, "cnum")))
+                        original_cnum_conditions=_conditions_by(original, "cnum"),
+                        complexity=harness))
                 return out
 
             out = await c.run_engine_progress(

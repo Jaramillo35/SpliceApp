@@ -27,13 +27,18 @@ from __future__ import annotations
 import io
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from splice.dtxcircuits.models import NEVER
+from splice.dtxcircuits import conventions
+from splice.dtxcircuits.models import (
+    ALL_BUILDS, NEVER, NO_COMPLEXITY, VARIANT,
+)
+from splice.inline import salescode
+from splice.inline.complexity import applies_in
 from splice.inline.summary import (
     COL_CAV,
     COL_CIRCUIT,
@@ -78,9 +83,15 @@ class ChartRow:
     cavity: str = ""
     device: str = ""
     connector_pn: str = ""
+    #: the condition as the DTx states it for this circuit, flowed across
+    #: every harness the circuit reaches
     expression: str = ""
+    #: the same condition re-expressed in the codes THIS harness tracks
+    harness_expression: str = ""
     classification: str = ""
     builds: List[str] = field(default_factory=list)
+    #: a wire running to a generated splice rather than to a device
+    is_splice: bool = False
 
     def carried_by(self, part_number: str) -> bool:
         return part_number in self.builds
@@ -102,6 +113,8 @@ class Chart:
     def_id: str = ""
     part_numbers: List[str] = field(default_factory=list)
     rows: List[ChartRow] = field(default_factory=list)
+    #: circuit -> generated splice name, for the circuits that needed one
+    splices: Dict[str, str] = field(default_factory=dict)
 
     @property
     def block_title(self) -> str:
@@ -121,7 +134,103 @@ class Chart:
         return sum(1 for row in self.rows if row.carried_by(part_number))
 
 
-def build_charts(entries: Iterable, rows: Sequence) -> List[Chart]:
+#: A circuit reaching this many cavities inside one harness cannot be run as
+#: a single wire — the branches have to meet somewhere, and that somewhere is
+#: a splice.
+SPLICE_MIN_ENDS = 3
+
+
+def flowed_conditions(rows: Sequence) -> Dict[str, Optional[str]]:
+    """One condition per circuit, unioned across every harness it reaches.
+
+    A circuit is one wire. It does not become conditional at a harness
+    boundary, so the condition the DTx states anywhere on it applies to all of
+    it — that is what "let the sales codes flow through the circuit" means.
+    The occurrences are OR-ed, and a single unconditional occurrence (a blank
+    cell, or a bare universal code) makes the whole circuit unconditional,
+    returned as ``None`` because no expression says "always".
+    """
+    parts: Dict[str, Optional[List[str]]] = {}
+    for row in rows:
+        circuit = getattr(row, "circuit", "")
+        if not circuit:
+            continue
+        condition = conventions.effective_condition(getattr(row, "sales_code", ""))
+        if circuit not in parts:
+            parts[circuit] = []
+        if parts[circuit] is None:
+            continue
+        if condition is None:
+            parts[circuit] = None
+        else:
+            parts[circuit].append(f"({condition})")
+    return {circuit: (None if group is None else "/".join(sorted(set(group))) or None)
+            for circuit, group in parts.items()}
+
+
+def carrying_builds(condition: Optional[str], complexity) -> List[str]:
+    """The part numbers of ``complexity`` that satisfy ``condition``."""
+    if complexity is None or not getattr(complexity, "builds", None):
+        return []
+    if condition is None:
+        return [b.part_number for b in complexity.builds]
+    vocabulary = getattr(complexity, "complexity_codes", set())
+    return [b.part_number for b in complexity.builds
+            if applies_in(condition, b.codes, vocabulary)]
+
+
+def harness_expression(condition: Optional[str], builds: Sequence[str],
+                       complexity) -> str:
+    """Re-express a condition in the codes THIS harness actually tracks.
+
+    The DTx writes one condition for the whole circuit, in whatever codes the
+    programme uses. A harness's complexity only tracks some of them, so the
+    same condition has to be restated per harness — otherwise the chart cites
+    codes that harness has no column for.
+
+    A condition already written entirely in codes this harness tracks is kept
+    as it is. It selects the right builds by construction, and rewriting it
+    would hand the SE a different-looking expression for no gain — the DTx
+    ``(QA1)`` came back as ``-QA2`` before this rule, which is equally true
+    and needlessly unfamiliar.
+
+    Only where the condition leans on a code this harness has no column for is
+    it restated, and then from the outcome rather than the text: take the part
+    numbers it selects, and ask the Splice Generation engine for an expression
+    selecting exactly those. Returns ``""`` for "every build" and for "no
+    build", since neither is a condition, and falls back to ``""`` rather than
+    guessing when the generated expression does not verify.
+    """
+    if complexity is None or not getattr(complexity, "builds", None):
+        return ""
+    everything = [b.part_number for b in complexity.builds]
+    carried = [pn for pn in everything if pn in set(builds)]
+    if not carried or len(carried) == len(everything):
+        return ""
+
+    vocabulary = getattr(complexity, "complexity_codes", set())
+    if condition and all(code in vocabulary
+                         for code in salescode.codes_in(condition)):
+        return condition
+
+    code_map = {b.part_number: set(b.codes) for b in complexity.builds}
+    try:
+        from splice.splice_gen import (generate_expression_for_selected_pns,
+                                       validate_generated_expression)
+        expression = generate_expression_for_selected_pns(carried, code_map)
+        if expression and validate_generated_expression(expression, carried, code_map):
+            return expression
+        if expression:
+            logger.info("Generated expression for %s did not verify; dropped",
+                        getattr(complexity, "name", "?"))
+    except Exception as exc:  # noqa: BLE001 — a chart must never fail to build
+        logger.info("Could not restate a condition for %s: %s",
+                    getattr(complexity, "name", "?"), exc)
+    return ""
+
+
+def build_charts(entries: Iterable, rows: Sequence,
+                 splice_min_ends: int = SPLICE_MIN_ENDS) -> List[Chart]:
     """One chart per family × harness pairing, from the resolved analysis.
 
     ``rows`` are the DTx circuit rows the analysis was run on — the repaired
@@ -131,56 +240,135 @@ def build_charts(entries: Iterable, rows: Sequence) -> List[Chart]:
     by_family: Dict[str, List] = {}
     for row in rows:
         by_family.setdefault(getattr(row, "harness_family", ""), []).append(row)
+    # conditions are flowed over ALL rows, not per family: a circuit that is
+    # conditional where the DTx happens to state it is conditional everywhere
+    flowed = flowed_conditions(rows)
 
     charts: List[Chart] = []
     for entry in entries:
         analysis = entry.analysis
+        complexity = getattr(entry, "complexity", None)
+        family_rows = by_family.get(entry.family, [])
+
         applicability = {c.circuit: c for c in analysis.circuits}
         connector_pn = {}
-        for row in by_family.get(entry.family, []):
+        for row in family_rows:
             if row.cnum and row.cnum not in connector_pn:
                 connector_pn[row.cnum] = row.connector_pn or ""
 
-        chart = Chart(
-            family=entry.family, harness=analysis.harness,
-            def_id=analysis.def_id,
-            part_numbers=[b.part_number for b in getattr(analysis, "builds_list", [])]
-            or _part_numbers(analysis),
-        )
+        chart = Chart(family=entry.family, harness=analysis.harness,
+                      def_id=analysis.def_id,
+                      part_numbers=_part_numbers(analysis, complexity))
+
+        # resolved once per circuit, not once per end: the condition is a
+        # property of the wire, so every end of it is carried identically
+        resolved: Dict[str, tuple] = {}
 
         seen = set()
-        for row in by_family.get(entry.family, []):
+        for row in family_rows:
             key = (row.circuit, row.cnum, row.pin)
             if not row.circuit or key in seen:
                 continue
             seen.add(key)
-            item = applicability.get(row.circuit)
+            if row.circuit not in resolved:
+                condition = flowed.get(row.circuit)
+                if complexity is not None:
+                    builds = carrying_builds(condition, complexity)
+                    restated = harness_expression(condition, builds, complexity)
+                else:
+                    # No complexity file to resolve against. Fall back to what
+                    # the analysis already worked out rather than reporting
+                    # nothing carried — an empty chart would read as every
+                    # circuit being never built, which is a lie, not a gap.
+                    item = applicability.get(row.circuit)
+                    builds = list(item.builds_with) if item else []
+                    restated = ""
+                resolved[row.circuit] = (
+                    condition or "", builds, restated,
+                    _classify(builds, chart.part_numbers))
+            expression, builds, restated, classification = resolved[row.circuit]
             chart.rows.append(ChartRow(
                 circuit=row.circuit, cnum=row.cnum, cavity=row.pin,
                 device=row.function or "",
                 connector_pn=connector_pn.get(row.cnum, ""),
-                expression=(item.expression or "") if item else (row.sales_code or ""),
-                classification=item.classification if item else "",
-                # A circuit end is carried by exactly the builds that carry its
-                # circuit: applicability is resolved per circuit, and a cavity
-                # cannot be present on a build the wire is absent from.
-                builds=list(item.builds_with) if item else [],
-            ))
+                expression=expression, harness_expression=restated,
+                classification=classification, builds=list(builds)))
+
+        _add_splices(chart, splice_min_ends)
         chart.rows.sort(key=lambda r: (r.circuit, r.cnum, _cavity_key(r.cavity)))
         charts.append(chart)
 
-    logger.info("Built %d circuit chart(s), %d row(s)",
-                len(charts), sum(len(c.rows) for c in charts))
+    logger.info("Built %d circuit chart(s), %d row(s), %d splice(s)",
+                len(charts), sum(len(c.rows) for c in charts),
+                sum(len(c.splices) for c in charts))
     return charts
 
 
-def _part_numbers(analysis) -> List[str]:
-    """Every part number the analysis mentions, in a stable order.
+def _classify(builds: Sequence[str], part_numbers: Sequence[str]) -> str:
+    if not part_numbers:
+        return NO_COMPLEXITY
+    if not builds:
+        return NEVER
+    return ALL_BUILDS if len(builds) == len(part_numbers) else VARIANT
 
-    Taken from the circuits rather than the harness so a chart can be built
-    from an analysis alone; a build that carries nothing still appears,
-    because an empty column is itself the finding.
+
+def _add_splices(chart: Chart, minimum: int) -> None:
+    """Give every circuit with three or more ends a splice to meet at.
+
+    Two ends is a wire. Three is a branch, and a branch has to join somewhere
+    physically — so the chart says where, rather than leaving the SE to infer
+    it. The splice is named the way Splice Generation already names them,
+    ``S<circuit>`` plus a letter, and each branch lands on its own cavity.
+
+    Cavities run A, B, C … and continue AA, AB … past 26. The SE asked for
+    A-Z; real nets go far beyond it (one circuit in 2028RU X2_A has 269 ends),
+    and silently truncating at Z would drop wires.
     """
+    if minimum <= 0:
+        return
+    by_circuit: Dict[str, List[ChartRow]] = {}
+    for row in chart.rows:
+        by_circuit.setdefault(row.circuit, []).append(row)
+
+    for circuit, ends in sorted(by_circuit.items()):
+        if len(ends) < minimum:
+            continue
+        name = f"S{circuit}{_int_to_alpha_suffix(0)}"
+        chart.splices[circuit] = name
+        for index, end in enumerate(ends):
+            # one wire per branch, device end to splice end; it carries
+            # exactly what its branch carries
+            chart.rows.append(ChartRow(
+                circuit=circuit, cnum=name,
+                cavity=_int_to_alpha_suffix(index),
+                device=f"SPLICE {name}",
+                expression=end.expression,
+                harness_expression=end.harness_expression,
+                classification=end.classification,
+                builds=list(end.builds), is_splice=True))
+
+
+def _int_to_alpha_suffix(index: int) -> str:
+    """0 -> A, 25 -> Z, 26 -> AA. The scheme Splice Generation already uses."""
+    result, value = "", index
+    while True:
+        value, remainder = divmod(value, 26)
+        result = chr(ord("A") + remainder) + result
+        if value == 0:
+            break
+        value -= 1
+    return result
+
+
+def _part_numbers(analysis, complexity=None) -> List[str]:
+    """Every part number of the harness, in a stable order.
+
+    The complexity file is the authority when it is available: it lists every
+    build, including one that carries nothing, and an empty column is itself
+    the finding. Without it, fall back to whatever the analysis mentions.
+    """
+    if complexity is not None and getattr(complexity, "builds", None):
+        return [b.part_number for b in complexity.builds]
     ordered: List[str] = []
     for circuit in analysis.circuits:
         for part in list(circuit.builds_with) + list(circuit.builds_without):
@@ -190,10 +378,17 @@ def _part_numbers(analysis) -> List[str]:
 
 
 def _cavity_key(value: str):
-    """Sort cavities numerically where they are numbers, else alphabetically."""
+    """Order cavities the way they are allocated, not the way they spell.
+
+    Numbers sort numerically (2 before 10). Letters sort by length first, so a
+    splice runs A, B … Z, AA, AB — plain alphabetical order would file AA
+    between A and B and scatter a 269-way ground net.
+    """
     text = (value or "").strip()
     head = text.split(":")[0]
-    return (0, int(head), text) if head.isdigit() else (1, 0, text)
+    if head.isdigit():
+        return (0, len(head), int(head), text)
+    return (1, len(head), 0, text)
 
 
 # --------------------------------------------------------------------------
@@ -257,7 +452,13 @@ def write_chart_sheet(wb: Workbook, charts: Sequence[Chart],
             line[COL_CNUM] = row.cnum
             line[COL_CAV] = row.cavity
             line[COL_DEVICE] = row.device
-            line[COL_SALES_CODE] = row.expression
+            # The Circuit Summary's own Sales Code column carries the harness
+            # form, because that is the one true of this block's part numbers.
+            # The DTx form rides in the Suffix column, which the parser reads
+            # but nothing downstream conditions on.
+            line[COL_SALES_CODE] = row.harness_expression or row.expression
+            if row.harness_expression and row.harness_expression != row.expression:
+                line[COL_SUFFIX] = row.expression
             marks = row.marks(chart.part_numbers)
             for offset, mark in enumerate(marks):
                 line[FIRST_BUILD_COL + offset] = mark

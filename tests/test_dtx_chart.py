@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from fixtures_dtxcircuits import circuit_rows, harnesses  # noqa: E402
 
-from splice.dtxcircuits import analyze_harness, chart, report
+from splice.dtxcircuits import analyze_harness, chart, conventions, report
 from splice.dtxcircuits.models import CircuitRow, DtxMeta
 from splice.inline.summary import SHEET, read_circuit_summary
 
@@ -26,13 +26,14 @@ from splice.inline.summary import SHEET, read_circuit_summary
 META = DtxMeta(program="9000ZZ", phase="X9_A")
 
 
-def _entries(rows, families=("BODY_LEFT", "IP")):
+def _entries(rows, families=("BODY_LEFT", "IP"), with_complexity=True):
     books = harnesses()
     return [report.Entry(
         label=f"{fam} → {books[fam].name}", family=fam,
         filename=f"{fam}.xlsm",
         analysis=analyze_harness([r for r in rows if r.harness_family == fam],
-                                 books[fam], harness_name=books[fam].name))
+                                 books[fam], harness_name=books[fam].name),
+        complexity=books[fam] if with_complexity else None)
         for fam in families]
 
 
@@ -143,12 +144,17 @@ class TestRoundTrip:
                        and e.cavity == row.cavity)
             assert set(end.builds) == set(row.builds), row.circuit
 
-    def test_the_sales_code_survives(self, charts):
+    def test_the_sales_code_survives_as_the_harness_form(self, charts):
+        """The Sales Code column carries the condition restated in THIS
+        harness's codes — that is the one true of this block's part numbers.
+        The DTx wording rides along in Suffix so nothing is lost."""
         _harns, ends = self._reread(charts)
         body = _by_family(charts)["BODY_LEFT"]
         row = next(r for r in body.rows if r.circuit == "CKT_400")
         end = next(e for e in ends if e.circuit == "CKT_400")
-        assert end.sales_code == row.expression
+        assert end.sales_code == (row.harness_expression or row.expression)
+        if row.harness_expression and row.harness_expression != row.expression:
+            assert end.suffix == row.expression
 
     def test_a_never_built_circuit_round_trips_as_carried_by_nothing(self, charts):
         _harns, ends = self._reread(charts)
@@ -178,6 +184,205 @@ class TestWorkbook:
         rows = circuit_rows()
         data = report.build_report(_entries(rows), {})
         assert SHEET not in load_workbook(io.BytesIO(data)).sheetnames
+
+
+class TestUniversalCode:
+    """``501`` alone means every harness part number (SE ruling, 2026-09-01)."""
+
+    def test_a_bare_universal_code_is_unconditional(self):
+        assert conventions.is_universal("501")
+        assert conventions.effective_condition("501") is None
+        assert conventions.effective_condition("  501 ") is None
+
+    def test_inside_a_larger_expression_it_stays_an_ordinary_code(self):
+        """The narrow reading the SE asked for: 501/RHV and 501&HAH are not
+        rewritten, because widening the rule would silently restate them."""
+        assert not conventions.is_universal("501/RHV")
+        assert conventions.effective_condition("501/RHV") == "501/RHV"
+        assert conventions.effective_condition("501&HAH") == "501&HAH"
+
+    def test_a_bare_universal_circuit_is_carried_by_every_build(self):
+        rows = circuit_rows() + [
+            CircuitRow(harness_family="IP", circuit="CKT_970", sales_code="501",
+                       cnum="C6", pin="6", connector_pn="99999999")]
+        built = chart.build_charts(_entries(rows), rows)
+        ip = _by_family(built)["IP"]
+        row = next(r for r in ip.rows if r.circuit == "CKT_970")
+        assert row.marks(ip.part_numbers) == ["X", "X"]
+        assert row.expression == "", "a universal code is not a condition"
+
+    def test_it_is_not_reported_as_a_sales_code_gap(self):
+        """No complexity file lists 501, so reporting it gives the customer
+        nothing they can act on."""
+        from splice.dtxcircuits.analyze import code_gaps
+        rows = [CircuitRow(harness_family="IP", circuit="CKT_970",
+                           sales_code="501", cnum="C6", pin="6")]
+        assert code_gaps(rows, harnesses()["IP"]) == []
+
+    def test_but_a_mixed_expression_still_reports_its_real_gaps(self):
+        from splice.dtxcircuits.analyze import code_gaps
+        rows = [CircuitRow(harness_family="IP", circuit="CKT_971",
+                           sales_code="501/ZZZ", cnum="C6", pin="6")]
+        codes = {g.code for g in code_gaps(rows, harnesses()["IP"])}
+        assert "ZZZ" in codes, "an untracked code in a mixed expression is real"
+
+
+class TestFlow:
+    """A circuit is one wire; its condition does not change at a boundary."""
+
+    def _rows(self):
+        return [
+            CircuitRow(harness_family="IP", circuit="CKT_SPAN",
+                       sales_code="AAA", cnum="C1", pin="1"),
+            CircuitRow(harness_family="BODY_LEFT", circuit="CKT_SPAN",
+                       sales_code="", cnum="C2", pin="2"),
+            CircuitRow(harness_family="BODY_LEFT", circuit="CKT_TIGHT",
+                       sales_code="AAA", cnum="C3", pin="3"),
+            CircuitRow(harness_family="IP", circuit="CKT_TIGHT",
+                       sales_code="BBB", cnum="C4", pin="4"),
+        ]
+
+    def test_a_condition_stated_in_one_harness_reaches_the_others(self):
+        flowed = chart.flowed_conditions(self._rows())
+        assert flowed["CKT_TIGHT"] == "(AAA)/(BBB)"
+
+    def test_one_unconditional_end_makes_the_whole_circuit_unconditional(self):
+        flowed = chart.flowed_conditions(self._rows())
+        assert flowed["CKT_SPAN"] is None
+
+    def test_a_bare_universal_end_counts_as_unconditional(self):
+        rows = self._rows() + [CircuitRow(harness_family="DASH",
+                                          circuit="CKT_TIGHT",
+                                          sales_code="501", cnum="C5", pin="5")]
+        assert chart.flowed_conditions(rows)["CKT_TIGHT"] is None
+
+    def test_every_end_of_a_circuit_carries_the_flowed_condition(self):
+        rows = self._rows()
+        built = chart.build_charts(_entries(rows), rows)
+        for c in built:
+            for row in c.rows:
+                if row.circuit == "CKT_TIGHT":
+                    assert row.expression == "(AAA)/(BBB)"
+
+
+class TestHarnessExpression:
+    """Restated only where the harness has no column for a code."""
+
+    def test_a_condition_already_in_the_vocabulary_is_left_alone(self, charts):
+        body = _by_family(charts)["BODY_LEFT"]
+        row = next(r for r in body.rows if r.circuit == "CKT_400")   # AAA&BBB
+        assert row.harness_expression == row.expression
+
+    def test_a_condition_on_an_untracked_code_is_restated(self):
+        """BODY_LEFT does not track ZZZ, so (ZZZ) cannot be stated in its
+        codes; it selects every build, which is not a condition at all."""
+        rows = circuit_rows()
+        body = _by_family(chart.build_charts(_entries(rows), rows))["BODY_LEFT"]
+        row = next(r for r in body.rows if r.circuit == "CKT_600")
+        assert row.harness_expression == ""
+        assert row.marks(body.part_numbers) == ["X", "X", "X", "X"]
+
+    def test_a_restatement_selects_exactly_the_same_builds(self):
+        """Whatever wording comes back must not move a single mark."""
+        from splice.inline.complexity import applies_in
+        rows = circuit_rows()
+        books = harnesses()
+        for c in chart.build_charts(_entries(rows), rows):
+            complexity = books[c.family]
+            for row in c.rows:
+                if not row.harness_expression:
+                    continue
+                selected = {b.part_number for b in complexity.builds
+                            if applies_in(row.harness_expression, b.codes,
+                                          complexity.complexity_codes)}
+                assert selected == set(row.builds), row.circuit
+
+    def test_all_builds_and_no_builds_are_not_conditions(self, charts):
+        for c in charts:
+            for row in c.rows:
+                if not row.builds or len(row.builds) == len(c.part_numbers):
+                    assert row.harness_expression == ""
+
+    def test_without_a_complexity_file_it_falls_back_honestly(self):
+        """No complexity means no restatement — and the marks come from the
+        analysis, not from an empty set that would read as never built."""
+        rows = circuit_rows()
+        built = chart.build_charts(_entries(rows, with_complexity=False), rows)
+        body = _by_family(built)["BODY_LEFT"]
+        row = next(r for r in body.rows if r.circuit == "CKT_100")
+        assert row.harness_expression == ""
+        assert row.marks(body.part_numbers) == ["X", "X", "X", "X"]
+
+
+class TestSplices:
+    """Three ends is a branch, and a branch has to join somewhere."""
+
+    def _rows(self, ends: int, family: str = "IP"):
+        return [CircuitRow(harness_family=family, circuit="CKT_BRANCH",
+                           sales_code="", cnum=f"C{i}", pin=str(i + 1))
+                for i in range(ends)]
+
+    def _chart(self, ends: int):
+        rows = self._rows(ends)
+        return _by_family(chart.build_charts(_entries(rows, families=("IP",)),
+                                             rows))["IP"]
+
+    def test_two_ends_is_a_wire_not_a_splice(self):
+        c = self._chart(2)
+        assert c.splices == {}
+        assert not any(r.is_splice for r in c.rows)
+
+    def test_three_ends_gets_a_splice(self):
+        c = self._chart(3)
+        assert c.splices == {"CKT_BRANCH": "SCKT_BRANCHA"}
+
+    def test_the_splice_is_named_the_way_splice_generation_names_them(self):
+        assert self._chart(3).splices["CKT_BRANCH"] == "SCKT_BRANCHA"
+
+    def test_one_splice_cavity_per_branch(self):
+        c = self._chart(4)
+        cavities = [r.cavity for r in c.rows if r.is_splice]
+        assert cavities == ["A", "B", "C", "D"]
+
+    def test_the_splice_wires_carry_what_their_branch_carries(self):
+        rows = self._rows(3)
+        rows[0] = CircuitRow(harness_family="IP", circuit="CKT_BRANCH",
+                             sales_code="AAA", cnum="C0", pin="1")
+        c = _by_family(chart.build_charts(_entries(rows, families=("IP",)),
+                                          rows))["IP"]
+        device_ends = [r for r in c.rows if not r.is_splice]
+        splice_ends = [r for r in c.rows if r.is_splice]
+        assert len(splice_ends) == len(device_ends)
+        assert {tuple(r.builds) for r in splice_ends} == \
+               {tuple(r.builds) for r in device_ends}
+
+    def test_cavities_continue_past_Z_rather_than_truncating(self):
+        """A real ground net in 2028RU X2_A has 269 ends. Stopping at Z would
+        silently drop wires."""
+        c = self._chart(30)
+        cavities = [r.cavity for r in c.rows if r.is_splice]
+        assert cavities[:2] == ["A", "B"]
+        assert cavities[25:28] == ["Z", "AA", "AB"]
+        assert len(cavities) == 30
+
+    def test_cavities_sort_in_allocation_order(self):
+        assert chart._cavity_key("Z") < chart._cavity_key("AA")
+        assert chart._cavity_key("AA") < chart._cavity_key("AB")
+        assert chart._cavity_key("2") < chart._cavity_key("10")
+
+    def test_splices_can_be_turned_off(self):
+        rows = self._rows(5)
+        c = _by_family(chart.build_charts(_entries(rows, families=("IP",)), rows,
+                                          splice_min_ends=0))["IP"]
+        assert c.splices == {}
+
+    def test_a_spliced_chart_still_round_trips(self):
+        rows = self._rows(4)
+        built = chart.build_charts(_entries(rows, families=("IP",)), rows)
+        data = chart.build_chart_workbook(built)
+        _harns, ends = read_circuit_summary(data, "spliced.xlsx")
+        assert len(ends) == 8, "four device ends and four splice ends"
+        assert sum(1 for e in ends if e.connector == "SCKT_BRANCHA") == 4
 
 
 class TestScale:

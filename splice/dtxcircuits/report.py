@@ -55,6 +55,10 @@ class Entry:
     analysis: HarnessAnalysis
     original_circuit_conditions: Dict[str, str] = field(default_factory=dict)
     original_cnum_conditions: Dict[str, str] = field(default_factory=dict)
+    #: the complexity file itself. The analysis is a summary of it; the chart
+    #: needs the builds and their codes to re-express a condition in the terms
+    #: this harness actually tracks.
+    complexity: object = None
 
 
 @dataclass
