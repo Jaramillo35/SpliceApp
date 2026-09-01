@@ -148,6 +148,39 @@ def selection_for(entry: Entry, kind: str, ident: str) -> Optional[CleanupSelect
     return None
 
 
+def auto_select(entries: Iterable[Entry],
+                dismissed: Optional[set] = None) -> Dict[str, CleanupSelection]:
+    """The findings worth putting in front of the customer, pre-ticked.
+
+    Never-built circuits and connectors, and every sales-code gap: each is a
+    place the DTx cannot be reconciled with complexity built from the
+    customer's own information. Anything the SE has explicitly unticked is
+    left alone — a proposal that reappears every run is not a proposal.
+    """
+    dismissed = dismissed or set()
+    picked: Dict[str, CleanupSelection] = {}
+
+    def take(entry: Entry, kind: str, ident: str) -> None:
+        key = item_key(entry.family, entry.analysis.harness, kind, ident)
+        if key in dismissed or key in picked:
+            return
+        selection = selection_for(entry, kind, ident)
+        if selection:
+            picked[key] = selection
+
+    for entry in entries:
+        analysis = entry.analysis
+        for circuit in analysis.circuits:
+            if circuit.classification == NEVER:
+                take(entry, KIND_CIRCUIT, circuit.circuit)
+        for connector in analysis.cnums:
+            if connector.classification == NEVER:
+                take(entry, KIND_CONNECTOR, connector.cnum)
+        for gap in analysis.code_gaps:
+            take(entry, KIND_GAP, gap.code)
+    return picked
+
+
 # --------------------------------------------------------------------------
 # workbook
 # --------------------------------------------------------------------------
@@ -183,11 +216,61 @@ def _sheet(wb: Workbook, title: str, headers: List[str], rows: List[list],
     return ws
 
 
+def _quality_sheets(wb: Workbook, q) -> None:
+    """Two sheets written for the customer: what the export got right, and
+    where each sales code is and is not known."""
+    _sheet(wb, "Data quality", ["Measure", "Value", "What it means"], [
+        ["Programme", q.program or "?", "Read from the DTx title block"],
+        ["Phase", q.phase or "?", ""],
+        ["Report date", q.report_date or "?", ""],
+        ["", "", ""],
+        ["Rows", q.rows, "Circuit/connector rows read"],
+        ["Circuits", q.circuits, ""],
+        ["Connectors", q.connectors, ""],
+        ["Harness families", q.families, ""],
+        ["Conditioned rows", f"{q.conditioned_rows} ({q.conditioned_share:.0%})",
+         "Rows carrying a sales-code condition"],
+        ["Unconditional rows", q.unconditional_rows, "Built on every "
+         "configuration"],
+        ["Distinct expressions", q.distinct_expressions, ""],
+        ["Distinct sales codes", q.distinct_codes, ""],
+        ["", "", ""],
+        ["FINDINGS", "", "Each one is something to correct in the next export"],
+        ["Malformed expressions", q.malformed_expressions,
+         "No boolean operator between codes — the expression is false for "
+         "every configuration, so its circuits read as never built"],
+        ["  rows affected", q.malformed_rows, ""],
+        ["  repaired in review", q.repaired_expressions,
+         "The Systems Engineer supplied the intended expression; see the "
+         "Sales-code repairs sheet"],
+        ["Never-built circuits", q.never_built_circuits,
+         "No configuration of the mapped harness satisfies the condition"],
+        ["Never-built connectors", q.never_built_connectors, ""],
+        ["Codes tracked nowhere", len(q.codes_not_tracked_anywhere),
+         "Used by the DTx, absent from every complexity file it was checked "
+         "against"],
+        ["Codes partly tracked", len(q.codes_partially_tracked),
+         "Known to some harnesses and not others"],
+        ["", "", ""],
+        ["Families assessed", q.families_mapped, ""],
+        ["Families not assessed", len(q.families_unmapped),
+         ", ".join(q.families_unmapped)],
+    ] + [[k, v, ""] for k, v in sorted(q.malformed_by_kind.items())])
+
+    _sheet(wb, "Sales-code coverage",
+           ["Sales code", "Status", "DTx rows", "Used by families",
+            "Tracked by", "Missing from", "Circuits"],
+           [[x.code, x.status, x.dtx_rows, ", ".join(x.families),
+             ", ".join(x.tracked_by) or "—", ", ".join(x.missing_from) or "—",
+             ", ".join(x.circuits[:20])] for x in q.coverage])
+
+
 def build_report(entries: Iterable[Entry],
                  cleanup: Dict[str, CleanupSelection],
                  *, dtx_program: str = "", dtx_phase: str = "",
                  repairs: Optional[Dict[str, str]] = None,
-                 repair_context: Optional[Dict[str, dict]] = None) -> bytes:
+                 repair_context: Optional[Dict[str, dict]] = None,
+                 quality=None) -> bytes:
     """The review workbook, with the cleanup notes folded into every sheet."""
     entries = list(entries)
     wb = Workbook()
@@ -236,6 +319,9 @@ def build_report(entries: Iterable[Entry],
                 ", ".join(c.pins),
                 cleanup[key].note if key in cleanup else "",
             ])
+    if quality is not None:
+        _quality_sheets(wb, quality)
+
     _sheet(wb, "Circuits", ["DTx family", "Harness", "Def id", "Circuit",
                             "Verdict", "Condition as in DTx",
                             "Condition as decided", "Repaired",

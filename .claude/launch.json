@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "splice-nicegui",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "nicegui_app"],
+      "port": 8504
+    }
+  ]
+}

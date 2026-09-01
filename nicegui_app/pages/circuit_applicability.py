@@ -87,7 +87,7 @@ def _guide() -> None:
 def page() -> None:
     from splice.dtxcircuits import analyze_harness, correspond, read_dtx_circuits
     from splice.dtxcircuits import report as report_mod
-    from splice.dtxcircuits import integrity, store
+    from splice.dtxcircuits import integrity, quality as quality_mod, store
     from splice.dtxcircuits.complexity import read_harness_file
 
     state: dict = {
@@ -104,6 +104,10 @@ def page() -> None:
                     "verdicts": set(), "condition": None},
         #: which review tab is open, so a refresh does not snap back
         "tab": "circuits",
+        #: measured on load and again after analysis
+        "quality": None,
+        #: keys the SE explicitly unticked — never auto-selected again
+        "dismissed": set(),
         #: malformed sales-code expressions, and the repairs confirmed for them
         "issues": [], "fixes": {},
         "issue_filter": {"unresolved_only": True, "kinds": set()},
@@ -112,6 +116,7 @@ def page() -> None:
     }
     state["cleanup"] = store.restore_cleanup(state["stored"].get("cleanup", {}))
     state["fixes"] = dict(state["stored"].get("fixes", {}))
+    state["dismissed"] = set(state["stored"].get("dismissed", []))
 
     with c.frame("Circuit Applicability",
                  "DTx circuits × harness complexity — mapped, then resolved "
@@ -142,6 +147,7 @@ def page() -> None:
             state["fixes"][expression] = replacement
             state["entries"] = []          # the analysis is now stale
             _persist()
+            _measure()
             integrity_view.refresh()
             results_view.refresh()
 
@@ -163,6 +169,7 @@ def page() -> None:
             state["fixes"].pop(expression, None)
             state["entries"] = []
             _persist()
+            _measure()
             integrity_view.refresh()
             results_view.refresh()
 
@@ -256,6 +263,97 @@ def page() -> None:
 
         integrity_view()
 
+        # ------------------------------------------------------ data quality
+        @ui.refreshable
+        def quality_view() -> None:
+            q = state["quality"]
+            if q is None:
+                return
+            with c.card("DTx data quality",
+                        "What this export gets right, and what needs fixing at "
+                        "source. The complexity files are built from the "
+                        "customer's own information, so a mismatch here is "
+                        "their data disagreeing with itself — which is what "
+                        "makes it fair to send back."):
+                with ui.row().classes("gap-2 flex-wrap items-center"):
+                    c.chip("info", f"{q.program or '?'} · {q.phase or '?'}"
+                                   + (f" · {q.report_date}" if q.report_date else ""))
+                    c.chip("ok" if q.clean else "blocker",
+                           "No findings" if q.clean
+                           else f"{q.finding_total} finding(s) for the customer")
+
+                _metric_row([
+                    ("Rows", q.rows, "info"),
+                    ("Circuits", q.circuits, "info"),
+                    ("Connectors", q.connectors, "info"),
+                    ("Families", q.families, "info"),
+                    ("Conditioned", f"{q.conditioned_rows} ({q.conditioned_share:.0%})", "info"),
+                    ("Sales codes", q.distinct_codes, "info"),
+                ])
+
+                ui.label("FINDINGS").classes(
+                    "text-[10px] font-bold tracking-widest sx-muted mt-2")
+                _metric_row([
+                    ("Malformed expressions", q.malformed_expressions,
+                     "blocker" if q.malformed_expressions else "ok"),
+                    ("…rows affected", q.malformed_rows,
+                     "review" if q.malformed_rows else "ok"),
+                    ("Never-built circuits", q.never_built_circuits,
+                     "blocker" if q.never_built_circuits else "ok"),
+                    ("Never-built connectors", q.never_built_connectors,
+                     "blocker" if q.never_built_connectors else "ok"),
+                    ("Codes tracked nowhere", len(q.codes_not_tracked_anywhere),
+                     "blocker" if q.codes_not_tracked_anywhere else "ok"),
+                    ("Codes partly tracked", len(q.codes_partially_tracked),
+                     "review" if q.codes_partially_tracked else "ok"),
+                ])
+                if q.repaired_expressions:
+                    c.chip("ok", f"{q.repaired_expressions} expression(s) repaired "
+                                 "by you — the customer should fix them at source")
+                if q.families_unmapped:
+                    c.chip("review", f"{len(q.families_unmapped)} family(ies) not "
+                                     "assessed (no complexity mapped): "
+                                     + ", ".join(q.families_unmapped[:4])
+                                     + ("…" if len(q.families_unmapped) > 4 else ""))
+
+                if q.coverage:
+                    with ui.expansion(f"Sales-code coverage ({len(q.coverage)} codes)") \
+                            .classes("w-full").props("dense"):
+                        ui.label("Where each code the DTx uses is known, and "
+                                 "where it is not.").classes("text-[10px] sx-muted")
+                        ui.table(rows=[{
+                            "code": x.code, "status": x.status, "rows": x.dtx_rows,
+                            "families": ", ".join(x.families[:4]),
+                            "tracked": ", ".join(x.tracked_by[:3]) or "—",
+                            "missing": ", ".join(x.missing_from[:3]) or "—",
+                        } for x in q.coverage], columns=[
+                            {"name": "code", "label": "Code", "field": "code",
+                             "align": "left", "sortable": True},
+                            {"name": "status", "label": "Status", "field": "status",
+                             "align": "left", "sortable": True},
+                            {"name": "rows", "label": "DTx rows", "field": "rows",
+                             "align": "center", "sortable": True},
+                            {"name": "families", "label": "Used by", "field": "families",
+                             "align": "left"},
+                            {"name": "tracked", "label": "Tracked by", "field": "tracked",
+                             "align": "left"},
+                            {"name": "missing", "label": "Missing from", "field": "missing",
+                             "align": "left"},
+                        ], pagination=15).classes("w-full").props("dense flat")
+
+        def _metric_row(metrics) -> None:
+            with ui.row().classes("gap-2 flex-wrap mt-1"):
+                for label, value, kind in metrics:
+                    colour = theme.STATUS.get(kind, theme.STATUS["info"])
+                    with ui.element("div").classes("rounded px-2 py-1 min-w-[7rem]") \
+                            .style(f"background:{theme.SURFACE_2};"
+                                   f"border:1px solid {colour}55"):
+                        ui.label(str(value)).classes("text-base font-bold") \
+                            .style(f"color:{colour}")
+                        ui.label(label).classes("text-[10px] sx-muted")
+
+        quality_view()
+
         # ---------------------------------------------------------------- map
         def _identity_of() -> dict:
             """filename -> the identity the mapping is stored under."""
@@ -272,6 +370,7 @@ def page() -> None:
                                                       _identity_of()),
                     "cleanup": store.remember_cleanup(state["cleanup"]),
                     "fixes": dict(state["fixes"]),
+                    "dismissed": sorted(state["dismissed"]),
                 })
             except Exception as exc:  # noqa: BLE001 — never block the workbench
                 ui.notify(f"Could not save the workbench: {exc}", type="warning")
@@ -440,6 +539,7 @@ def page() -> None:
             """A mapping change makes any existing analysis stale."""
             state["entries"] = []
             _persist()
+            _measure()
             mapping_view.refresh()
             results_view.refresh()
 
@@ -557,7 +657,8 @@ def page() -> None:
                 state["entries"], state["cleanup"],
                 dtx_program=state["dtx_meta"].program if state["dtx_meta"] else "",
                 dtx_phase=state["dtx_meta"].phase if state["dtx_meta"] else "",
-                repairs=state["fixes"], repair_context=context)
+                repairs=state["fixes"], repair_context=context,
+                quality=state["quality"])
             ui.download(data, "Circuit_Applicability_Review.xlsx")
 
         def _toggle_cleanup(entry, kind: str, ident: str) -> None:
@@ -565,7 +666,9 @@ def page() -> None:
                                       kind, ident)
             if key in state["cleanup"]:
                 del state["cleanup"][key]
+                state["dismissed"].add(key)
             else:
+                state["dismissed"].discard(key)
                 selection = report_mod.selection_for(entry, kind, ident)
                 if selection:
                     state["cleanup"][key] = selection
@@ -806,9 +909,21 @@ def page() -> None:
                           close_button=True)
             ui.notify(f"{len(mapping)} of {len(families)} families matched "
                       "automatically", type="positive")
+            _measure()
             integrity_view.refresh()
             mapping_view.refresh()
             results_view.refresh()
+
+        def _measure() -> None:
+            """Re-measure the DTx. Cheap, and it must follow every change that
+            can move a number: a repair, a mapping, a fresh analysis."""
+            if not state["rows"] or state["dtx_meta"] is None:
+                state["quality"] = None
+            else:
+                state["quality"] = quality_mod.assess(
+                    state["rows"], state["dtx_meta"], state["issues"],
+                    state["entries"], state["fixes"])
+            quality_view.refresh()
 
         def _conditions_by(rows, attribute: str) -> dict:
             """Condition per circuit (or per CNUM) exactly as the DTx stated it."""
@@ -859,6 +974,20 @@ def page() -> None:
             if out is not None:
                 state["entries"] = out
                 state["selected"] = None
+                # Never-built circuits and connectors, and every sales-code
+                # gap, go into the review by default — they are exactly what
+                # the customer has to fix in the next export. Anything the SE
+                # has explicitly unticked stays out.
+                picked = report_mod.auto_select(out, state["dismissed"])
+                added = [k for k in picked if k not in state["cleanup"]]
+                state["cleanup"].update({k: v for k, v in picked.items()
+                                         if k in added})
+                if added:
+                    ui.notify(f"{len(added)} finding(s) added to the review "
+                              "automatically — untick any you do not want the "
+                              "customer to see", type="info", multi_line=True)
+                _persist()
+                _measure()
                 # Selections are NOT pruned to this run. A tick made against a
                 # family that is not mapped today is still a real cleanup task,
                 # and dropping it here would quietly delete it from the store.
