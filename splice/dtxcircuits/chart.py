@@ -39,6 +39,7 @@ from splice.dtxcircuits.models import (
 )
 from splice.inline import salescode
 from splice.inline.complexity import applies_in
+from splice.inline.pairing import mate_name
 from splice.inline.summary import (
     COL_CAV,
     COL_CIRCUIT,
@@ -140,32 +141,111 @@ class Chart:
 SPLICE_MIN_ENDS = 3
 
 
-def flowed_conditions(rows: Sequence) -> Dict[str, Optional[str]]:
-    """One condition per circuit, unioned across every harness it reaches.
+def is_pass_through(cnum: str) -> bool:
+    """Is this end an inline connector rather than a device?
 
-    A circuit is one wire. It does not become conditional at a harness
-    boundary, so the condition the DTx states anywhere on it applies to all of
-    it — that is what "let the sales codes flow through the circuit" means.
-    The occurrences are OR-ed, and a single unconditional occurrence (a blank
-    cell, or a bare universal code) makes the whole circuit unconditional,
-    returned as ``None`` because no expression says "always".
+    An inline is a joint between two harnesses, not a thing that gets fitted,
+    so it has no applicability of its own — it carries whatever the circuit
+    carries. In 2028RU X2_A, 1,924 of the 2,954 blank sales-code cells sit on
+    inlines while 2,264 of the 2,458 stated ones sit on devices: the DTx
+    states applicability at devices and leaves inlines blank.
+
+    Recognised by the same X/Y naming ``splice.inline.pairing`` resolves
+    mates with; the DTx has no device-type column to ask instead.
     """
-    parts: Dict[str, Optional[List[str]]] = {}
+    return mate_name(cnum) is not None
+
+
+def _union(parts: Sequence[str]) -> Optional[str]:
+    unique = sorted({f"({p})" for p in parts if p})
+    return "/".join(unique) if unique else None
+
+
+def flowed_conditions(rows: Sequence) -> Dict[str, Optional[str]]:
+    """One condition per circuit, unioned over its device ends everywhere.
+
+    The whole-circuit view, used where a harness states nothing of its own.
+    ``None`` means unconditional, which no expression says.
+    """
+    stated: Dict[str, List[str]] = {}
+    unconditional: set = set()
     for row in rows:
         circuit = getattr(row, "circuit", "")
         if not circuit:
             continue
+        stated.setdefault(circuit, [])
+        if is_pass_through(getattr(row, "cnum", "")):
+            continue
         condition = conventions.effective_condition(getattr(row, "sales_code", ""))
-        if circuit not in parts:
-            parts[circuit] = []
-        if parts[circuit] is None:
+        if condition is None:
+            unconditional.add(circuit)
+        else:
+            stated[circuit].append(condition)
+    return {circuit: (None if circuit in unconditional else _union(parts))
+            for circuit, parts in stated.items()}
+
+
+def harness_conditions(rows: Sequence) -> Dict[tuple, Optional[str]]:
+    """``(circuit, family) -> condition``, reconciled per harness.
+
+    A circuit does not have one applicability. It has one per harness, because
+    what makes it present in a harness is the devices *that harness* connects
+    it to. ``501`` on a ground stud in the IP is ground truth that the segment
+    is always there; the same circuit reaching a HAH device in the HVAC is
+    present only on HAH builds. Collapsing those to a single circuit-wide
+    condition loses whichever one is narrower — 60 circuits in 2028RU X2_A
+    have exactly that shape.
+
+    So each harness is resolved from its own ends, in order of authority:
+
+    1. **Its device ends.** One unconditional device end (blank, or a bare
+       ``501``) makes the segment unconditional; otherwise the stated
+       conditions are OR-ed, since any fitted device pulls the wire in.
+    2. **Its inline ends that state something**, for a harness the circuit
+       only passes through. Rare (194 rows) but decisive when present.
+    3. **The circuit's conditions elsewhere.** A pure pass-through states
+       nothing, and inheriting is better than calling it unconditional: in
+       ``D442`` every device end reads ``SDE`` and only the DASH inlines are
+       blank, so the DASH segment is ``SDE`` too, not "always".
+
+    A blank on an inline never reaches any of these. It is silence, and
+    reading it as "unconditional" is what made a whole circuit collapse.
+    """
+    device: Dict[tuple, List[str]] = {}
+    inline: Dict[tuple, List[str]] = {}
+    unconditional: set = set()
+    keys: set = set()
+
+    for row in rows:
+        circuit = getattr(row, "circuit", "")
+        family = getattr(row, "harness_family", "")
+        if not circuit:
+            continue
+        key = (circuit, family)
+        keys.add(key)
+        condition = conventions.effective_condition(getattr(row, "sales_code", ""))
+        if is_pass_through(getattr(row, "cnum", "")):
+            if condition is not None:
+                inline.setdefault(key, []).append(condition)
             continue
         if condition is None:
-            parts[circuit] = None
+            unconditional.add(key)
         else:
-            parts[circuit].append(f"({condition})")
-    return {circuit: (None if group is None else "/".join(sorted(set(group))) or None)
-            for circuit, group in parts.items()}
+            device.setdefault(key, []).append(condition)
+
+    whole = flowed_conditions(rows)
+    resolved: Dict[tuple, Optional[str]] = {}
+    for key in keys:
+        circuit, _family = key
+        if key in unconditional:
+            resolved[key] = None
+        elif key in device:
+            resolved[key] = _union(device[key])
+        elif key in inline:
+            resolved[key] = _union(inline[key])
+        else:
+            resolved[key] = whole.get(circuit)
+    return resolved
 
 
 def carrying_builds(condition: Optional[str], complexity) -> List[str]:
@@ -240,9 +320,9 @@ def build_charts(entries: Iterable, rows: Sequence,
     by_family: Dict[str, List] = {}
     for row in rows:
         by_family.setdefault(getattr(row, "harness_family", ""), []).append(row)
-    # conditions are flowed over ALL rows, not per family: a circuit that is
-    # conditional where the DTx happens to state it is conditional everywhere
-    flowed = flowed_conditions(rows)
+    # Reconciled per harness, not once per circuit: a 501 ground in one
+    # harness must not erase a HAH device in another.
+    conditions = harness_conditions(rows)
 
     charts: List[Chart] = []
     for entry in entries:
@@ -271,7 +351,7 @@ def build_charts(entries: Iterable, rows: Sequence,
                 continue
             seen.add(key)
             if row.circuit not in resolved:
-                condition = flowed.get(row.circuit)
+                condition = conditions.get((row.circuit, entry.family))
                 if complexity is not None:
                     builds = carrying_builds(condition, complexity)
                     restated = harness_expression(condition, builds, complexity)

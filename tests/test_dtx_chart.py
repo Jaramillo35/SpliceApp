@@ -227,42 +227,107 @@ class TestUniversalCode:
         assert "ZZZ" in codes, "an untracked code in a mixed expression is real"
 
 
-class TestFlow:
-    """A circuit is one wire; its condition does not change at a boundary."""
+class TestReconciliation:
+    """Applicability is per harness, decided by the devices THAT harness has.
 
-    def _rows(self):
-        return [
-            CircuitRow(harness_family="IP", circuit="CKT_SPAN",
-                       sales_code="AAA", cnum="C1", pin="1"),
-            CircuitRow(harness_family="BODY_LEFT", circuit="CKT_SPAN",
-                       sales_code="", cnum="C2", pin="2"),
-            CircuitRow(harness_family="BODY_LEFT", circuit="CKT_TIGHT",
-                       sales_code="AAA", cnum="C3", pin="3"),
-            CircuitRow(harness_family="IP", circuit="CKT_TIGHT",
-                       sales_code="BBB", cnum="C4", pin="4"),
+    Drawn from real shapes in 2028RU X2_A. A937 reaches a bare-501 ground in
+    the IP (always fitted) and an HBB device in the HVAC_REAR (fitted only on
+    HBB); D442 reads SDE at every device and is blank only on the DASH
+    inlines it passes through.
+    """
+
+    def _dev(self, family, circuit, code, cnum, pin="1"):
+        return CircuitRow(harness_family=family, circuit=circuit,
+                          sales_code=code, cnum=cnum, pin=pin)
+
+    # ---------------------------------------------------------------- inlines
+    def test_an_inline_is_recognised_by_its_name(self):
+        assert chart.is_pass_through("X301A")
+        assert chart.is_pass_through("Y301A")
+        assert chart.is_pass_through("I350X")
+        assert not chart.is_pass_through("D6630B")
+        assert not chart.is_pass_through("G911A")
+        assert not chart.is_pass_through("")
+
+    def test_a_blank_inline_is_silence_not_unconditional(self):
+        """D442: every device says SDE, only the pass-through DASH is blank.
+        Reading that blank as 'always' collapsed the whole circuit."""
+        rows = [
+            self._dev("POWERTRAIN", "D442", "SDE", "D2798A"),
+            self._dev("POWERTRAIN", "D442", "SDE", "X200A", "33"),
+            self._dev("DASH", "D442", "", "X402A", "27"),
+            self._dev("DASH", "D442", "SDE", "Y200A", "33"),
+            self._dev("BODY_RIGHT", "D442", "", "Y402A", "27"),
+            self._dev("BODY_RIGHT", "D442", "SDE", "D3872A", "9"),
         ]
+        resolved = chart.harness_conditions(rows)
+        assert resolved[("D442", "POWERTRAIN")] == "(SDE)"
+        assert resolved[("D442", "BODY_RIGHT")] == "(SDE)"
 
-    def test_a_condition_stated_in_one_harness_reaches_the_others(self):
-        flowed = chart.flowed_conditions(self._rows())
-        assert flowed["CKT_TIGHT"] == "(AAA)/(BBB)"
+    def test_a_pass_through_harness_inherits_rather_than_going_unconditional(self):
+        """DASH holds only inlines for D442. It is SDE too, not 'always'."""
+        rows = [
+            self._dev("POWERTRAIN", "D442", "SDE", "D2798A"),
+            self._dev("DASH", "D442", "", "X402A", "27"),
+            self._dev("BODY_RIGHT", "D442", "SDE", "D3872A", "9"),
+        ]
+        assert chart.harness_conditions(rows)[("D442", "DASH")] == "(SDE)"
 
-    def test_one_unconditional_end_makes_the_whole_circuit_unconditional(self):
-        flowed = chart.flowed_conditions(self._rows())
-        assert flowed["CKT_SPAN"] is None
+    def test_a_stated_inline_beats_inheritance(self):
+        rows = [
+            self._dev("POWERTRAIN", "D442", "SDE", "D2798A"),
+            self._dev("DASH", "D442", "HAH", "Y200A", "33"),
+        ]
+        assert chart.harness_conditions(rows)[("D442", "DASH")] == "(HAH)"
 
-    def test_a_bare_universal_end_counts_as_unconditional(self):
-        rows = self._rows() + [CircuitRow(harness_family="DASH",
-                                          circuit="CKT_TIGHT",
-                                          sales_code="501", cnum="C5", pin="5")]
-        assert chart.flowed_conditions(rows)["CKT_TIGHT"] is None
+    # ------------------------------------------------------- per harness, 501
+    def test_a_501_ground_does_not_erase_a_condition_elsewhere(self):
+        """The reported defect. A937 is always present in the IP because a
+        bare-501 device is always fitted there, and present only on HBB in
+        the HVAC_REAR. One circuit-wide condition cannot say both."""
+        rows = [
+            self._dev("IP", "A937", "501", "D3816B", "6"),
+            self._dev("IP", "A937", "XC4", "D2269A", "9"),
+            self._dev("HVAC_REAR", "A937", "HBB", "D3828C", "10"),
+            self._dev("HVAC_FRONT", "A937", "501", "D3828A", "2"),
+        ]
+        resolved = chart.harness_conditions(rows)
+        assert resolved[("A937", "IP")] is None, "a 501 device is always fitted"
+        assert resolved[("A937", "HVAC_FRONT")] is None
+        assert resolved[("A937", "HVAC_REAR")] == "(HBB)"
 
-    def test_every_end_of_a_circuit_carries_the_flowed_condition(self):
-        rows = self._rows()
-        built = chart.build_charts(_entries(rows), rows)
-        for c in built:
-            for row in c.rows:
-                if row.circuit == "CKT_TIGHT":
-                    assert row.expression == "(AAA)/(BBB)"
+    def test_conditions_in_one_harness_are_or_ed(self):
+        """Any fitted device pulls the wire into that harness."""
+        rows = [
+            self._dev("HEADLINER", "Z911", "LBR", "D6627A", "9"),
+            self._dev("HEADLINER", "Z911", "GN9", "D4594A", "2"),
+            self._dev("HEADLINER", "Z911", "XPR", "D3467A", "4"),
+        ]
+        assert chart.harness_conditions(rows)[("Z911", "HEADLINER")] == \
+            "(GN9)/(LBR)/(XPR)"
+
+    def test_a_blank_device_end_is_unconditional(self):
+        """Unlike an inline, a device with no condition really is always on."""
+        rows = [self._dev("IP", "CKT", "", "D100A"),
+                self._dev("IP", "CKT", "HAH", "D200A")]
+        assert chart.harness_conditions(rows)[("CKT", "IP")] is None
+
+    # ------------------------------------------------------------ whole circuit
+    def test_the_whole_circuit_view_ignores_inlines_too(self):
+        rows = [
+            self._dev("POWERTRAIN", "D442", "SDE", "D2798A"),
+            self._dev("DASH", "D442", "", "X402A", "27"),
+        ]
+        assert chart.flowed_conditions(rows)["D442"] == "(SDE)"
+
+    def test_each_harness_carries_its_own_condition_into_the_chart(self):
+        rows = [
+            self._dev("BODY_LEFT", "CKT_TIGHT", "AAA", "D1A"),
+            self._dev("IP", "CKT_TIGHT", "BBB", "D2A"),
+        ]
+        built = {c.family: c for c in chart.build_charts(_entries(rows), rows)}
+        assert {r.expression for r in built["BODY_LEFT"].rows} == {"(AAA)"}
+        assert {r.expression for r in built["IP"].rows} == {"(BBB)"}
 
 
 class TestHarnessExpression:
