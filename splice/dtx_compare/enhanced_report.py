@@ -245,15 +245,19 @@ def _write_dashboard(writer, wb, fmt, results, families, old_name, new_name) -> 
 
     # The heading names the phases being compared — that is what an SE and the
     # customer look for first; the file names follow it as provenance.
-    old_label = results.get("old_label")
-    new_label = results.get("new_label")
-    phases = " → ".join(l.text for l in (old_label, new_label)
-                        if l is not None and l.known)
+    from splice.dtx_compare.labels import ReportLabel, comparison_heading
+    old_label = results.get("old_label") or ReportLabel()
+    new_label = results.get("new_label") or ReportLabel()
+    phases = comparison_heading(old_label, new_label)
     heading = f"DTx Engineering Change Report — {phases}" if phases \
         else "DTx Engineering Change Report"
     ws.merge_range("A1:F1", heading, fmt["title"])
-    ws.write("A2", f"OLD: {old_label.describe() if old_label else old_name}", fmt["meta"])
-    ws.write("A3", f"NEW: {new_label.describe() if new_label else new_name}", fmt["meta"])
+    # Each side's line carries its export date: two exports of the same phase
+    # differ by nothing else, so the date belongs next to the phase rather
+    # than on a row of its own. Rows 4 and 5 downward are load-bearing —
+    # formulas and the chart anchor are absolute — so this stays at A2/A3.
+    ws.write("A2", f"OLD: {old_label.describe() or old_name}", fmt["meta"])
+    ws.write("A3", f"NEW: {new_label.describe() or new_name}", fmt["meta"])
 
     ST = "'All Changes'!$A:$A"          # Status column
     FAM = "'All Changes'!$C:$C"         # Harness Family column (Status, DTCR#, Harness Family, …)

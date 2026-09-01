@@ -16,6 +16,7 @@ from splice.dtx_compare.labels import (
     FROM_TITLE_BLOCK,
     UNKNOWN,
     ReportLabel,
+    comparison_heading,
     comparison_slug,
     from_file_name,
     resolve,
@@ -78,6 +79,62 @@ class TestDescribe:
 
     def test_an_unknown_label_falls_back_to_the_file_name(self):
         assert ReportLabel(file_name="mystery.xls").describe() == "mystery.xls"
+
+    def test_the_export_date_is_carried_next_to_the_phase(self):
+        """Two exports of the same phase differ by nothing else, so the date
+        has to travel with the label rather than sit in a separate field."""
+        label = ReportLabel("2028RU", "X2_A", FROM_TITLE_BLOCK, "export.xls",
+                            report_date="Jul-21-2026 07:53 AM")
+        assert label.text_with_date == "2028RU X2_A · exported Jul-21-2026 07:53 AM"
+        assert "Jul-21-2026" in label.describe()
+
+    def test_a_label_with_no_date_reads_exactly_as_before(self):
+        label = ReportLabel("2028RU", "X2_A", FROM_TITLE_BLOCK)
+        assert label.text_with_date == "2028RU X2_A"
+
+
+class TestSameDatePhases:
+    """iSpeed labels successive exports of one phase identically.
+
+    Seen in the field on 2028WS: both title blocks read X2_A and only the
+    report date differed, so a report named "X2_A vs X2_A" identified nothing.
+    """
+
+    def _pair(self):
+        return (ReportLabel("2028WS", "X2_A", FROM_TITLE_BLOCK,
+                            report_date="Jul-15-2026 12:10 AM"),
+                ReportLabel("2028WS", "X2_A", FROM_TITLE_BLOCK,
+                            report_date="Jul-27-2026 04:51 PM"))
+
+    def test_the_date_separates_them_in_the_file_name(self):
+        old, new = self._pair()
+        assert comparison_slug(old, new) == "2028WS_X2_A_20260715_vs_X2_A_20260727"
+
+    def test_the_date_separates_them_in_the_heading(self):
+        old, new = self._pair()
+        assert comparison_heading(old, new) == \
+            "2028WS X2_A (Jul-15-2026) → 2028WS X2_A (Jul-27-2026)"
+
+    def test_distinct_phases_are_left_alone(self):
+        old = ReportLabel("2028RU", "X1", FROM_TITLE_BLOCK,
+                          report_date="Jan-01-2026 09:00 AM")
+        new = ReportLabel("2028RU", "X2_A", FROM_TITLE_BLOCK,
+                          report_date="Feb-01-2026 09:00 AM")
+        assert comparison_slug(old, new) == "2028RU_X1_vs_X2_A"
+        assert comparison_heading(old, new) == "2028RU X1 → 2028RU X2_A"
+
+    def test_identical_phases_with_no_dates_do_not_gain_noise(self):
+        old = ReportLabel("2028WS", "X2_A", FROM_TITLE_BLOCK)
+        new = ReportLabel("2028WS", "X2_A", FROM_TITLE_BLOCK)
+        assert comparison_slug(old, new) == "2028WS_X2_A_vs_X2_A"
+        assert comparison_heading(old, new) == "2028WS X2_A → 2028WS X2_A"
+
+    def test_the_date_slug_sorts(self):
+        label = ReportLabel(report_date="Jul-05-2026 12:10 AM")
+        assert label.date_slug == "20260705"
+        assert label.short_date == "Jul-05-2026"
+        assert ReportLabel(report_date="nonsense").date_slug == ""
+        assert ReportLabel().date_slug == ""
 
 
 class TestComparisonSlug:

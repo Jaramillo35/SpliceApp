@@ -269,7 +269,7 @@ def page() -> None:
             q = state["quality"]
             if q is None:
                 return
-            with c.card("DTx data quality",
+            with c.card("5 · DTx data quality",
                         "What this export gets right, and what needs fixing at "
                         "source. The complexity files are built from the "
                         "customer's own information, so a mismatch here is "
@@ -351,8 +351,6 @@ def page() -> None:
                         ui.label(str(value)).classes("text-base font-bold") \
                             .style(f"color:{colour}")
                         ui.label(label).classes("text-[10px] sx-muted")
-
-        quality_view()
 
         # ---------------------------------------------------------------- map
         def _identity_of() -> dict:
@@ -830,6 +828,9 @@ def page() -> None:
 
         results_view()
 
+        # measured only once an analysis exists, so it is placed after it
+        quality_view()
+
         # ------------------------------------------------------------ actions
         async def load() -> None:
             if not state["dtx"] or not state["uploads"]:
@@ -915,9 +916,12 @@ def page() -> None:
             results_view.refresh()
 
         def _measure() -> None:
-            """Re-measure the DTx. Cheap, and it must follow every change that
-            can move a number: a repair, a mapping, a fresh analysis."""
-            if not state["rows"] or state["dtx_meta"] is None:
+            """Re-measure the DTx, but only once there is an analysis to
+            measure against. Before that the never-built and coverage numbers
+            would all read zero — a clean bill of health the run has not
+            earned, and the worst thing to put in front of a customer."""
+            if not state["rows"] or state["dtx_meta"] is None \
+                    or not state["entries"]:
                 state["quality"] = None
             else:
                 state["quality"] = quality_mod.assess(

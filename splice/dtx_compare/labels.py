@@ -17,6 +17,12 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+#: "Jul-15-2026 12:10 AM" — the date part of an iSpeed report-date string.
+_MONTHS = {m: i for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"), start=1)}
+_REPORT_DATE = re.compile(r"([A-Za-z]{3})-(\d{1,2})-(\d{4})")
+
 FROM_TITLE_BLOCK = "title block"
 FROM_FILE_NAME = "file name"
 UNKNOWN = "unknown"
@@ -38,6 +44,10 @@ class ReportLabel:
     phase: str = ""
     source: str = UNKNOWN
     file_name: str = ""
+    #: when iSpeed generated the export, from the title block. Two exports of
+    #: the same phase are told apart by this and nothing else, so it is the
+    #: one field worth printing even when programme and phase match.
+    report_date: str = ""
 
     @property
     def text(self) -> str:
@@ -54,12 +64,37 @@ class ReportLabel:
     def known(self) -> bool:
         return bool(self.program or self.phase)
 
+    @property
+    def date_slug(self) -> str:
+        """``20260715`` — sortable, filename-safe. Empty if unparseable."""
+        match = _REPORT_DATE.search(self.report_date or "")
+        if not match:
+            return ""
+        month = _MONTHS.get(match.group(1).lower())
+        if not month:
+            return ""
+        return f"{match.group(3)}{month:02d}{int(match.group(2)):02d}"
+
+    @property
+    def short_date(self) -> str:
+        """``Jul-15-2026`` — the date without the clock time."""
+        match = _REPORT_DATE.search(self.report_date or "")
+        return match.group(0) if match else ""
+
+    @property
+    def text_with_date(self) -> str:
+        """``2028RU X2_A · exported Jul-21-2026 07:53 AM``."""
+        if not self.report_date:
+            return self.text
+        return f"{self.text} · exported {self.report_date}".strip(" ·")
+
     def describe(self) -> str:
-        """What to print on the report: the label, and where it came from."""
+        """What to print on the report: the label, its date, and its source."""
         if not self.known:
             return self.file_name or "unknown"
-        return f"{self.text}  ({self.source}: {self.file_name})" if self.file_name \
-            else self.text
+        head = self.text_with_date
+        return f"{head}  ({self.source}: {self.file_name})" if self.file_name \
+            else head
 
 
 def from_file_name(filename: str) -> ReportLabel:
@@ -82,10 +117,16 @@ def resolve(payload, filename: str = "") -> ReportLabel:
         logger.info("Title block unreadable for %s: %s", filename, exc)
         meta = None
 
+    report_date = getattr(meta, "report_date", "") if meta is not None else ""
     if meta is not None and (meta.program or meta.phase):
         return ReportLabel(program=meta.program, phase=meta.phase,
-                           source=FROM_TITLE_BLOCK, file_name=filename or "")
-    return from_file_name(filename)
+                           source=FROM_TITLE_BLOCK, file_name=filename or "",
+                           report_date=report_date)
+    # No title block: the name is all there is for programme and phase, but a
+    # date read from the block is still worth keeping if one was found.
+    label = from_file_name(filename)
+    label.report_date = report_date
+    return label
 
 
 def comparison_slug(old: ReportLabel, new: ReportLabel) -> str:
@@ -98,7 +139,26 @@ def comparison_slug(old: ReportLabel, new: ReportLabel) -> str:
         if old.program and old.program == new.program:
             left = old.phase or old.slug
             right = new.phase or new.slug
+            # iSpeed labels successive exports of the same phase identically —
+            # seen in the field on 2028WS, where both title blocks read X2_A
+            # and only the report date differed. "X2_A_vs_X2_A" names nothing,
+            # so where the phases match the dates become the discriminator.
+            if left == right and old.date_slug and new.date_slug \
+                    and old.date_slug != new.date_slug:
+                left, right = f"{left}_{old.date_slug}", f"{right}_{new.date_slug}"
             return re.sub(r"[^A-Za-z0-9]+", "_",
                           f"{old.program}_{left}_vs_{right}").strip("_")
         return f"{old.slug}_vs_{new.slug}".strip("_")
     return ""
+
+
+def comparison_heading(old: ReportLabel, new: ReportLabel) -> str:
+    """``2028RU X1 → X2_A``, with dates when the phases are indistinguishable."""
+    if not (old.known or new.known):
+        return ""
+    left, right = old.text, new.text
+    if left == right:
+        if old.short_date and new.short_date and old.short_date != new.short_date:
+            left = f"{left} ({old.short_date})"
+            right = f"{right} ({new.short_date})"
+    return " → ".join(part for part in (left, right) if part)

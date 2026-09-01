@@ -157,6 +157,59 @@ class TestAutoSelect:
         for selection in report.auto_select(_entries()).values():
             assert selection.note.strip(), "a picked row must explain itself"
 
+    def test_notes_stay_short(self):
+        """The cleanup list is read row by row; a paragraph in a cell is not."""
+        for selection in report.auto_select(_entries()).values():
+            assert len(selection.note) <= 140, selection.note
+
+    def test_gap_note_names_the_code_and_nothing_else(self):
+        gap = next(s for s in report.auto_select(_entries()).values()
+                   if s.kind == "gap" and s.ident == "ZZZ")
+        assert gap.note == ("Sales code ZZZ is in the DTx report but not in "
+                            "the complexity file.")
+
+    def test_an_inert_condition_is_picked_up_with_a_removal(self):
+        """CKT_600 is 'ZZZ' — untracked, so it reads as built on every build.
+
+        The condition is not a condition at all; the fix is to drop the code.
+        """
+        picked = report.auto_select(_entries())
+        item = next((s for s in picked.values() if s.ident == "CKT_600"), None)
+        assert item is not None, "an all-builds circuit resting on a gap code " \
+                                 "must reach the cleanup list"
+        assert "Remove ZZZ" in item.note
+
+    def test_a_healthy_all_builds_circuit_is_not_picked(self):
+        """CKT_700 is unconditional on tracked codes — nothing to remove."""
+        picked = report.auto_select(_entries())
+        assert not any(s.ident == "CKT_700" for s in picked.values())
+
+
+class TestRemovalHint:
+    def test_one_phrasing_for_one_fix(self):
+        """A circuit and a connector resting on the same untracked code must
+        say the same thing — two wordings read as two different problems."""
+        entries = _entries()
+        notes = {s.ident: s.note for s in report.auto_select(entries).values()}
+        inert = [n for n in notes.values() if "reads as always true" in n]
+        assert inert, "the fixture must contain an inert condition"
+        for note in inert:
+            assert note.endswith("or add it."), note
+
+    def test_only_gap_codes_are_suggested_for_removal(self):
+        assert report.removal_hint("AAA&ZZZ", {"ZZZ"}) == \
+            " Remove ZZZ, or add it to the complexity file."
+        assert report.removal_hint("AAA&BBB", {"ZZZ"}) == ""
+        assert report.removal_hint("", {"ZZZ"}) == ""
+        assert report.removal_hint("AAA", set()) == ""
+
+    def test_several_gap_codes_are_listed_once_and_sorted(self):
+        assert report.removal_hint("QZ9/QY8&QZ9", {"QZ9", "QY8"}) == \
+            " Remove QY8, QZ9, or add it to the complexity file."
+
+    def test_a_negated_gap_code_is_still_a_gap_code(self):
+        assert "Remove ZZZ" in report.removal_hint("AAA&-ZZZ", {"ZZZ"})
+
 
 class TestExport:
     def test_quality_sheets_are_written(self):

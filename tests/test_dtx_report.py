@@ -47,20 +47,34 @@ class TestItemKey:
 
 
 class TestNotes:
-    def test_never_built_note_states_the_condition_and_the_two_causes(self, body_left):
+    def test_never_built_note_states_the_verdict_and_the_condition(self, body_left):
         s = report.selection_for(body_left, report.KIND_CIRCUIT, "CKT_500")
-        assert "No build of BODY_LEFT" in s.note
+        assert "Never built" in s.note
         assert "(CCC)" in s.note
-        assert "missing a code" in s.note
         assert s.verdict == "never built"
 
-    def test_untracked_note_names_the_code(self, body_left):
+    def test_untracked_note_names_the_code_and_the_fix(self, body_left):
         s = report.selection_for(body_left, report.KIND_CIRCUIT, "CKT_600")
-        assert "ZZZ" in s.note and "not tracked" in s.note
+        assert "ZZZ" in s.note
+        assert "Remove ZZZ" in s.note, "the note must say what to do about it"
 
-    def test_gap_note_lists_the_circuits_resting_on_it(self, body_left):
+    def test_gap_note_is_one_sentence_about_the_code(self, body_left):
+        """The circuits resting on the code live in the sheet's own column;
+        repeating them in the note is what made the old one unreadable."""
         s = report.selection_for(body_left, report.KIND_GAP, "ZZZ")
-        assert "CKT_600" in s.note and s.verdict == "sales-code gap"
+        assert s.note == ("Sales code ZZZ is in the DTx report but not in the "
+                          "complexity file.")
+        assert s.verdict == "sales-code gap"
+
+    def test_the_gaps_sheet_still_carries_the_circuits(self, entries):
+        """Dropping them from the note must not drop them from the report."""
+        data = report.build_report(entries, {})
+        ws = load_workbook(io.BytesIO(data))["Sales-code gaps"]
+        headers = [c.value for c in ws[1]]
+        col = headers.index("Circuits")
+        code = headers.index("Sales code")
+        found = {row[code].value: row[col].value for row in ws.iter_rows(min_row=2)}
+        assert "CKT_600" in (found.get("ZZZ") or "")
 
     def test_variant_note_reports_the_split(self, body_left):
         s = report.selection_for(body_left, report.KIND_CIRCUIT, "CKT_200")
@@ -105,7 +119,7 @@ class TestWorkbook:
         ident = headers.index("Circuit")
         notes = {row[ident].value: row[col].value
                  for row in ws.iter_rows(min_row=2)}
-        assert notes["CKT_500"] and "No build of" in notes["CKT_500"]
+        assert notes["CKT_500"] and "Never built" in notes["CKT_500"]
         assert not notes["CKT_100"], "an unticked row must stay empty"
 
     def test_cleanup_sheet_lists_only_the_selection(self, entries, body_left):

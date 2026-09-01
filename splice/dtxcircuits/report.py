@@ -26,6 +26,7 @@ from splice.dtxcircuits.models import (
     VARIANT,
     HarnessAnalysis,
 )
+from splice.inline import salescode
 
 #: the column (and sheet) the cleanup notes land in — named by the request
 CLEANUP_COLUMN = "Complexity Cleanup Notes"
@@ -70,49 +71,79 @@ class CleanupSelection:
     note: str = ""
 
 
+def gap_codes(analysis: HarnessAnalysis) -> set:
+    """Codes the DTx conditions on that this harness's complexity never lists."""
+    return {gap.code for gap in analysis.code_gaps}
+
+
+def inert_codes(expression: str, gaps: set) -> List[str]:
+    """The codes in ``expression`` this harness's complexity cannot see.
+
+    A code the complexity does not track is treated as present, so it can
+    never narrow anything: leaving it in the condition only makes the item
+    look conditional when it is not.
+    """
+    if not expression or not gaps:
+        return []
+    return sorted({code for code in salescode.codes_in(expression)
+                   if code in gaps})
+
+
+def removal_hint(expression: str, gaps: set) -> str:
+    """The one fix, phrased the same way everywhere it appears."""
+    hits = inert_codes(expression, gaps)
+    if not hits:
+        return ""
+    codes = ", ".join(hits)
+    return f" Remove {codes}, or add it to the complexity file."
+
+
+def _inert_note(condition: str, hits: List[str]) -> str:
+    codes = ", ".join(hits)
+    return (f"{condition} reads as always true — {codes} not in the complexity "
+            f"file. Remove {codes}, or add it.")
+
+
 def circuit_note(analysis: HarnessAnalysis, circuit) -> str:
-    """Why this circuit needs attention in the complexity file."""
-    where = f"{analysis.harness} (def {analysis.def_id or '?'})"
+    """Why this circuit needs attention. One line, no restated columns."""
     condition = circuit.expression or "(no sales code)"
+    gaps = gap_codes(analysis)
+    hits = inert_codes(circuit.expression, gaps)
     if circuit.classification == NEVER:
-        return (f"No build of {where} satisfies {condition}. Either the circuit "
-                f"does not belong on this harness, or a part number is missing "
-                f"a code it should carry.")
-    if circuit.untracked_codes:
-        codes = ", ".join(circuit.untracked_codes)
-        return (f"{codes} is not tracked by {where}, so {condition} is read as "
-                f"applying to every build. Add the code to the complexity file "
-                f"to make the applicability real.")
+        return (f"Never built — no build satisfies {condition}."
+                + removal_hint(circuit.expression, gaps))
+    if hits or circuit.untracked_codes:
+        return _inert_note(condition,
+                           hits or sorted(circuit.untracked_codes))
     if circuit.classification == NO_COMPLEXITY:
-        return (f"No complexity file is mapped for {analysis.harness}, so "
-                f"{condition} could not be resolved.")
+        return f"No complexity file mapped, so {condition} was not resolved."
     if circuit.classification == VARIANT:
-        return (f"Carried by {len(circuit.builds_with)} of "
-                f"{circuit.build_count} builds of {where} under {condition} — "
-                f"confirm the split is intended.")
+        return (f"{len(circuit.builds_with)} of {circuit.build_count} builds "
+                f"under {condition} — confirm the split is intended.")
     if circuit.classification in (ALL_BUILDS, UNCONDITIONAL):
-        return (f"Carried by every build of {where} under {condition} — "
-                f"confirm the condition is still needed.")
-    return f"Review {circuit.circuit} on {where} under {condition}."
+        return (f"Every build carries it under {condition} — confirm the "
+                f"condition is still needed.")
+    return f"Review under {condition}."
 
 
 def connector_note(analysis: HarnessAnalysis, cnum) -> str:
-    where = f"{analysis.harness} (def {analysis.def_id or '?'})"
     condition = cnum.expression or "(no sales code)"
+    gaps = gap_codes(analysis)
+    hits = inert_codes(cnum.expression, gaps)
     if cnum.classification == NEVER:
-        return (f"No build of {where} satisfies {condition}, so connector "
-                f"{cnum.cnum} is never populated. Circuits affected: "
-                f"{', '.join(cnum.circuits) or '—'}.")
-    return (f"Connector {cnum.cnum} on {where} under {condition}; "
-            f"{len(cnum.circuits)} circuit(s).")
+        return (f"Never populated — no build satisfies {condition}."
+                + removal_hint(cnum.expression, gaps))
+    if hits:
+        return _inert_note(condition, hits)
+    if cnum.classification in (ALL_BUILDS, UNCONDITIONAL):
+        return (f"Every build populates it under {condition} — confirm the "
+                f"condition is still needed.")
+    return f"{len(cnum.circuits)} circuit(s) under {condition}."
 
 
 def gap_note(analysis: HarnessAnalysis, gap) -> str:
-    where = f"{analysis.harness} (def {analysis.def_id or '?'})"
-    return (f"The DTx conditions on {gap.code} for {where} in "
-            f"{gap.occurrences} row(s), but the complexity file does not track "
-            f"it. Every circuit resting on it reads wider than the data can "
-            f"justify. Circuits: {', '.join(gap.circuits) or '—'}.")
+    return (f"Sales code {gap.code} is in the DTx report but not in the "
+            f"complexity file.")
 
 
 def selection_for(entry: Entry, kind: str, ident: str) -> Optional[CleanupSelection]:
@@ -154,8 +185,17 @@ def auto_select(entries: Iterable[Entry],
 
     Never-built circuits and connectors, and every sales-code gap: each is a
     place the DTx cannot be reconciled with complexity built from the
-    customer's own information. Anything the SE has explicitly unticked is
-    left alone — a proposal that reappears every run is not a proposal.
+    customer's own information.
+
+    Also taken: anything built on *every* build whose condition contains one
+    of those gap codes. An untracked code is read as present, so it cannot
+    narrow anything — the condition only looks like a condition. That is the
+    other half of the same defect, and it carries a concrete fix (drop the
+    code), so it belongs in the cleanup list rather than being left for the
+    SE to find by hand.
+
+    Anything the SE has explicitly unticked is left alone — a proposal that
+    reappears every run is not a proposal.
     """
     dismissed = dismissed or set()
     picked: Dict[str, CleanupSelection] = {}
@@ -170,11 +210,17 @@ def auto_select(entries: Iterable[Entry],
 
     for entry in entries:
         analysis = entry.analysis
+        gaps = gap_codes(analysis)
+        inert = lambda expression: bool(removal_hint(expression, gaps))  # noqa: E731
         for circuit in analysis.circuits:
-            if circuit.classification == NEVER:
+            if circuit.classification == NEVER or (
+                    circuit.classification in (ALL_BUILDS, UNCONDITIONAL)
+                    and inert(circuit.expression)):
                 take(entry, KIND_CIRCUIT, circuit.circuit)
         for connector in analysis.cnums:
-            if connector.classification == NEVER:
+            if connector.classification == NEVER or (
+                    connector.classification in (ALL_BUILDS, UNCONDITIONAL)
+                    and inert(connector.expression)):
                 take(entry, KIND_CONNECTOR, connector.cnum)
         for gap in analysis.code_gaps:
             take(entry, KIND_GAP, gap.code)
