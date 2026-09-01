@@ -1579,10 +1579,19 @@ def write_report_to_bytes(
     return output_buffer.getvalue()
 
 
-def build_output_filename(old_name: str, new_name: str) -> str:
+def build_output_filename(old_name: str, new_name: str,
+                          comparison: str = "") -> str:
+    """``DTx_Change_Report_2028RU_X1_vs_X2_A_<timestamp>.xlsx``.
+
+    ``comparison`` is the programme/phase pair taken from the exports' own
+    title blocks. Without it the file names are used, which is what earlier
+    versions did and is still the fallback for a file that states neither.
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if comparison:
+        return f"DTx_Change_Report_{comparison}_{timestamp}.xlsx"
     old_stem = Path(old_name).stem
     new_stem = Path(new_name).stem
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"DTx_Change_Report_{old_stem}_vs_{new_stem}_{timestamp}.xlsx"
 
 

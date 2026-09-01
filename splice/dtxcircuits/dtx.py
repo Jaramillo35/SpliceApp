@@ -54,6 +54,30 @@ def _meta_from_title_block(raw: pd.DataFrame, header_row: int) -> DtxMeta:
     return meta
 
 
+def read_dtx_meta(payload, filename: str = "",
+                  sheet: str | None = None) -> DtxMeta:
+    """Just the title block — programme, build phase, report date.
+
+    Reading only the first rows of the first sheet, so a caller that wants to
+    label a report does not pay for parsing tens of thousands of circuit rows.
+    Returns an empty DtxMeta rather than raising: a caller that only wants a
+    label should not fail because a file is unusual.
+    """
+    try:
+        source = io.BytesIO(payload) if isinstance(payload, (bytes, bytearray)) else payload
+        # only the first sheet, and only enough rows to hold a title block
+        raw = pd.read_excel(source, sheet_name=sheet or 0, header=None,
+                            dtype=str, nrows=MAX_HEADER_SCAN)
+        try:
+            header_row = _find_header_row(raw)
+        except SpliceError:
+            header_row = min(MAX_HEADER_SCAN, len(raw))
+        return _meta_from_title_block(raw, header_row)
+    except Exception as exc:  # noqa: BLE001 - a label must never break a report
+        logger.info("Could not read a title block from %s: %s", filename, exc)
+        return DtxMeta()
+
+
 def read_dtx_circuits(payload, filename: str = "",
                       sheet: str | None = None) -> Tuple[List[CircuitRow], DtxMeta]:
     """Parse a DTx export into circuit rows plus the report's own metadata.

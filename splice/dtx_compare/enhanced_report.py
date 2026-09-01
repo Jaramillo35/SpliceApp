@@ -76,6 +76,13 @@ def generate_enhanced_dtx_report(
     if dtcr_df is None or (isinstance(dtcr_df, pd.DataFrame) and dtcr_df.empty):
         raise DTCRRequiredError("A DTCR report is required to generate the compare.")
 
+    # Programme and build phase come from each export's own title block, so
+    # the report is labelled by what the files say rather than what they were
+    # named; a file with no title block falls back to its name.
+    from splice.dtx_compare.labels import comparison_slug, resolve
+    old_label = resolve(old_file_bytes, old_file_name)
+    new_label = resolve(new_file_bytes, new_file_name)
+
     old_df, old_layout = load_dtx_report(old_file_bytes, old_file_name)
     new_df, new_layout = load_dtx_report(new_file_bytes, new_file_name)
 
@@ -96,6 +103,8 @@ def generate_enhanced_dtx_report(
         old_file_bytes, new_file_bytes, old_file_name, new_file_name)
     results["preorder_summary_df"] = preorder.get("summary_df", pd.DataFrame())
 
+    results["old_label"] = old_label
+    results["new_label"] = new_label
     output = _write_workbook(old_file_name, new_file_name, results)
     return {
         **results,
@@ -104,7 +113,9 @@ def generate_enhanced_dtx_report(
         "old_layout": old_layout,
         "new_layout": new_layout,
         "output_excel_bytes": output,
-        "output_file_name": build_output_filename(old_file_name, new_file_name),
+        "output_file_name": build_output_filename(
+            old_file_name, new_file_name,
+            comparison=comparison_slug(old_label, new_label)),
     }
 
 
@@ -120,8 +131,12 @@ def _write_workbook(old_name: str, new_name: str, results: dict) -> bytes:
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
         wb = writer.book
+        old_label = results.get("old_label")
+        new_label = results.get("new_label")
+        phases = " vs ".join(l.text for l in (old_label, new_label)
+                             if l is not None and l.known)
         wb.set_properties({"title": "DTx Engineering Change Report (WEAVE)",
-                           "subject": f"{old_name} vs {new_name}"})
+                           "subject": phases or f"{old_name} vs {new_name}"})
         fmt = _formats(wb)
 
         # Sheet order (cross-sheet formulas resolve by name, so this is purely presentation):
@@ -228,9 +243,17 @@ def _write_dashboard(writer, wb, fmt, results, families, old_name, new_name) -> 
     for col, w in (("A", 22), ("B", 30), ("C", 13), ("D", 13), ("E", 13), ("F", 13), ("G", 3)):
         ws.set_column(f"{col}:{col}", w)
 
-    ws.merge_range("A1:F1", "DTx Engineering Change Report", fmt["title"])
-    ws.write("A2", f"OLD: {old_name}", fmt["meta"])
-    ws.write("A3", f"NEW: {new_name}", fmt["meta"])
+    # The heading names the phases being compared — that is what an SE and the
+    # customer look for first; the file names follow it as provenance.
+    old_label = results.get("old_label")
+    new_label = results.get("new_label")
+    phases = " → ".join(l.text for l in (old_label, new_label)
+                        if l is not None and l.known)
+    heading = f"DTx Engineering Change Report — {phases}" if phases \
+        else "DTx Engineering Change Report"
+    ws.merge_range("A1:F1", heading, fmt["title"])
+    ws.write("A2", f"OLD: {old_label.describe() if old_label else old_name}", fmt["meta"])
+    ws.write("A3", f"NEW: {new_label.describe() if new_label else new_name}", fmt["meta"])
 
     ST = "'All Changes'!$A:$A"          # Status column
     FAM = "'All Changes'!$C:$C"         # Harness Family column (Status, DTCR#, Harness Family, …)
