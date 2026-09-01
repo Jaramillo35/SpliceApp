@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "iSpeed DTCR Attachment Downloader",
+  "version": "0.3.0",
+  "description": "Downloads attachments for the selected iSpeed search results, names them by DTCR status, re-downloads when a status changes, and exports reasons and approvals.",
+  "permissions": [
+    "scripting",
+    "storage",
+    "tabs",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "https://ispeed.extra.chrysler.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open iSpeed DTCR Downloader"
+  }
+}

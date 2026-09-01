@@ -1,4 +1,5 @@
-const { cleanAttachmentName, isExcludedStatus, makeSummaryCsv, normalizeSpace } = ISpeedHelpers;
+const { cleanAttachmentName, makeSummaryCsv, normalizeSpace, parseDownloadedName,
+        shouldDownloadStatus, statusCode } = ISpeedHelpers;
 
 const params = new URLSearchParams(location.search);
 const sourceTabId = Number(params.get("sourceTabId"));
@@ -19,6 +20,7 @@ const ui = {
   start: document.querySelector("#start-button"),
   stop: document.querySelector("#stop-button"),
   clearLog: document.querySelector("#clear-log-button"),
+  includeInactive: document.querySelector("#include-inactive"),
   log: document.querySelector("#activity-log"),
   progressTrack: document.querySelector(".progress-track"),
   progressBar: document.querySelector("#progress-bar"),
@@ -42,6 +44,17 @@ ui.stop.addEventListener("click", () => {
   ui.runSummary.textContent = "Stopping after the current DTCR…";
   addLog("Stop requested; finishing the current DTCR.");
 });
+if (ui.includeInactive) {
+  chrome.storage?.local?.get?.(["includeInactive"]).then((saved) => {
+    ui.includeInactive.checked = Boolean(saved?.includeInactive);
+    scanSource();
+  }).catch(() => {});
+  ui.includeInactive.addEventListener("change", () => {
+    chrome.storage?.local?.set?.({ includeInactive: ui.includeInactive.checked });
+    scanSource();
+  });
+}
+
 ui.clearLog.addEventListener("click", () => { ui.log.replaceChildren(); });
 
 if (initialError) {
@@ -71,8 +84,12 @@ async function scanSource() {
     const match = frames.find((entry) => entry.result?.found);
     if (!match) throw new Error("No iSpeed results table found. Select a Vehicle Program and Build Phase, then run Search.");
 
-    const allRows = match.result.rows;
-    const eligible = allRows.filter((row) => !isExcludedStatus(row.status));
+    const includeInactive = Boolean(ui.includeInactive?.checked);
+    const allRows = match.result.rows.map((row) => ({
+      ...row,
+      code: statusCode(row.status, row.statusId)
+    }));
+    const eligible = allRows.filter((row) => shouldDownloadStatus(row.code, includeInactive));
     const skipped = allRows.length - eligible.length;
     source = {
       frameId: match.frameId,
@@ -85,7 +102,15 @@ async function scanSource() {
     stats = { total: eligible.length, complete: 0, files: 0, errors: 0 };
     updateStats();
     ui.sourceStatus.textContent = `${source.program || "Selected program"} · ${source.phase || "Selected phase"} · ${eligible.length} eligible DTCRs`;
-    ui.runSummary.textContent = skipped ? `${skipped} deleted/canceled DTCR${skipped === 1 ? "" : "s"} will be skipped.` : "No deleted or canceled DTCRs found.";
+    const byCode = eligible.reduce((tally, row) => {
+      const key = row.code || "??";
+      tally[key] = (tally[key] || 0) + 1;
+      return tally;
+    }, {});
+    const breakdown = Object.entries(byCode).sort().map(([code, n]) => `${n} ${code}`).join(" \u00b7 ");
+    ui.runSummary.textContent = skipped
+      ? `${breakdown}. ${skipped} rejected/deleted DTCR${skipped === 1 ? "" : "s"} skipped \u2014 tick the box above to include them.`
+      : breakdown || "Nothing to download.";
     addLog(`Found ${eligible.length} eligible DTCRs${skipped ? `; skipping ${skipped}` : ""}.`, "success");
   } catch (error) {
     source = null;
@@ -126,16 +151,36 @@ async function runAutomation() {
   let rowsToProcess = source.rows;
 
   try {
-    const existingDtcrs = await collectExistingDtcrNumbers();
-    rowsToProcess = source.rows.filter((row) => !existingDtcrs.has(normalizeDtcrId(row.dtcr)));
-    const alreadyPresentCount = source.rows.length - rowsToProcess.length;
-    if (alreadyPresentCount) {
-      for (const row of source.rows) {
-        if (existingDtcrs.has(normalizeDtcrId(row.dtcr))) {
-          records.push({ dtcr: row.dtcr, status: row.status, reasons: [], files: [], result: "Skipped: already in folder" });
-        }
+    // A DTCR is downloaded when the folder holds nothing for it, OR when its
+    // status has moved since it was last pulled (DA -> AP -> CO). The status
+    // lives in the file name, so the folder itself is the record.
+    const downloaded = await collectExistingDownloads();
+    const fresh = [];
+    let already = 0;
+    let restatus = 0;
+    for (const row of source.rows) {
+      const codes = downloaded.get(normalizeDtcrId(row.dtcr));
+      if (!codes) {
+        fresh.push(row);
+        continue;
       }
-      addLog(`Skipping ${alreadyPresentCount} DTCR${alreadyPresentCount === 1 ? "" : "s"} already found in the selected folder.`);
+      if (row.code && !codes.has(row.code)) {
+        const was = [...codes].filter(Boolean).sort().join("/") || "no status";
+        fresh.push({ ...row, previousCodes: was });
+        restatus += 1;
+        addLog(`DTCR ${row.dtcr}: status moved ${was} \u2192 ${row.code}; downloading again.`);
+        continue;
+      }
+      already += 1;
+      records.push({ dtcr: row.dtcr, status: row.status, code: row.code, reasons: [],
+                     approvers: [], files: [], result: "Skipped: already in folder" });
+    }
+    rowsToProcess = fresh;
+    if (already) {
+      addLog(`Skipping ${already} DTCR${already === 1 ? "" : "s"} already in the folder at the same status.`);
+    }
+    if (restatus) {
+      addLog(`${restatus} DTCR${restatus === 1 ? "" : "s"} changed status since the last run.`, "success");
     }
   } catch (error) {
     addLog(`Could not scan existing DTCR files in folder: ${error.message}`, "error");
@@ -160,24 +205,34 @@ async function runAutomation() {
         const detail = await extractDetail(source.frameId);
         if (!detail) throw new Error("The detail page did not expose the expected fields.");
 
-        if (isExcludedStatus(detail.status)) {
-          records.push({ ...detail, files: [], result: "Skipped: deleted/canceled" });
-          addLog(`DTCR ${row.dtcr}: skipped (${detail.status}).`);
+        // the detail page is authoritative: a status may move between the
+        // search running and the DTCR being opened
+        const code = statusCode(detail.status, "") || row.code;
+        const includeInactive = Boolean(ui.includeInactive?.checked);
+        if (!shouldDownloadStatus(code, includeInactive)) {
+          records.push({ ...detail, code, files: [], result: `Skipped: ${detail.status || code}` });
+          addLog(`DTCR ${row.dtcr}: skipped (${detail.status || code}).`);
         } else {
           const files = [];
           for (const attachment of detail.attachments) {
             if (stopRequested) break;
-            const finalName = await downloadAttachment(attachment.url, cleanAttachmentName(attachment.name, detail.dtcr));
+            const finalName = await downloadAttachment(
+              attachment.url, cleanAttachmentName(attachment.name, detail.dtcr, code));
             files.push(finalName);
             stats.files += 1;
             updateStats();
           }
-          records.push({ ...detail, files, result: files.length ? "Downloaded" : "No attachments" });
-          addLog(`DTCR ${row.dtcr}: ${files.length} attachment${files.length === 1 ? "" : "s"}.`, "success");
+          records.push({ ...detail, code, files,
+                         result: files.length
+                           ? (row.previousCodes ? `Re-downloaded (${row.previousCodes} \u2192 ${code})` : "Downloaded")
+                           : "No attachments" });
+          addLog(`DTCR ${row.dtcr} [${code}]: ${files.length} attachment${files.length === 1 ? "" : "s"}`
+                 + `${detail.approvers?.length ? `, ${detail.approvers.length} approver(s)` : ""}.`, "success");
         }
       } catch (error) {
         stats.errors += 1;
-        records.push({ dtcr: row.dtcr, status: row.status, reasons: [], files: [], result: `Error: ${error.message}` });
+        records.push({ dtcr: row.dtcr, status: row.status, code: row.code, reasons: [],
+                       approvers: [], files: [], result: `Error: ${error.message}` });
         addLog(`DTCR ${row.dtcr}: ${error.message}`, "error");
       } finally {
         stats.complete += 1;
@@ -380,19 +435,15 @@ function normalizeDtcrId(value) {
   return String(value ?? "").trim();
 }
 
-function extractDtcrPrefixFromFileName(name) {
-  const match = String(name ?? "").match(/^\s*(\d+)\s*-\s*/);
-  return match ? normalizeDtcrId(match[1]) : "";
-}
-
-function extractFirstCsvColumn(line) {
+function splitCsvLine(line) {
+  const cells = [];
   let inQuotes = false;
   let value = "";
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    const nextChar = line[index + 1];
+  const text = String(line ?? "");
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
     if (char === '"') {
-      if (inQuotes && nextChar === '"') {
+      if (inQuotes && text[index + 1] === '"') {
         value += '"';
         index += 1;
       } else {
@@ -400,46 +451,65 @@ function extractFirstCsvColumn(line) {
       }
       continue;
     }
-    if (char === "," && !inQuotes) break;
+    if (char === "," && !inQuotes) {
+      cells.push(value);
+      value = "";
+      continue;
+    }
     value += char;
   }
-  return normalizeDtcrId(value);
+  cells.push(value);
+  return cells;
 }
 
+/** [dtcr, code] pairs from a previous run's summary. The Code column was added
+ *  later, so an older summary still yields its DTCRs with an empty code. */
 function extractDtcrsFromSummaryCsv(text) {
-  const values = new Set();
+  const values = [];
   const lines = String(text ?? "").split(/\r?\n/);
+  const header = splitCsvLine(lines[0] || "").map((cell) => cell.trim().toLowerCase());
+  const codeIndex = header.indexOf("code");
   for (let rowIndex = 1; rowIndex < lines.length; rowIndex += 1) {
     const line = lines[rowIndex];
     if (!line.trim()) continue;
-    const dtcr = extractFirstCsvColumn(line);
-    if (dtcr) values.add(dtcr);
+    const cells = splitCsvLine(line);
+    const dtcr = normalizeDtcrId(cells[0] || "");
+    if (!dtcr) continue;
+    values.push([dtcr, codeIndex >= 0 ? normalizeSpace(cells[codeIndex] || "") : ""]);
   }
   return values;
 }
 
-async function collectExistingDtcrNumbers() {
-  const dtcrs = new Set();
+/** DTCR number -> the set of status codes already downloaded for it.
+ *  Files written before status prefixes existed contribute an empty code, so
+ *  they still count as present and any known status reads as a change. */
+async function collectExistingDownloads() {
+  const downloaded = new Map();
+  const remember = (dtcr, code) => {
+    if (!dtcr) return;
+    if (!downloaded.has(dtcr)) downloaded.set(dtcr, new Set());
+    downloaded.get(dtcr).add(code || "");
+  };
 
   for await (const [name, handle] of directoryHandle.entries()) {
     if (handle.kind !== "file") continue;
 
-    const prefixedDtcr = extractDtcrPrefixFromFileName(name);
-    if (prefixedDtcr) {
-      dtcrs.add(prefixedDtcr);
+    const parsed = parseDownloadedName(name);
+    if (parsed.dtcr) {
+      remember(parsed.dtcr, parsed.code);
       continue;
     }
 
     if (name.toLowerCase() === SUMMARY_FILE_NAME.toLowerCase()) {
       const file = await handle.getFile();
       const summaryText = await file.text();
-      for (const dtcr of extractDtcrsFromSummaryCsv(summaryText)) {
-        dtcrs.add(dtcr);
+      for (const [dtcr, code] of extractDtcrsFromSummaryCsv(summaryText)) {
+        remember(dtcr, code);
       }
     }
   }
 
-  return dtcrs;
+  return downloaded;
 }
 
 async function writeTextFile(name, contents, type) {
@@ -460,7 +530,9 @@ function scanResultsFrame() {
     const cells = Array.from(tr.cells);
     return radio ? {
       dtcr: String(radio.value || cells[1]?.textContent || "").trim(),
-      status: String(cells[statusIndex]?.textContent || radio.getAttribute("status-id") || "").replace(/\s+/g, " ").trim()
+      status: String(cells[statusIndex]?.textContent || "").replace(/\s+/g, " ").trim(),
+      // iSpeed's own numeric status id; steadier than the display text
+      statusId: String(radio.getAttribute("status-id") || "").trim()
     } : null;
   }).filter(Boolean);
 
@@ -501,13 +573,44 @@ function extractDetailFrame() {
     }
   }
 
+  // Approvals: APPROVER | NAME | STATUS | COMMENT | DATE. The table carries no
+  // id or class, so it is found by its own header row — the same guard the
+  // reasons above use, so iSpeed's nested layout tables cannot match by
+  // accident.
+  const approvers = [];
+  const approvalTables = Array.from(document.querySelectorAll("table")).filter((table) => {
+    const ownHeaderRow = table.tHead?.rows?.[0];
+    const headers = Array.from(ownHeaderRow?.cells || []).map((cell) => text(cell.textContent).toUpperCase());
+    return headers.includes("APPROVER") && headers.includes("STATUS");
+  });
+
+  for (const approvalTable of approvalTables) {
+    const headers = Array.from(approvalTable.tHead.rows[0].cells).map((cell) => text(cell.textContent).toUpperCase());
+    const columnOf = (label) => headers.indexOf(label);
+    const dataRows = Array.from(approvalTable.tBodies).flatMap((body) => Array.from(body.rows));
+    for (const row of dataRows) {
+      const cellAt = (label) => {
+        const index = columnOf(label);
+        return index >= 0 ? text(row.cells[index]?.textContent) : "";
+      };
+      const entry = {
+        role: cellAt("APPROVER"),
+        name: cellAt("NAME"),
+        status: cellAt("STATUS"),
+        date: cellAt("DATE"),
+        comment: cellAt("COMMENT")
+      };
+      if (entry.role || entry.name || entry.status || entry.date) approvers.push(entry);
+    }
+  }
+
   const attachments = Array.from(document.querySelectorAll('a[href*="downloadAttachment.action"]')).map((link) => {
     const row = link.closest("tr");
     const name = text(row?.cells?.[0]?.textContent) || `attachment-${new URL(link.href).searchParams.get("attachmentID") || "file"}`;
     return { name, url: link.href };
   });
 
-  return { dtcr, status: text(status), reasons, attachments };
+  return { dtcr, status: text(status), reasons, approvers, attachments };
 }
 
 function setRunningState(value) {

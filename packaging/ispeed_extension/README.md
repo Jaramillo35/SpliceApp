@@ -14,11 +14,30 @@ Chrome Manifest V3 extension for the Chrysler iSpeed DTCR search results.
 - Clicks **Go back to Search Results** before processing the next DTCR.
 - Waits until the next detail page or restored results table is actually usable (up to five minutes).
 - Retries **Go back to Search Results** once if the legacy page remains on the detail view.
-- Prefixes attachment filenames with the DTCR number.
-- Skips DTCRs that already exist in the selected folder and downloads only missing DTCRs.
+- Prefixes attachment filenames with the DTCR's **status code** and number, e.g.
+  `AP 51163 - drawing.pdf`. Codes come from iSpeed's own Status vocabulary:
+  `DA` Draft, `AP` Approved, `RE` Rejected, `CO` Complete, `DE` Deleted
+  (`CA` Cancel is mapped too, though iSpeed does not currently expose it).
+  The row's numeric `status-id` is preferred over the display text.
+- Skips DTCRs already in the folder **at the same status**, and re-downloads one
+  whose status has moved since the last run (`DA` -> `AP` -> `CO`). The status
+  lives in the file name, so the folder itself is the record — no side database.
+  A file left by an older version (no status prefix) is re-downloaded once and
+  is stable afterwards. Superseded files are kept, so the folder shows the
+  history rather than overwriting it.
+- Rejected and Deleted DTCRs are skipped unless **Also download Rejected and
+  Deleted DTCRs** is ticked on the dashboard; the choice is remembered.
+- Records each DTCR's approvals — approver role, name, status, date and comment.
 - Removes invalid filename characters and garbage after known file extensions.
 - Preserves existing files by adding `(2)`, `(3)`, and so on.
-- Writes `DTCR_Summary.csv` to the selected folder.
+- Writes `DTCR_Summary.csv` to the selected folder, with columns
+  DTCR # / Status / Code / Reason for Change / Approvers / Attachments / Result.
+
+## Develop
+
+Source of truth is this folder. Run the helper tests with `node test-shared.js`,
+then rebuild the shipped archive with `python3 build.py`, which writes
+`assets/downloads/ispeed-dtcr-downloader.zip`.
 
 ## Install locally
 
