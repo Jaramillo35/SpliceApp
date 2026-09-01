@@ -180,6 +180,72 @@ class TestWorkbook:
         assert SHEET not in load_workbook(io.BytesIO(data)).sheetnames
 
 
+class TestScale:
+    """A real programme is ~5,400 circuit ends against ~20 part numbers.
+
+    The first version styled each row via ``ws[ws.max_row]``. ``max_row``
+    rescans every cell written so far, so the write was quadratic: 33 seconds
+    for one export, run on the event loop, which dropped the browser's
+    connection and read to the user as the app restarting. These tests hold
+    the shape of the fix rather than a stopwatch — a timing assertion would
+    be flaky on a loaded machine, but a quadratic write cannot pass a ratio
+    check.
+    """
+
+    def _charts(self, families: int, ends: int, parts: int = 12):
+        built = []
+        for f in range(families):
+            pns = [f"9900{f:02d}{k:02d}AA" for k in range(parts)]
+            rows = [chart.ChartRow(
+                circuit=f"QK{i:05d}", cnum=f"C{i % 40:03d}",
+                cavity=str(i % 20 + 1), expression="(QA1/QB2)",
+                classification="variant",
+                builds=pns[: (i % parts) + 1]) for i in range(ends)]
+            built.append(chart.Chart(family=f"FAM_{f}", harness=f"FAM_{f}",
+                                     def_id=str(70000 + f),
+                                     part_numbers=pns, rows=rows))
+        return built
+
+    def test_the_sheet_is_never_rescanned_while_writing(self):
+        """The defect itself, pinned.
+
+        ``max_row``/``max_column`` walk every cell written so far. Consulting
+        either one per row is what made the export quadratic, so the writer
+        tracks its own row index and must not read them back at all. A timing
+        assertion would be flaky on a loaded machine; this cannot be.
+        """
+        from openpyxl.worksheet.worksheet import Worksheet
+
+        reads = []
+        for name in ("max_row", "max_column"):
+            original = getattr(Worksheet, name)
+
+            def probe(self, _name=name, _original=original):
+                reads.append(_name)
+                return _original.fget(self)
+
+            monkey = property(probe)
+            setattr(Worksheet, name, monkey)
+        try:
+            chart.build_chart_workbook(self._charts(3, 50))
+        finally:
+            # restore the real descriptors
+            import importlib
+            importlib.reload(importlib.import_module(
+                "openpyxl.worksheet.worksheet"))
+
+        assert not reads, (
+            f"the writer rescanned the sheet {len(reads)} time(s): "
+            f"{sorted(set(reads))}")
+
+    def test_a_large_chart_still_round_trips(self):
+        charts = self._charts(6, 400)
+        data = chart.build_chart_workbook(charts, "9000ZZ", "X9_A")
+        harns, ends = read_circuit_summary(data, "big.xlsx")
+        assert len(harns) == 6
+        assert len(ends) == sum(len(c.rows) for c in charts)
+
+
 class TestEdges:
     def test_a_family_with_no_rows_yields_an_empty_chart(self):
         rows = circuit_rows()

@@ -167,14 +167,18 @@ def upload_zone(label: str, on_file: Callable[[str, bytes], None],
         confirm.set_visibility(False)
 
 
-async def run_engine(fn: Callable, *args, running: str, done: str = "Done"):
+async def run_engine(fn: Callable, *args, running: str, done: str = "Done",
+                     **kwargs):
     """Run an engine call off the UI thread with progress + completion toasts.
+
+    Keyword arguments other than ``running``/``done`` are forwarded to ``fn``,
+    so an engine with a keyword-heavy signature does not need a partial.
 
     Returns the result, or None after notifying the error.
     """
     note = ui.notification(running, spinner=True, timeout=None)
     try:
-        result = await run.io_bound(fn, *args)
+        result = await run.io_bound(fn, *args, **kwargs)
         ui.notify(done, type="positive")
         return result
     except Exception as exc:  # noqa: BLE001 - engine errors surface to the user

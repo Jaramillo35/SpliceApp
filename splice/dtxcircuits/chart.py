@@ -206,6 +206,12 @@ _BLOCK_FONT = Font(bold=True, color="FFFFFF")
 _MARK_FONT = Font(bold=True)
 _NEVER_FILL = PatternFill("solid", fgColor="F8D7DA")
 
+# Hoisted, not built per cell. A real programme is ~5,400 circuit ends against
+# ~20 part numbers — 115,000 mark cells — and constructing a style object for
+# each one cost more than everything else in this module put together.
+_CENTER = Alignment(horizontal="center")
+_BLOCK_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
 
 def write_chart_sheet(wb: Workbook, charts: Sequence[Chart],
                       program: str = "", phase: str = "") -> None:
@@ -213,49 +219,65 @@ def write_chart_sheet(wb: Workbook, charts: Sequence[Chart],
 
     The sheet name and geometry are the ones ``splice.inline.summary`` parses,
     so Circuit Health can take this workbook as an input unchanged.
+
+    The row index is tracked here rather than read back from the sheet.
+    ``ws.max_row`` rescans every cell written so far, so styling each row via
+    ``ws[ws.max_row]`` is quadratic: on a real programme (~5,400 circuit ends
+    against ~20 part numbers) that alone took 33 seconds and, run on the event
+    loop, dropped the browser's connection.
     """
     ws = wb.create_sheet(SHEET)
     ws.append(["Circuit Summary", " ".join(p for p in (program, phase) if p)])
     ws.cell(1, 1).font = _TITLE_FONT
+    line_no = 1
 
     widest = 0
     for chart in charts:
-        widest = max(widest, len(chart.part_numbers))
-        header = [""] * (FIRST_BUILD_COL + len(chart.part_numbers))
+        span = len(chart.part_numbers)
+        widest = max(widest, span)
+
+        header = [""] * (FIRST_BUILD_COL + span)
         header[COL_FAMILY] = chart.block_title
         header[COL_CIRCUIT] = "Circuit"
         for offset, part in enumerate(chart.part_numbers):
             header[FIRST_BUILD_COL + offset] = f"{MARK}~{part}"
         ws.append(header)
-        for cell in ws[ws.max_row]:
-            if cell.value:
-                cell.fill, cell.font = _BLOCK_FILL, _BLOCK_FONT
-                cell.alignment = Alignment(horizontal="center", vertical="center",
-                                           wrap_text=True)
+        line_no += 1
+        for column in (COL_FAMILY + 1, COL_CIRCUIT + 1):
+            cell = ws.cell(line_no, column)
+            cell.fill, cell.font, cell.alignment = _BLOCK_FILL, _BLOCK_FONT, _BLOCK_ALIGN
+        for offset in range(span):
+            cell = ws.cell(line_no, FIRST_BUILD_COL + offset + 1)
+            cell.fill, cell.font, cell.alignment = _BLOCK_FILL, _BLOCK_FONT, _BLOCK_ALIGN
 
         for row in chart.rows:
-            line = [""] * (FIRST_BUILD_COL + len(chart.part_numbers))
+            line = [""] * (FIRST_BUILD_COL + span)
             line[COL_FAMILY] = chart.family
             line[COL_CIRCUIT] = row.circuit
             line[COL_CNUM] = row.cnum
             line[COL_CAV] = row.cavity
             line[COL_DEVICE] = row.device
             line[COL_SALES_CODE] = row.expression
-            for offset, mark in enumerate(row.marks(chart.part_numbers)):
+            marks = row.marks(chart.part_numbers)
+            for offset, mark in enumerate(marks):
                 line[FIRST_BUILD_COL + offset] = mark
             ws.append(line)
-            written = ws[ws.max_row]
-            for offset in range(len(chart.part_numbers)):
-                cell = written[FIRST_BUILD_COL + offset]
-                cell.alignment = Alignment(horizontal="center")
-                if cell.value:
-                    cell.font = _MARK_FONT
-            # A circuit no build carries is the whole point of the chart:
-            # an entirely empty row is easy to scroll past, so it is coloured.
+            line_no += 1
+
+            # Only the cells that carry something are styled: an empty cell
+            # gains nothing from being centred.
+            for offset, mark in enumerate(marks):
+                if mark:
+                    cell = ws.cell(line_no, FIRST_BUILD_COL + offset + 1)
+                    cell.alignment, cell.font = _CENTER, _MARK_FONT
+            # A circuit no build carries is the whole point of the chart, and
+            # an entirely empty row is easy to scroll past — so it is coloured.
             if row.is_finding:
-                for cell in written:
-                    cell.fill = _NEVER_FILL
+                for column in range(1, FIRST_BUILD_COL + span + 1):
+                    ws.cell(line_no, column).fill = _NEVER_FILL
+
         ws.append([])
+        line_no += 1
 
     for index in range(1, FIRST_BUILD_COL + widest + 1):
         letter = get_column_letter(index)

@@ -245,10 +245,14 @@ def _sheet(wb: Workbook, title: str, headers: List[str], rows: List[list],
         cell.fill, cell.font = _HEAD_FILL, _HEAD_FONT
         cell.alignment = Alignment(vertical="center", wrap_text=True)
     note_col = headers.index(CLEANUP_COLUMN) + 1 if CLEANUP_COLUMN in headers else None
+    # The row index is tracked, not read back: ws.max_row rescans every cell
+    # written so far, which turns a long sheet quadratic.
+    line_no = 1
     for row in rows:
         ws.append(row)
-        if note_col and ws.cell(ws.max_row, note_col).value:
-            ws.cell(ws.max_row, note_col).fill = _NOTE_FILL
+        line_no += 1
+        if note_col and ws.cell(line_no, note_col).value:
+            ws.cell(line_no, note_col).fill = _NOTE_FILL
     widths = [12] * len(headers)
     for index, header in enumerate(headers):
         longest = max([len(str(header))] + [len(str(r[index])) for r in rows[:400]]

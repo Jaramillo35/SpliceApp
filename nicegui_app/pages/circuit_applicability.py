@@ -655,17 +655,25 @@ def page() -> None:
                 ui.button("Export review (.xlsx)", icon="download",
                           on_click=lambda: _export()).props("outline dense")
 
-        def _export() -> None:
+        async def _export() -> None:
+            # Off the event loop. A real programme is ~5,400 circuit ends, and
+            # building the workbook inline blocks the websocket long enough
+            # that the browser reports a lost connection and reconnects —
+            # which reads to the user as the app restarting.
             context = {i.expression: {"kind": i.kind, "rows": i.rows,
                                       "families": i.families, "circuits": i.circuits}
                        for i in state["issues"]}
-            data = report_mod.build_report(
-                state["entries"], state["cleanup"],
-                dtx_program=state["dtx_meta"].program if state["dtx_meta"] else "",
-                dtx_phase=state["dtx_meta"].phase if state["dtx_meta"] else "",
-                repairs=state["fixes"], repair_context=context,
-                quality=state["quality"], charts=state["charts"])
-            ui.download(data, "Circuit_Applicability_Review.xlsx")
+            meta = state["dtx_meta"]
+            data = await c.run_engine(
+                report_mod.build_report,
+                list(state["entries"]), dict(state["cleanup"]),
+                running="Building the review workbook…", done="Review ready",
+                dtx_program=meta.program if meta else "",
+                dtx_phase=meta.phase if meta else "",
+                repairs=dict(state["fixes"]), repair_context=context,
+                quality=state["quality"], charts=list(state["charts"]))
+            if data is not None:
+                ui.download(data, "Circuit_Applicability_Review.xlsx")
 
         def _toggle_cleanup(entry, kind: str, ident: str) -> None:
             key = report_mod.item_key(entry.family, entry.analysis.harness,
@@ -918,12 +926,14 @@ def page() -> None:
                 f"{pn[-6:]} {chart.coverage(pn)}/{len(chart.rows)}"
                 for pn in chart.part_numbers)).classes("text-[10px] sx-mono sx-muted")
 
-        def _download_chart() -> None:
+        async def _download_chart() -> None:
             meta = state["dtx_meta"]
-            data = chart_mod.build_chart_workbook(
-                state["charts"], meta.program if meta else "",
-                meta.phase if meta else "")
-            ui.download(data, "Circuit_Chart.xlsx")
+            data = await c.run_engine(
+                chart_mod.build_chart_workbook, list(state["charts"]),
+                meta.program if meta else "", meta.phase if meta else "",
+                running="Building the circuit chart…", done="Chart ready")
+            if data is not None:
+                ui.download(data, "Circuit_Chart.xlsx")
 
         chart_view()
 
