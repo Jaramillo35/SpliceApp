@@ -143,6 +143,20 @@ def page() -> None:
             integrity_view.refresh()
             results_view.refresh()
 
+        def _resolve_manual(expression: str, typed: str) -> None:
+            """A hand-typed repair is checked before it is stored: an unchecked
+            one can be malformed in its own right, and would then be applied to
+            every circuit using that expression."""
+            blocking, warnings = integrity.validate_replacement(expression, typed)
+            if blocking:
+                ui.notify(" ".join(blocking), type="negative", multi_line=True,
+                          close_button=True)
+                return
+            for warning in warnings:
+                ui.notify(warning, type="warning", multi_line=True,
+                          close_button=True)
+            _resolve(expression, typed.strip())
+
         def _unresolve(expression: str) -> None:
             state["fixes"].pop(expression, None)
             state["entries"] = []
@@ -175,7 +189,8 @@ def page() -> None:
                     c.chip("blocker" if open_issues else "ok",
                            f"{len(open_issues)} unresolved")
                     if len(issues) - len(open_issues):
-                        c.chip("ok", f"{len(issues) - len(open_issues)} resolved")
+                        c.chip("ok", f"{len(issues) - len(open_issues)} resolved "
+                                     "(untick 'Unresolved only' to review)")
                     ui.label("FILTER").classes(
                         "text-[10px] font-bold tracking-widest sx-muted ml-2")
                     _filter_chip("Unresolved only", f["unresolved_only"],
@@ -231,10 +246,7 @@ def page() -> None:
                         .props("dense outlined").classes("text-[11px] min-w-[14rem]")
                     ui.button("Use", icon="check",
                               on_click=lambda e=issue.expression, m=manual:
-                                  (_resolve(e, m.value.strip())
-                                   if m.value and m.value.strip() else
-                                   ui.notify("Type an expression first",
-                                             type="warning"))) \
+                                  _resolve_manual(e, m.value or "")) \
                         .props("flat dense size=sm")
                 if not issue.suggestions:
                     ui.label("No automatic suggestion — this one needs a human "
@@ -771,6 +783,13 @@ def page() -> None:
             if restored_count:
                 ui.notify(f"Restored {restored_count} mapping(s) from your last "
                           "session", type="info")
+            # a repair confirmed on an earlier DTx applies to any later one
+            # repeating the same text — say so, or it happens invisibly
+            carried = sum(1 for i in issues if i.expression in state["fixes"])
+            if carried:
+                ui.notify(f"{carried} sales-code repair(s) carried over from an "
+                          "earlier session and were applied to this DTx",
+                          type="info", multi_line=True)
             for problem in failed[:5]:
                 ui.notify(problem, type="negative", multi_line=True,
                           close_button=True)

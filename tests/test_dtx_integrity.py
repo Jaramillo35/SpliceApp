@@ -164,3 +164,87 @@ class TestApplyFixes:
         assert before.circuits[0].classification == "never built"
         assert after.circuits[0].classification == "unconditional" or \
             after.circuits[0].classification == "all builds"
+
+
+class TestDanglingOperator:
+    """An operator with no operand does not fail — it silently drops a term."""
+
+    def test_a_trailing_and_is_caught(self):
+        issue = integrity.check("QB1&")
+        assert issue.kind == integrity.DANGLING_OPERATOR
+
+    def test_a_trailing_not_is_caught(self):
+        # "QB1&-" evaluates as plain QB1: the negated operand vanishes
+        assert salescode.evaluate("QB1&-", {"QB1"}) is True
+        assert integrity.check("QB1&-").kind == integrity.DANGLING_OPERATOR
+
+    def test_doubled_operators_are_caught(self):
+        assert integrity.check("QB1&&QA1").kind == integrity.DANGLING_OPERATOR
+        assert integrity.check("QB1//QA1").kind == integrity.DANGLING_OPERATOR
+
+    def test_a_leading_and_is_caught(self):
+        assert integrity.check("&QB1").kind == integrity.DANGLING_OPERATOR
+
+    def test_the_known_leading_slash_quirk_is_not_flagged(self):
+        # "(/AAA/BBB)" appears in real exports and is harmless: an empty OR
+        # operand is false, so it reads as AAA/BBB. Flagging it would be noise.
+        assert integrity.check("(/AAA/BBB)") is None
+        assert salescode.evaluate("(/AAA/BBB)", {"AAA"}) is True
+
+
+class TestValidateReplacement:
+    def test_a_good_repair_passes_clean(self):
+        assert integrity.validate_replacement("AAA-BBB", "AAA&-BBB") == ([], [])
+
+    def test_an_empty_replacement_is_blocked(self):
+        blocking, _ = integrity.validate_replacement("AAA-BBB", "   ")
+        assert blocking and "Type an expression" in blocking[0]
+
+    def test_a_replacement_that_is_still_malformed_is_blocked(self):
+        blocking, _ = integrity.validate_replacement("AAA-BBB", "AAA&(BBB")
+        assert any("unbalanced" in b for b in blocking)
+
+    def test_a_dangling_replacement_is_blocked(self):
+        blocking, _ = integrity.validate_replacement("AAA-BBB", "AAA&-")
+        assert any("dangling" in b for b in blocking)
+
+    def test_a_never_true_replacement_is_blocked(self):
+        blocking, _ = integrity.validate_replacement("AAA-BBB", "AAA&-AAA")
+        assert blocking
+
+    def test_a_mistyped_code_is_warned_about_not_blocked(self):
+        # only the SE can know whether a different code is deliberate
+        blocking, warnings = integrity.validate_replacement("AAA-BBB", "ZZZ&-BBB")
+        assert blocking == []
+        assert warnings and "adds ZZZ" in warnings[0] and "drops AAA" in warnings[0]
+
+    def test_reordering_the_same_codes_raises_nothing(self):
+        assert integrity.validate_replacement("AAA-BBB", "-BBB&AAA") == ([], [])
+
+
+class TestRepairsCarryToTheNextPhase:
+    """A repair is keyed by the expression text, so a later DTx repeating that
+    exact text inherits the decision instead of asking again."""
+
+    def _next_phase(self):
+        return [CircuitRow("DASH", "QK777", "QB1-QA1"),   # same text, new circuit
+                CircuitRow("IP", "QK888", "QA1,QA2"),     # a new problem
+                CircuitRow("IP", "QK999", "QB1/QA1")]     # sound
+
+    def test_a_known_repair_is_applied_without_asking_again(self):
+        fixes = {"QB1-QA1": "QB1&-QA1"}
+        rows = integrity.apply_fixes(self._next_phase(), fixes)
+        assert rows[0].sales_code == "QB1&-QA1"
+
+    def test_only_the_unseen_problem_still_needs_a_decision(self):
+        fixes = {"QB1-QA1": "QB1&-QA1"}
+        issues = integrity.scan(self._next_phase())
+        assert {i.expression for i in issues} == {"QB1-QA1", "QA1,QA2"}
+        still_open = [i for i in issues if i.expression not in fixes]
+        assert [i.expression for i in still_open] == ["QA1,QA2"]
+
+    def test_a_repair_for_text_absent_from_this_dtx_changes_nothing(self):
+        fixes = {"NOT-INTHIS": "NOT&-INTHIS"}
+        rows = self._next_phase()
+        assert [r.sales_code for r in integrity.apply_fixes(rows, fixes)] == \
+            [r.sales_code for r in rows]

@@ -31,6 +31,7 @@ from splice.inline import salescode
 logger = logging.getLogger(__name__)
 
 MISSING_OPERATOR = "missing operator"
+DANGLING_OPERATOR = "dangling operator"
 UNSATISFIABLE = "never true"
 UNBALANCED = "unbalanced parentheses"
 
@@ -151,6 +152,64 @@ def _suggestions(expression: str) -> List[Suggestion]:
     return out
 
 
+def _dangling(expression: str) -> str:
+    """An operator with nothing to operate on, or ``""`` when there is none.
+
+    A trailing ``&`` or ``-`` does not fail: the evaluator treats the missing
+    operand as false, so ``QB1&-`` quietly reduces to ``QB1`` and a term is
+    lost in silence. A LEADING slash inside a group (``(/AAA/BBB)``) is a
+    known quirk of the real exports and is harmless — an empty OR operand is
+    false — so it is deliberately not flagged.
+    """
+    text = re.sub(r"\s+", "", expression or "")
+    if not text:
+        return ""
+    if text[-1] in "&/-":
+        return f"it ends with '{text[-1]}', so the last operand is missing"
+    if text[0] == "&":
+        return "it starts with '&', so the first operand is missing"
+    doubled = re.search(r"[&]{2,}|//|&/|/&", text)
+    if doubled:
+        return f"'{doubled.group(0)}' has no operand between the operators"
+    if re.search(r"[&/]\)", text):
+        return "an operator sits just before ')', so an operand is missing"
+    return ""
+
+
+def validate_replacement(original: str, replacement: str) -> Tuple[List[str], List[str]]:
+    """Check a hand-typed repair. Returns ``(blocking, warnings)``.
+
+    Blocking problems make the expression unusable or silently wrong.
+    Warnings are judgement calls that only the SE can settle — chiefly a
+    repair that mentions different sales codes than the text it replaces,
+    which is usually a typo and occasionally deliberate.
+    """
+    text = (replacement or "").strip()
+    blocking: List[str] = []
+    warnings: List[str] = []
+    if not text:
+        return ["Type an expression first."], warnings
+
+    issue = check(text)
+    if issue is not None:
+        blocking.append(f"The replacement is still {issue.kind}.")
+
+    if salescode.is_valid(text) and satisfiable(text) is False:
+        blocking.append("The replacement is never true for any configuration.")
+
+    was, now = salescode.codes_in(original), salescode.codes_in(text)
+    if was != now:
+        added, removed = sorted(now - was), sorted(was - now)
+        parts = []
+        if added:
+            parts.append("adds " + ", ".join(added))
+        if removed:
+            parts.append("drops " + ", ".join(removed))
+        warnings.append("The replacement " + " and ".join(parts)
+                        + " — check it is not a mistyped code.")
+    return blocking, warnings
+
+
 def check(expression: str) -> Optional[Issue]:
     """The problem with one expression, or ``None`` when it is sound."""
     raw = (expression or "").strip()
@@ -161,6 +220,13 @@ def check(expression: str) -> Optional[Issue]:
         return Issue(expression=raw, kind=UNBALANCED,
                      detail="The parentheses do not balance, so the expression "
                             "cannot be read.")
+
+    dangling = _dangling(raw)
+    if dangling:
+        return Issue(expression=raw, kind=DANGLING_OPERATOR,
+                     detail=(f"An operator has nothing to operate on — {dangling}. "
+                             f"The evaluator treats the missing operand as false, "
+                             f"so the term is dropped without any error."))
 
     gaps = _gaps(raw)
     if gaps:
