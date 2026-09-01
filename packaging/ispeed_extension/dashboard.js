@@ -555,17 +555,23 @@ function extractDetailFrame() {
   const bodyText = text(document.body.innerText);
   const status = bodyText.match(/Status:\s*([^\s]+(?:\s+[^\s]+)?)(?=\s+DTCR#:)/i)?.[1] || "";
 
-  const reasons = [];
-  const actionTables = Array.from(document.querySelectorAll("table")).filter((table) => {
-    const ownHeaderRow = table.tHead?.rows?.[0];
-    const headers = Array.from(ownHeaderRow?.cells || []).map((cell) => text(cell.textContent).toUpperCase());
-    return headers.includes("REASON FOR CHANGE") && headers.includes("VEHICLE PROGRAM");
+  // The detail page nests every section inside one page-layout <table>, so a
+  // header match that would accept a first row swallows the whole page. Only
+  // the real section tables carry a <thead>; pickTablesByHeader requires one.
+  const labelsOf = (table) => {
+    const row = table.tHead?.rows?.[0];
+    return row ? Array.from(row.cells).map((cell) => text(cell.textContent).toUpperCase()) : null;
+  };
+  const pickTables = (...required) => Array.from(document.querySelectorAll("table")).filter((table) => {
+    const labels = labelsOf(table);
+    return !!labels && required.every((label) => labels.includes(label));
   });
 
+  const reasons = [];
+  const actionTables = pickTables("REASON FOR CHANGE", "VEHICLE PROGRAM");
+
   for (const actionTable of actionTables) {
-    const headerRow = actionTable.tHead.rows[0];
-    const headers = Array.from(headerRow.cells).map((cell) => text(cell.textContent).toUpperCase());
-    const reasonIndex = headers.indexOf("REASON FOR CHANGE");
+    const reasonIndex = labelsOf(actionTable).indexOf("REASON FOR CHANGE");
     const dataRows = Array.from(actionTable.tBodies).flatMap((body) => Array.from(body.rows));
     for (const row of dataRows) {
       const reason = text(row.cells[reasonIndex]?.textContent);
@@ -574,18 +580,12 @@ function extractDetailFrame() {
   }
 
   // Approvals: APPROVER | NAME | STATUS | COMMENT | DATE. The table carries no
-  // id or class, so it is found by its own header row — the same guard the
-  // reasons above use, so iSpeed's nested layout tables cannot match by
-  // accident.
+  // id or class, so it is found by its own header row.
   const approvers = [];
-  const approvalTables = Array.from(document.querySelectorAll("table")).filter((table) => {
-    const ownHeaderRow = table.tHead?.rows?.[0];
-    const headers = Array.from(ownHeaderRow?.cells || []).map((cell) => text(cell.textContent).toUpperCase());
-    return headers.includes("APPROVER") && headers.includes("STATUS");
-  });
+  const approvalTables = pickTables("APPROVER", "STATUS");
 
   for (const approvalTable of approvalTables) {
-    const headers = Array.from(approvalTable.tHead.rows[0].cells).map((cell) => text(cell.textContent).toUpperCase());
+    const headers = labelsOf(approvalTable);
     const columnOf = (label) => headers.indexOf(label);
     const dataRows = Array.from(approvalTable.tBodies).flatMap((body) => Array.from(body.rows));
     for (const row of dataRows) {

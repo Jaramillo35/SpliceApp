@@ -124,15 +124,38 @@
     return `${rows.map((row) => row.map(csvEscape).join(",")).join("\r\n")}\r\n`;
   }
 
+  // iSpeed's DTCR detail page is a frameset whose content frame nests every
+  // section inside one page-layout <table>. Reading that outer table's first
+  // row gives you the text of all 13 inner tables at once, so a header match
+  // that accepts a first row would swallow the whole page as if it were the
+  // approvals table. The real section tables carry a proper <thead>; the
+  // layout table does not. That is the whole guard.
+  // Verified against a live Complete DTCR, 2026-09-01: one strict match, and
+  // the single loose match was an ancestor of it holding 13 nested tables.
+  function headerLabelsOf(table) {
+    const row = table && table.tHead && table.tHead.rows && table.tHead.rows[0];
+    if (!row) return null;
+    return Array.from(row.cells || [])
+      .map((cell) => normalizeSpace(cell.textContent).toUpperCase());
+  }
+
+  function pickTablesByHeader(tables, ...required) {
+    const wanted = required.map((label) => label.toUpperCase());
+    return Array.from(tables || []).filter((table) => {
+      const labels = headerLabelsOf(table);
+      return !!labels && wanted.every((label) => labels.includes(label));
+    });
+  }
+
   function isExcludedStatus(status) {
     return /\b(?:deleted|cancelled|canceled|rejected)\b/i.test(normalizeSpace(status));
   }
 
   const api = {
     INACTIVE_CODES, STATUS_ID_CODES, STATUS_TEXT_CODES,
-    cleanAttachmentName, csvEscape, formatApprovers, isExcludedStatus,
-    isInactiveCode, makeSummaryCsv, normalizeSpace, parseDownloadedName,
-    shouldDownloadStatus, statusCode
+    cleanAttachmentName, csvEscape, formatApprovers, headerLabelsOf,
+    isExcludedStatus, isInactiveCode, makeSummaryCsv, normalizeSpace,
+    parseDownloadedName, pickTablesByHeader, shouldDownloadStatus, statusCode
   };
   root.ISpeedHelpers = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

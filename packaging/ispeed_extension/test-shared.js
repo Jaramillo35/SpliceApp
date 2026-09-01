@@ -1,7 +1,8 @@
 const assert = require("node:assert/strict");
 const {
-  cleanAttachmentName, formatApprovers, isExcludedStatus, isInactiveCode,
-  makeSummaryCsv, parseDownloadedName, shouldDownloadStatus, statusCode
+  cleanAttachmentName, formatApprovers, headerLabelsOf, isExcludedStatus,
+  isInactiveCode, makeSummaryCsv, parseDownloadedName, pickTablesByHeader,
+  shouldDownloadStatus, statusCode
 } = require("./shared.js");
 
 // --- names keep working exactly as before when no status code is supplied ---
@@ -74,5 +75,36 @@ assert.match(csv, /DTCR #,Status,Code,Reason for Change,Approvers,Attachments,Re
 assert.match(csv, /"A, ""B"""/);
 assert.match(csv, /CO 1 - file\.pdf/);
 assert.match(csv, /Wiring PC \/ Doe, Jane/);
+
+// --- picking the right table on a page built entirely out of tables ---
+// Minimal stand-ins: only tHead/rows/cells/textContent are read.
+const cells = (...labels) => ({ cells: labels.map((textContent) => ({ textContent })) });
+const section = (...labels) => ({ tHead: { rows: [cells(...labels)] }, rows: [] });
+const layout = (...labels) => ({ tHead: null, rows: [cells(...labels)] });  // no <thead>
+
+const approvals = section("APPROVER", "NAME", "STATUS", "COMMENT", "DATE");
+const actions = section("VEHICLE PROGRAM", "BUILD PHASE", "ACTION NAME", "REASON FOR CHANGE");
+// the real page wraps every section in one layout table whose first row reads
+// as the concatenated text of all 13 nested tables — it must never match
+const wrapper = layout("APPROVER NAME STATUS COMMENT DATE REASON FOR CHANGE");
+
+assert.deepEqual(pickTablesByHeader([approvals, actions, wrapper], "APPROVER", "STATUS"),
+  [approvals], "the layout wrapper must not be mistaken for the approvals table");
+assert.deepEqual(
+  pickTablesByHeader([approvals, actions, wrapper], "REASON FOR CHANGE", "VEHICLE PROGRAM"),
+  [actions]);
+assert.deepEqual(pickTablesByHeader([wrapper], "APPROVER", "STATUS"), [],
+  "a table with no <thead> is never a section table");
+assert.deepEqual(pickTablesByHeader([], "APPROVER"), []);
+assert.deepEqual(pickTablesByHeader(null, "APPROVER"), []);
+
+// every required label must be present, not just one
+assert.deepEqual(pickTablesByHeader([approvals], "APPROVER", "DNUM"), []);
+// matching is case-insensitive on the caller's side too
+assert.deepEqual(pickTablesByHeader([approvals], "approver", "status"), [approvals]);
+
+assert.deepEqual(headerLabelsOf(approvals), ["APPROVER", "NAME", "STATUS", "COMMENT", "DATE"]);
+assert.equal(headerLabelsOf(wrapper), null);
+assert.equal(headerLabelsOf({}), null);
 
 console.log("shared helper tests passed");
