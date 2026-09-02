@@ -94,3 +94,23 @@ def test_result_carries_every_key_the_page_hard_indexes(_real):
     missing = page_contract - set(_real)
     assert not missing, f"enhanced result is missing page keys: {sorted(missing)}"
     assert _real["old_layout"].sheet_name and _real["new_layout"].sheet_name
+
+
+def test_normalize_frame_matches_the_per_cell_form():
+    """The vectorised normaliser must agree with ``normalize_cell`` on every
+    kind of cell an export produces: None, NaN, padded strings, ints, floats,
+    empty strings, and columns that are purely numeric."""
+    import numpy as np
+    import pandas as pd
+    from splice.common.text import normalize_cell
+    from splice.dtx_compare.engine import _normalize_frame
+
+    frame = pd.DataFrame({
+        "mixed": [None, np.nan, "  padded ", 5, 5.0, "", "x"],
+        "ints": [1, 2, 3, 4, 5, 6, 7],
+        "floats": [1.5, np.nan, 2.0, 3.25, 4.0, 5.5, 6.0],
+        "strings": [" a", "b ", None, " c ", "", "d", np.nan],
+    }, dtype=object)
+    expected = frame.map(normalize_cell)
+    got = _normalize_frame(frame)
+    pd.testing.assert_frame_equal(got, expected, check_dtype=False)

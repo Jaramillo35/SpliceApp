@@ -24,18 +24,21 @@ from io import BytesIO
 import pandas as pd
 
 from splice.common.text import normalize_value
+from splice.common.validation import ensure_non_empty_upload
 from splice.dtx_compare.engine import (
-    _annotate_results_with_dtcr,
-    _build_dtcr_lookup_by_cnum,
-    _read_dtx_report_rows,
     build_all_changes_df,
     build_family_summary_df,
     build_output_filename,
     compare_reports,
+    detect_layout,
     generate_dtcr_matching_report,
     generate_preorder_generation_workbook,
     load_dtx_report,
+    load_dtx_report_from_rows,
     write_table,
+    _annotate_results_with_dtcr,
+    _build_dtcr_lookup_by_cnum,
+    _read_dtx_report_rows,
 )
 
 # WEAVE implementation-status palette (X = "Needs Review").
@@ -83,8 +86,17 @@ def generate_enhanced_dtx_report(
     old_label = resolve(old_file_bytes, old_file_name)
     new_label = resolve(new_file_bytes, new_file_name)
 
-    old_df, old_layout = load_dtx_report(old_file_bytes, old_file_name)
-    new_df, new_layout = load_dtx_report(new_file_bytes, new_file_name)
+    # Each file is parsed once. Four passes below need the rows — the
+    # comparison, the DTCR match, the yellow connectors, the pre-order book —
+    # and each used to re-read the .xls from bytes: seven parses for two files.
+    ensure_non_empty_upload(old_file_bytes, name=f"DTx report '{old_file_name}'")
+    ensure_non_empty_upload(new_file_bytes, name=f"DTx report '{new_file_name}'")
+    old_layout = detect_layout(old_file_bytes, old_file_name)
+    new_layout = detect_layout(new_file_bytes, new_file_name)
+    old_rows = _read_dtx_report_rows(old_file_bytes, old_file_name)
+    new_rows = _read_dtx_report_rows(new_file_bytes, new_file_name)
+    old_df = load_dtx_report_from_rows(old_rows)
+    new_df = load_dtx_report_from_rows(new_rows)
 
     results = _annotate_results_with_dtcr(
         compare_reports(old_df, new_df),
@@ -92,15 +104,16 @@ def generate_enhanced_dtx_report(
     )
     results.update(generate_dtcr_matching_report(
         old_file_bytes=old_file_bytes, new_file_bytes=new_file_bytes,
-        old_file_name=old_file_name, new_file_name=new_file_name, dtcr_df=dtcr_df))
+        old_file_name=old_file_name, new_file_name=new_file_name, dtcr_df=dtcr_df,
+        old_rows=old_rows, new_rows=new_rows))
 
     all_changes_df = build_all_changes_df(results)
     results["all_changes_df"] = all_changes_df
     results["harness_family_summary_df"] = build_family_summary_df(all_changes_df)
-    results["yellow_connectors_df"] = build_yellow_connectors_df(
-        _read_dtx_report_rows(new_file_bytes, new_file_name))
+    results["yellow_connectors_df"] = build_yellow_connectors_df(new_rows)
     preorder = generate_preorder_generation_workbook(
-        old_file_bytes, new_file_bytes, old_file_name, new_file_name)
+        old_file_bytes, new_file_bytes, old_file_name, new_file_name,
+        old_rows=old_rows, new_rows=new_rows)
     results["preorder_summary_df"] = preorder.get("summary_df", pd.DataFrame())
 
     results["old_label"] = old_label
