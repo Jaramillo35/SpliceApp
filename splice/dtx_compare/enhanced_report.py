@@ -26,6 +26,8 @@ import pandas as pd
 from splice.common.text import normalize_value
 from splice.common.validation import ensure_non_empty_upload
 from splice.dtx_compare.engine import (
+    _extract_report_metadata,
+    open_workbook,
     build_all_changes_df,
     build_family_summary_df,
     build_output_filename,
@@ -91,10 +93,14 @@ def generate_enhanced_dtx_report(
     # and each used to re-read the .xls from bytes: seven parses for two files.
     ensure_non_empty_upload(old_file_bytes, name=f"DTx report '{old_file_name}'")
     ensure_non_empty_upload(new_file_bytes, name=f"DTx report '{new_file_name}'")
-    old_layout = detect_layout(old_file_bytes, old_file_name)
-    new_layout = detect_layout(new_file_bytes, new_file_name)
-    old_rows = _read_dtx_report_rows(old_file_bytes, old_file_name)
-    new_rows = _read_dtx_report_rows(new_file_bytes, new_file_name)
+    old_book = open_workbook(old_file_bytes)
+    new_book = open_workbook(new_file_bytes)
+    old_layout = detect_layout(old_file_bytes, old_file_name, old_book)
+    new_layout = detect_layout(new_file_bytes, new_file_name, new_book)
+    old_rows = _read_dtx_report_rows(old_file_bytes, old_file_name, old_layout, old_book)
+    new_rows = _read_dtx_report_rows(new_file_bytes, new_file_name, new_layout, new_book)
+    old_metadata = _extract_report_metadata(old_file_bytes, old_file_name, old_book)
+    new_metadata = _extract_report_metadata(new_file_bytes, new_file_name, new_book)
     old_df = load_dtx_report_from_rows(old_rows)
     new_df = load_dtx_report_from_rows(new_rows)
 
@@ -113,7 +119,8 @@ def generate_enhanced_dtx_report(
     results["yellow_connectors_df"] = build_yellow_connectors_df(new_rows)
     preorder = generate_preorder_generation_workbook(
         old_file_bytes, new_file_bytes, old_file_name, new_file_name,
-        old_rows=old_rows, new_rows=new_rows)
+        old_rows=old_rows, new_rows=new_rows,
+        old_metadata=old_metadata, new_metadata=new_metadata)
     results["preorder_summary_df"] = preorder.get("summary_df", pd.DataFrame())
 
     results["old_label"] = old_label

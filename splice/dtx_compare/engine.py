@@ -230,13 +230,24 @@ def excel_column_name(column_index: int) -> str:
     return name
 
 
-def detect_layout(file_bytes: bytes, file_name: str) -> WorkbookLayout:
-    excel_file = pd.ExcelFile(BytesIO(file_bytes))
+def open_workbook(file_bytes: bytes) -> pd.ExcelFile:
+    """One parsed workbook to share between passes.
+
+    For a ``.xls`` there is no partial read: xlrd parses the whole book on
+    open, so every "preview" of the first thirty rows was a full parse.
+    Opening once and handing the ``ExcelFile`` around is the difference
+    between reading a real export three times and once.
+    """
+    return pd.ExcelFile(BytesIO(file_bytes))
+
+
+def detect_layout(file_bytes: bytes, file_name: str,
+                  excel_file: pd.ExcelFile | None = None) -> WorkbookLayout:
+    excel_file = excel_file or open_workbook(file_bytes)
     required = set(REQUIRED_COLUMNS)
 
     for sheet_name in excel_file.sheet_names:
-        preview = pd.read_excel(
-            BytesIO(file_bytes),
+        preview = excel_file.parse(
             sheet_name=sheet_name,
             header=None,
             nrows=MAX_HEADER_SCAN_ROWS,
@@ -253,9 +264,10 @@ def detect_layout(file_bytes: bytes, file_name: str) -> WorkbookLayout:
 
 def load_dtx_report(file_bytes: bytes, file_name: str) -> tuple[pd.DataFrame, WorkbookLayout]:
     ensure_non_empty_upload(file_bytes, name=f"DTx report '{file_name}'")
-    layout = detect_layout(file_bytes, file_name)
+    excel_file = open_workbook(file_bytes)
+    layout = detect_layout(file_bytes, file_name, excel_file)
     try:
-        rows = _read_dtx_report_rows(file_bytes, file_name)
+        rows = _read_dtx_report_rows(file_bytes, file_name, layout, excel_file)
     except ValueError as exc:
         raise SpliceInputError(str(exc)) from exc
     except Exception as exc:  # pragma: no cover - pandas/openpyxl parse errors vary
@@ -581,13 +593,15 @@ def _normalize_frame(data_frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _read_dtx_report_rows(file_bytes: bytes, file_name: str) -> pd.DataFrame:
+def _read_dtx_report_rows(file_bytes: bytes, file_name: str,
+                          layout: WorkbookLayout | None = None,
+                          excel_file: pd.ExcelFile | None = None) -> pd.DataFrame:
     """The export's rows, required columns only, cells normalised, blank
     key rows dropped. Parsed exactly once per call — callers that need the
     same file for several passes read it once and pass the frame around."""
-    layout = detect_layout(file_bytes, file_name)
-    data_frame = pd.read_excel(
-        BytesIO(file_bytes),
+    excel_file = excel_file or open_workbook(file_bytes)
+    layout = layout or detect_layout(file_bytes, file_name, excel_file)
+    data_frame = excel_file.parse(
         sheet_name=layout.sheet_name,
         header=layout.header_row,
         dtype=object,
@@ -631,13 +645,14 @@ def collapse_rows(rows: pd.DataFrame) -> pd.DataFrame:
     return collapsed.sort_values(KEY_COLUMNS).reset_index(drop=True)
 
 
-def _extract_report_metadata(file_bytes: bytes, file_name: str) -> dict[str, str]:
-    excel_file = pd.ExcelFile(BytesIO(file_bytes))
+def _extract_report_metadata(file_bytes: bytes, file_name: str,
+                             excel_file: pd.ExcelFile | None = None) -> dict[str, str]:
+    excel_file = excel_file or open_workbook(file_bytes)
     sheet_name = next(
         (sheet for sheet in excel_file.sheet_names if "Detailed DTx Circuits Report" in sheet),
         excel_file.sheet_names[0],
     )
-    preview = pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name, header=None, nrows=12)
+    preview = excel_file.parse(sheet_name=sheet_name, header=None, nrows=12)
 
     metadata = {"Vehicle Program": "", "Build Phase": "", "Report Date": ""}
     for _, row in preview.iterrows():
@@ -790,6 +805,8 @@ def generate_preorder_generation_workbook(
     *,
     old_rows: pd.DataFrame | None = None,
     new_rows: pd.DataFrame | None = None,
+    old_metadata: dict[str, str] | None = None,
+    new_metadata: dict[str, str] | None = None,
 ) -> dict[str, object]:
     old_df = old_rows if old_rows is not None else _read_dtx_report_rows(old_file_bytes, old_file_name)
     new_df = new_rows if new_rows is not None else _read_dtx_report_rows(new_file_bytes, new_file_name)
@@ -854,8 +871,9 @@ def generate_preorder_generation_workbook(
     )
     added_df.insert(0, "Change Type", "Added")
 
-    old_metadata = _extract_report_metadata(old_file_bytes, old_file_name)
-    new_metadata = _extract_report_metadata(new_file_bytes, new_file_name)
+    old_metadata = old_metadata if old_metadata is not None else _extract_report_metadata(old_file_bytes, old_file_name)
+
+    new_metadata = new_metadata if new_metadata is not None else _extract_report_metadata(new_file_bytes, new_file_name)
 
     connector_changes_columns = [
         "CNUM_Device Name-Suffix (Device Control Number)",
