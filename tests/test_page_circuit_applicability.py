@@ -21,11 +21,24 @@ import pytest
 from nicegui import ui
 from nicegui.testing import User
 
-SHOWCASE = Path(__file__).resolve().parents[1] / "demo" / "showcase" / "1_circuit_applicability"
-DTX = SHOWCASE / "DetailedDTxCircuitsReport_30QX_V1_A.xlsx"
-COMPLEXITIES = sorted(SHOWCASE.glob("2.- Harness_Complexity*.xlsx"))
+import tempfile
 
-pytestmark = pytest.mark.skipif(not DTX.exists(), reason="showcase files not built")
+from demo import showcase
+
+
+@pytest.fixture(scope="module")
+def files() -> dict:
+    """The showcase programme, built fresh. Only its builder is committed —
+    the workbooks are not — so a test that looked for them on disk was
+    skipped in CI and only ever ran on the machine that had built them."""
+    with tempfile.TemporaryDirectory(prefix="showcase_") as td:
+        out = Path(td)
+        showcase.build(out)
+        folder = out / "1_circuit_applicability"
+        yield {
+            "dtx": folder / "DetailedDTxCircuitsReport_30QX_V1_A.xlsx",
+            "complexities": sorted(folder.glob("2.- Harness_Complexity*.xlsx")),
+        }
 
 
 def StubFile(path: Path):
@@ -100,72 +113,73 @@ async def wait_for(user: User, text: str, seconds: float = 30.0) -> None:
             await asyncio.sleep(0.25)
 
 
-async def open_loaded(user: User) -> None:
+async def open_loaded(user: User, files: dict) -> None:
     """Open the page, feed the showcase files, and press Load and match."""
+    dtx, complexities = files["dtx"], files["complexities"]
     await user.open("/circuit-applicability")
     await user.should_see("1 · Inputs")
     dtx_zone, complexity_zone = in_order(user.find(ui.upload).elements)
-    await dtx_zone.handle_uploads([StubFile(DTX)])
-    await complexity_zone.handle_uploads([StubFile(p) for p in COMPLEXITIES])
+    await dtx_zone.handle_uploads([StubFile(dtx)])
+    await complexity_zone.handle_uploads([StubFile(p) for p in complexities])
     # the upload handlers are async background tasks; the zones confirm
     # what they received, and that confirmation is what the click waits on
-    await wait_for(user, f"✓ {DTX.name}")
-    await wait_for(user, f"✓ {len(COMPLEXITIES)} files received")
+    await wait_for(user, f"✓ {dtx.name}")
+    await wait_for(user, f"✓ {len(complexities)} files received")
     user.find("Load and match").click()
     await wait_for(user, "3 · Map families")
 
 
-async def open_analysed(user: User) -> None:
-    await open_loaded(user)
+async def open_analysed(user: User, files: dict) -> None:
+    await open_loaded(user, files)
     user.find("Run analysis").click()
     await wait_for(user, "4 · Review")
 
 
 class TestLoad:
-    async def test_the_files_load_and_families_match_by_name(self, user: User, store_path):
-        await open_loaded(user)
+    async def test_the_files_load_and_families_match_by_name(self, user: User, store_path, files):
+        await open_loaded(user, files)
         await user.should_see("7 connected")
         await user.should_see("2 open")
 
-    async def test_the_malformed_expression_is_caught_before_any_analysis(self, user: User, store_path):
-        await open_loaded(user)
+    async def test_the_malformed_expression_is_caught_before_any_analysis(self, user: User, store_path, files):
+        await open_loaded(user, files)
         await user.should_see("2 · Sales-code integrity")
         await user.should_see("1 unresolved")
         await user.should_see("QB1-QA1")
 
-    async def test_nothing_downstream_shows_before_a_run(self, user: User, store_path):
-        await open_loaded(user)
+    async def test_nothing_downstream_shows_before_a_run(self, user: User, store_path, files):
+        await open_loaded(user, files)
         await user.should_not_see("4 · Review")
         await user.should_not_see("5 · DTx data quality")
         await user.should_not_see("6 · Circuit chart")
 
 
 class TestRun:
-    async def test_every_downstream_card_appears_in_order(self, user: User, store_path):
-        await open_analysed(user)
+    async def test_every_downstream_card_appears_in_order(self, user: User, store_path, files):
+        await open_analysed(user, files)
         await user.should_see("5 · DTx data quality")
         await user.should_see("6 · Circuit chart")
         await user.should_see("7 chart(s)")
 
-    async def test_findings_are_preselected_for_the_customer(self, user: User, store_path):
-        await open_analysed(user)
+    async def test_findings_are_preselected_for_the_customer(self, user: User, store_path, files):
+        await open_analysed(user, files)
         await user.should_see("8 row(s) selected")
         saved = json.loads(store_path.read_text())
         assert len(saved["cleanup"]) == 8
 
-    async def test_the_quality_card_counts_what_the_run_found(self, user: User, store_path):
-        await open_analysed(user)
+    async def test_the_quality_card_counts_what_the_run_found(self, user: User, store_path, files):
+        await open_analysed(user, files)
         await user.should_see("5 finding(s) for the customer")
         await user.should_see("2 family(ies) not assessed")
 
-    async def test_the_master_list_names_the_harness_with_findings(self, user: User, store_path):
-        await open_analysed(user)
+    async def test_the_master_list_names_the_harness_with_findings(self, user: User, store_path, files):
+        await open_analysed(user, files)
         await user.should_see("IP · 9 ckt · 2 finding(s)")
 
 
 class TestReview:
-    async def test_unticking_a_row_is_remembered_as_a_dismissal(self, user: User, store_path):
-        await open_analysed(user)
+    async def test_unticking_a_row_is_remembered_as_a_dismissal(self, user: User, store_path, files):
+        await open_analysed(user, files)
         await click_ancestor(user, "IP · 9 ckt")
         await user.should_see("QK107")
         ticked = [cb for cb in in_order(user.find(ui.checkbox).elements) if cb.value]
@@ -175,10 +189,10 @@ class TestReview:
         saved = json.loads(store_path.read_text())
         assert saved["dismissed"], "an untick must survive to the next session"
 
-    async def test_ticking_on_the_connectors_tab_keeps_you_on_it(self, user: User, store_path):
+    async def test_ticking_on_the_connectors_tab_keeps_you_on_it(self, user: User, store_path, files):
         """The bug this page once had: a tick refreshed the card and the tabs
         snapped back to Circuits, losing your place mid-review."""
-        await open_analysed(user)
+        await open_analysed(user, files)
         await click_ancestor(user, "IP · 9 ckt")
         await user.should_see("Connectors (")
         tabs = in_order(user.find(ui.tabs).elements)[0]
@@ -192,8 +206,8 @@ class TestReview:
         await wait_for(user, "connector(s) shown")
         assert in_order(user.find(ui.tabs).elements)[0].value == "connectors"
 
-    async def test_a_dismissed_row_is_not_reselected_by_the_next_run(self, user: User, store_path):
-        await open_analysed(user)
+    async def test_a_dismissed_row_is_not_reselected_by_the_next_run(self, user: User, store_path, files):
+        await open_analysed(user, files)
         await click_ancestor(user, "IP · 9 ckt")
         await user.should_see("QK107")
         ticked = [cb for cb in in_order(user.find(ui.checkbox).elements) if cb.value]
