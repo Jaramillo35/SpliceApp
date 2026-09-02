@@ -87,12 +87,17 @@ def data_size(data_dir: Optional[Path] = None) -> int:
                if p.is_file() and _included(p, root))
 
 
-def create(data_dir: Optional[Path] = None, keep: int = KEEP) -> Backup:
-    """Archive the data directory and prune to the newest ``keep``."""
+def create(data_dir: Optional[Path] = None, keep: int = KEEP,
+           now: Optional[datetime] = None) -> Backup:
+    """Archive the data directory and prune to the newest ``keep``.
+
+    ``now`` names the archive; it is a parameter so a test can make several
+    backups without sleeping through the one-second stamp resolution.
+    """
     root = Path(data_dir or DATA_DIR)
     target_dir = backup_dir(root)
     target_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime(_STAMP)
+    stamp = (now or datetime.now()).strftime(_STAMP)
     target = target_dir / f"{_PREFIX}{stamp}{_SUFFIX}"
     partial = target.with_suffix(".partial")
 

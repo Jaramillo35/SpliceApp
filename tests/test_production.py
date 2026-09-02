@@ -92,13 +92,15 @@ class TestBackup:
         assert made.path.parent == data_dir / backup.BACKUP_DIR_NAME
 
     def test_newest_first_and_pruned(self, data_dir):
-        import time
-        for _ in range(4):
-            backup.create(data_dir, keep=3)
-            time.sleep(1.05)   # the stamp has one-second resolution
+        from datetime import datetime, timedelta
+        base = datetime(2026, 9, 2, 12, 0, 0)
+        for minute in range(4):
+            backup.create(data_dir, keep=3, now=base + timedelta(minutes=minute))
         found = backup.list_backups(data_dir)
         assert len(found) == 3
         assert found == sorted(found, key=lambda b: b.created, reverse=True)
+        assert found[0].created == base + timedelta(minutes=3), "the newest survives"
+        assert all(b.created != base for b in found), "the oldest was pruned"
 
     def test_data_size_excludes_backups_and_logs(self, data_dir):
         before = backup.data_size(data_dir)
