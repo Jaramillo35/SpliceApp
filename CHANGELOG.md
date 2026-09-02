@@ -28,6 +28,22 @@ after an update.
 - **DTx Compare**: programme, phase and export date read from each file's
   title block; when two exports share a phase the dates tell them apart.
 
+### Performance
+- **DTx Compare is 6.5× faster**: 14.4 s → 2.2 s on a real 8,600-row pair.
+  The comparison loop is vectorised, each file is parsed once instead of
+  four times, and cell normalisation is column-wise. Output proven
+  identical cell for cell. The test suite runs in 35 s instead of 60.
+- The interface starts without pyarrow, altair or streamlit installed
+  (0.8 s of a 0.9 s start was pyarrow being probed for nothing).
+
+### Removed
+- `splice/secr`, a 5,444-line copy of the SECR engine that no page used.
+- The 42 MB recorder executable from git (published as a release instead)
+  and a graphing tool's 104-file scratch cache.
+- Eight functions nothing called, twelve unused imports, one unreachable block.
+- The VBOM engine no longer loads the tkinter desktop app by file path; it is
+  a plain module now (`splice/vbom/engine.py`) and the desktop app imports it.
+
 ### Changed
 - **Launchers open the new interface** (`localhost:8504`). The previous
   Streamlit interface stays available at `localhost:8501`.
