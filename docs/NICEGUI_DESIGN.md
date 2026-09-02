@@ -33,43 +33,83 @@ opens it; it never overlays the content column on its own.
 
 | Token | Value |
 |---|---|
-| Canvas / surface | `#0e1117` / `#1a1d24` (dark-first, committed) |
-| Brand primary | `#d95926` (Versigent orange) |
-| Text / muted | `#e8e8ec` / 60–74% mixes |
-| Line | text @ 12–14% |
-| Radius | 12px cards, 999px chips |
-| Status | blocker `#e66767` · high `#c98500` · review `#d5c04b` · ok `#199e70` · info `#3987e5` — always icon + label |
-| Charts | validated orange-first categorical set (see UI_UX_AUDIT.md), via echarts |
-| Motion | 140–180ms ease-out reveals; press scale 0.97; `prefers-reduced-motion` honored; nothing decorative |
+| Canvas / surface / surface-2 / surface-3 | `#0e1117` / `#1a1d24` / `#14161c` (rail, header, uploads) / `#21252e` (hover, selected) |
+| Brand primary | `#d95926` (Versigent orange) — spent on the primary action, the active nav item and selected rows, nowhere else |
+| Text / text-2 / text-3 | `#e8e8ec` / `#a7adb6` / `#767d87` — solid tiers, never opacity |
+| Line / grid | text @ 13 % / text @ 8 % |
+| Font | system UI (Segoe UI on the Windows hosts, San Francisco on Mac); mono for identifiers |
+| Type scale | title 20/600 · section 16/600 · body 14 · data 13 tabular · caption 12 (the floor) · eyebrow 11/600 uppercase +0.08em · KPI 24/600 tabular |
+| Space | 4 · 8 · 12 · 16 · 24 · 32 · 48; card padding 16, section gap 24, page padding 24; content max 1,280 |
+| Radius | 6 controls · 10 cards · 999 chips |
+| Status | blocker `#e66767` · high `#c98500` · review `#d5c04b` · ok `#199e70` · info `#3987e5` — always icon + word, one green |
+| Charts | validated orange-first categorical set via `components.echart` (theme axis, grid, tooltip applied once) |
+| Motion | 140–180 ms ease-out reveals; press scale 0.97; `prefers-reduced-motion` honoured; nothing decorative |
 
-## Interaction canon (every page obeys)
+`tests/test_theme_tokens.py` refuses a colour literal or a sub-12px class
+anywhere under `nicegui_app/` except `theme.py`.
 
-1. **One flow shape**: inputs card → primary action → results. Uploads read
-   bytes immediately (chips confirm each file); engines run via
-   `run.io_bound` with a spinner notification; completion is a toast.
-2. **No page ever rebuilds** — `@ui.refreshable` sections update in place.
-3. **Destructive or judgment actions get dialogs** (dispositions, deletes).
-4. **Downloads are buttons with the filename as label** — one convention.
-5. **Empty states teach**: what to load, where it comes from, what happens.
-6. **Errors are captions under the thing that failed**, not global banners.
+## Page archetypes
+
+Every route is exactly one of these. The archetype fixes the layout, where
+the primary action lives, what the empty state says, and what the page
+contributes to the Overview.
+
+| Archetype | Pages | Shape |
+|---|---|---|
+| **A · Converter** | DTx Compare, Splice Generation, HRN Chart Builder | `components.converter()`: a narrow sticky inputs panel ending in one gated `action`, beside a `result_panel` that exists from the first paint and teaches until there is a result. Page-specific editors (Splice sales codes, HRN supplier list) sit below the grid at full width. |
+| **B · Workbench** | Circuit Applicability, Circuit Health, Harness Complexity, VBOM Risk Matrix | `step_bar(...)` (sticky, states derived from state after every refresh) → `kpi_strip` → `section(step=...)` cards → sign-off. Judgement persists in a store that carries `saved_by`, `saved`, `revision`; the header `envelope` says who saved last; a stale write is refused, never merged. |
+| **C · Records** | SECR Database, Ask the Database | Search first; named columns; tabs deep-linkable by query parameter. |
+| **D · Utility** | Overview, Meeting Transcripts, Downloads, Admin | Overview reads the activity feed and the workbench stores; Transcripts is per machine; Admin holds the one confirm-dialog (restore). |
+
+## Interaction canon, second edition (every page obeys)
+
+1. **One primary action per page, gated, verb "Run".** `action(label, fn, needs=…)` is disabled until every named input exists and says what is missing. Secondary paths are outline buttons or links, never a second orange button.
+2. **The accent is spent on the action.** Uploads are quiet rows; results get the width.
+3. **The result panel always exists.** Before a run it teaches; after a run it is the first thing painted. Workbench cards may stay absent until their step is reachable — the step bar shows them waiting.
+4. **One toast per action** (the runner's). Everything else the run has to say is a `note` on the page.
+5. **Downloads are always a click, always the filename.** Several files become one `downloads` menu. Nothing is pushed on completion.
+6. **Twelve pixels is the floor.** Density comes from spacing and tabular figures, not from shrinking.
+7. **Status is icon plus word.** One green. Never a single letter, a coloured border alone, or a coloured label as an error.
+8. **Every click target is a button or a link.** Filter chips (`toggle_chip`) are buttons with pressed state and the keyboard path charts mirror. Icon-only buttons carry a name.
+9. **Caps are announced.** `frame_table(cap=…)` says how many rows it hides and points to the export.
+10. **Shared writes carry an author and a revision.** The page shows who saved last; stale writes are refused with a reload prompt.
+11. **Long pages have a position.** Workbenches show the step bar; converters fit inputs and result in one viewport above 1,024 px.
+12. **Nothing decorative animates.**
+
+## State
+
+| Tier | Examples | Home |
+|---|---|---|
+| Per client | uploaded bytes, filters, selection, active tab | page closures |
+| Per user | your name (rail footer), preferences | `app.storage.user` (cookie signed with `SPLICE_STORAGE_SECRET`) |
+| Shared, team | mappings, repairs, cleanup ticks, dispositions, sign-offs, VBOM resolutions, SECR issuance | the stores under `data/`, each with `saved_by` / `saved` / `revision` |
+| Per machine | the transcript recorder | the recorder exe (Part B); the page says so |
+
+Every completed engine run is appended to `data/activity.jsonl` by the
+runner (tool, route, summary, who, programme); the Overview's Continue list
+reads it.
 
 ## Architecture
 
 ```
 nicegui_app/
   main.py          entry: theme boot, imports pages (routes), ui.run
-  theme.py         tokens + global CSS + apply()
-  components.py    frame (rail+header+content), cards, chips, upload zones,
-                   engine runner, download helpers, feedback dialog
-  pages/           one module per route, thin over the engines
+  theme.py         tokens, type scale, global CSS, echart_theme(), apply()
+  components.py    page registry (PAGES) · frame (rail + header + envelope)
+                   · converter / result_panel · section / step_bar / set_step
+                   · upload_row · action · kpi / kpi_strip · frame_table
+                   · chip / toggle_chip / note · download / downloads · echart
+                   · run_engine / run_engine_progress (log to the activity feed)
+  pages/           one module (or package) per route, thin over the engines
 ```
 
-- Per-client state lives in closures inside each `@ui.page` builder —
-  module-level singletons are shared across users and are only used for
-  process-wide things (the transcripts Recorder, baselines on disk).
+- Per-client state lives in closures inside each `@ui.page` builder;
+  per-client registries (gated actions, steps, header slot) hang off the
+  client. Module-level singletons are only for process-wide things (the
+  transcripts Recorder).
 - Engines run in worker threads (`run.io_bound`); the UI thread never blocks.
 - Feedback: one global dialog (header button on every page) writing to the
-  existing FeedbackStore.
+  existing FeedbackStore; its area list is the page registry.
 
 ## Migration waves
 

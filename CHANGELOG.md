@@ -6,6 +6,33 @@ after an update.
 
 ## Unreleased
 
+### Changed
+- **One interface schema across the toolkit.** The rail is grouped by how you
+  work — Workbenches (judgement, saved, signed off), Converters (files in,
+  workbook out), Records, Utilities — with Admin and your name in the footer.
+  Every page follows one of four shapes. Converters (DTx Compare, Splice
+  Generation, HRN Chart Builder) show inputs beside the result, with one
+  Run button that says what it still needs. Workbenches (Circuit
+  Applicability, Circuit Health, Harness Complexity, VBOM Risk Matrix) have
+  a step bar that shows where you are, a row of figures under it, and a
+  header line saying who saved the workbench last.
+- **Quieter inputs, clearer actions.** Upload boxes are no longer orange;
+  the one orange button on a page is the action. Long runs report progress
+  under the button, and what a run has to say stays on the page instead of
+  disappearing as pop-ups.
+- **Readable at a glance.** No text below 12 px; secondary text is a solid
+  colour; tables share one style and say when they are showing only part of
+  the rows; downloads are always a click and always named after the file.
+- **Overview replaces Home.** It lists the last run of each tool (who, when,
+  which programme) and what needs attention: cleanup rows not yet exported,
+  dispositions, resolved review cases, open feedback tickets.
+- **Team-safe saving.** Circuit Applicability (and the VBOM review gate)
+  record who saved and refuse to overwrite a change someone else made since
+  you loaded the page — you are asked to reload instead. Set your name once
+  in the rail footer.
+- **Keyboard and screen readers.** Filter chips, list rows and suggestion
+  chips are real buttons; severity always shows the word; inputs have labels.
+
 ### Added
 - **Admin page** (`/admin`): what version is running, what changed, whether each
   service answers, how much data there is, backups with one-click export and
