@@ -1121,10 +1121,6 @@ def _build_d454_engineering_configurations(
     ))
     
     return configs
-    always_present = [e for e in endpoints if e.sales_code == ""]
-    if always_present:
-        return sorted(always_present, key=lambda e: (e.cnum, e.pin))[0]
-    return sorted(endpoints, key=lambda e: (len(e.sales_code), e.cnum, e.pin))[0]
 
 
 def generate_direct_connections(

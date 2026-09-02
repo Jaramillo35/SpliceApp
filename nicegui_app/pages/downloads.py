@@ -14,8 +14,10 @@ ITEMS = [
     ("teams-transcript-recorder.zip",
      "Standalone transcript recorder (Windows .exe)",
      "Windows recorder with a status window — download, unzip, and run the "
-     ".exe (no install, no Python). Anonymized by default; recording names is "
-     "opt-in behind the same privacy attestation as the Transcripts page."),
+     ".exe (no install, no Python). Anonymized by default. Built on Windows "
+     "and published as a release rather than committed: the 42 MB archive "
+     "was most of the repository, and the copy in git predated the "
+     "privacy attestation this description used to promise."),
     ("ispeed-dtcr-downloader.zip",
      "iSpeed DTCR Downloader (Chrome extension)",
      "Captures iSpeed DTCR search results, attachments, and a summary CSV in "
@@ -36,4 +38,6 @@ def page() -> None:
                 if path.exists():
                     c.download_button(filename, lambda p=path: p.read_bytes())
                 else:
-                    c.chip("high", f"{filename} not found in assets/downloads")
+                    c.chip("review", f"{filename} is not in this build — "
+                                     "get it from the project's Releases page, "
+                                     "or drop it into assets/downloads")

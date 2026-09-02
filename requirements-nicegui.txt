@@ -1,3 +1,20 @@
-# NiceGUI surface — everything the engines need, plus the UI framework.
--r requirements.txt
+# NiceGUI surface — the engines plus the UI framework, and nothing Streamlit.
+#
+# This file used to chain to requirements.txt and so installed streamlit,
+# altair and pyarrow into an image that never imports them. pyarrow alone was
+# 0.8s of the 0.9s process start, because pandas probes for it on import.
+# Pins match requirements.txt for the packages both surfaces share.
+
+pandas==3.0.3
+openpyxl==3.1.5
+xlsxwriter==3.2.9
+sympy==1.14.0
+xlrd==2.0.2
+requests==2.34.2
 nicegui==3.15.0
+
+# Meeting Transcripts capture reads the Teams Live Captions window through
+# Windows UI Automation. Windows-only by nature; the page degrades to a
+# read-only transcript browser elsewhere.
+uiautomation>=2.0.18 ; sys_platform == "win32"
+comtypes>=1.2.0 ; sys_platform == "win32"

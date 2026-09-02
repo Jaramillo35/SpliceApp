@@ -46,3 +46,8 @@ data/circuit_applicability/
 # runtime output of the admin page and the log handler
 data/backups/
 data/logs/
+
+# scratch output of the code-graphing tool
+graphify-out/
+# built executables are published as GitHub Releases, not committed
+assets/downloads/teams-transcript-recorder.zip

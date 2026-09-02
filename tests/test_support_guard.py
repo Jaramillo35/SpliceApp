@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("streamlit")  # ui/ is the Streamlit surface; absent from the NiceGUI env
+
 from secrdb import diagnostics
 
 
