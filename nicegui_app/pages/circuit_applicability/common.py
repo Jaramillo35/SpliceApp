@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from nicegui import ui
 
+from nicegui_app import components as c
 from nicegui_app import theme
 
 ROW_H = 34          # px; every cell in a row shares it so the lines align
@@ -20,13 +21,13 @@ VERDICT_KIND = {
 def line(matched: bool) -> str:
     """The connector between a family and its complexity file."""
     if matched:
-        return (f'<svg width="100%" height="{ROW_H}">'
+        return (f'<svg width="100%" height="{ROW_H}" aria-label="connected">'
                 f'<line x1="0" y1="{ROW_H//2}" x2="100%" y2="{ROW_H//2}" '
                 f'stroke="{GREEN}" stroke-width="2"/>'
                 f'<circle cx="6" cy="{ROW_H//2}" r="3" fill="{GREEN}"/>'
                 f'<circle cx="calc(100% - 6px)" cy="{ROW_H//2}" r="3" fill="{GREEN}"/>'
                 f'</svg>')
-    return (f'<svg width="100%" height="{ROW_H}">'
+    return (f'<svg width="100%" height="{ROW_H}" aria-label="not connected">'
             f'<line x1="0" y1="{ROW_H//2}" x2="100%" y2="{ROW_H//2}" '
             f'stroke="{RED}" stroke-width="2" stroke-dasharray="6,5"/>'
             f'<circle cx="6" cy="{ROW_H//2}" r="3" fill="none" stroke="{RED}" '
@@ -70,13 +71,5 @@ def guide() -> None:
 
 
 def filter_chip(label: str, active: bool, on_click, count: int) -> None:
-    colour = theme.BRAND if active else theme.LINE
-    chip = ui.element("div").classes(
-        "rounded-full px-2 py-0.5 cursor-pointer shrink-0") \
-        .style(f"background:{theme.BRAND}26;border:1px solid {colour}"
-               if active else
-               f"background:{theme.SURFACE_2};border:1px solid {colour}")
-    with chip:
-        ui.label(f"{label} · {count}").classes("text-xs font-semibold") \
-            .style(f"color:{theme.BRAND}" if active else "")
-    chip.on("click", lambda _e: on_click())
+    """A filter is a real button (keyboard-operable, pressed state)."""
+    c.toggle_chip(label, active, on_click, count)

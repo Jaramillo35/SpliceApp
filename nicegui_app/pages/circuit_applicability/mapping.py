@@ -28,11 +28,11 @@ def build(wb: Workbench) -> None:
         orphans = matching.orphans(labels, suggestions)
         connected = sum(1 for v in mapped.values() if v)
 
-        with c.card("3 · Map families to complexity files",
-                    f"DTx {meta.program or '?'} · phase {meta.phase or '?'} "
-                    f"· {len(state['families'])} families · "
-                    f"{len(state['harnesses'])} file(s). A family may take "
-                    f"several harnesses."):
+        with c.section("3 · Map families to complexity files",
+                       f"DTx {meta.program or '?'} · phase {meta.phase or '?'} "
+                       f"· {len(state['families'])} families · "
+                       f"{len(state['harnesses'])} file(s). A family may take "
+                       f"several harnesses.", step="Map"):
             with ui.row().classes("gap-2 flex-wrap items-center"):
                 c.chip("ok", f"{connected} connected")
                 if len(state["families"]) - connected:
@@ -68,13 +68,13 @@ def build(wb: Workbench) -> None:
                     _candidates_cell(family, suggestions.get(family, []),
                                      chosen)
 
-            with ui.row().classes("items-center gap-3 mt-2"):
-                ui.button("Run analysis", icon="play_arrow",
-                          on_click=lambda: actions.run(wb)).props("unelevated dense") \
-                    .set_enabled(any(mapped.values()))
+            with ui.row().classes("items-start gap-3 mt-2 flex-wrap"):
+                c.action("Run analysis", lambda: actions.run(wb),
+                         needs=lambda: [] if any(state["mapping"].values())
+                         else ["at least one connected family"])
                 ui.label("Only connected families are analyzed; each "
                          "family × harness pairing is resolved separately.") \
-                    .classes("text-xs sx-muted")
+                    .classes("sx-caption pt-2")
                 if wb.open_issues():
                     c.chip("blocker",
                            f"{len(wb.open_issues())} sales-code expression(s) "
@@ -124,7 +124,8 @@ def build(wb: Workbench) -> None:
                 ui.label(detail).classes("text-xs sx-muted")
             ui.button(icon="close",
                       on_click=lambda f=family, n=filename: _remove(f, n)) \
-                .props("flat dense round size=xs")
+                .props(f'flat dense round size=xs aria-label="Remove {labels.get(filename, filename)}"') \
+                .tooltip("Remove this harness from the family")
 
     def _candidates_cell(family: str, suggestions, chosen: list) -> None:
         with ui.element("div").classes("flex items-center gap-1 flex-wrap") \
@@ -143,17 +144,14 @@ def build(wb: Workbench) -> None:
         """A suggestion. Clicking adds it to that family's mapping."""
         strong = sscore is not None and sscore >= 0.7
         colour = GREEN if strong else theme.STATUS["review"]
-        chip = ui.element("div").classes(
-            "rounded px-2 py-0.5 cursor-pointer shrink-0 truncate") \
+        text = label if sscore is None else f"{label}  {sscore:.0%}"
+        chip = ui.button(text, on_click=lambda _e, f=filename, fam=family: _add(fam, f)) \
+            .props("flat dense no-caps") \
+            .classes("rounded px-2 shrink-0 truncate text-xs font-semibold") \
             .style(f"background:{colour}1f;border:1px solid {colour}66;"
-                   f"max-width:12rem")
+                   f"color:{colour};max-width:12rem;min-height:26px")
         with chip:
-            text = label if sscore is None else f"{label}  {sscore:.0%}"
-            ui.label(text).classes("text-xs font-semibold truncate") \
-                .style(f"color:{colour}")
-            if tooltip:
-                ui.tooltip(tooltip)
-        chip.on("click", lambda _e, f=filename, fam=family: _add(fam, f))
+            ui.tooltip(tooltip or "Click to connect this harness to the family")
 
     def _set_mapping(family: str, values) -> None:
         # de-duplicate while preserving the order the SE picked

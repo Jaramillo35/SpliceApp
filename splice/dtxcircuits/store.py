@@ -31,7 +31,26 @@ SCHEMA = 1
 
 def empty() -> dict:
     return {"schema": SCHEMA, "mapping": {}, "cleanup": {}, "fixes": {},
-            "saved": ""}
+            "saved": "", "saved_by": "", "revision": 0}
+
+
+class StaleWrite(Exception):
+    """The store changed under us: someone else saved since we loaded it.
+
+    Carries who and when, so the page can say so instead of overwriting."""
+
+    def __init__(self, current: dict) -> None:
+        self.by = str(current.get("saved_by", "") or "")
+        self.at = str(current.get("saved", "") or "")
+        self.revision = int(current.get("revision", 0) or 0)
+        super().__init__(f"changed by {self.by or 'someone else'} at {self.at}")
+
+
+def envelope(data: dict) -> dict:
+    """Who saved the store last, when, and which revision that was."""
+    return {"by": str(data.get("saved_by", "") or ""),
+            "at": str(data.get("saved", "") or ""),
+            "revision": int(data.get("revision", 0) or 0)}
 
 
 def harness_identity(def_id: str = "", harness_name: str = "") -> str:
@@ -63,16 +82,30 @@ def load(path: Optional[Path] = None) -> dict:
     # sales-code repairs are keyed by the raw expression, so they carry over
     # to any DTx that repeats the same malformed text
     data.setdefault("fixes", {})
+    data.setdefault("saved_by", "")
+    data.setdefault("revision", 0)
     return data
 
 
-def save(state: dict, path: Optional[Path] = None) -> Path:
-    """Write atomically, so an interrupted save cannot truncate the file."""
+def save(state: dict, path: Optional[Path] = None, *, by: str = "",
+         expected_revision: Optional[int] = None) -> Path:
+    """Write atomically, so an interrupted save cannot truncate the file.
+
+    Every save carries an author and bumps the revision. A caller that
+    passes ``expected_revision`` is refused with :class:`StaleWrite` when
+    the file has moved on since it was loaded — the shared server's two
+    engineers must not silently overwrite each other's mapping.
+    """
     target = Path(path or STORE_PATH)
     target.parent.mkdir(parents=True, exist_ok=True)
+    current = load(target)
+    if expected_revision is not None and current["revision"] != expected_revision:
+        raise StaleWrite(current)
     payload = dict(state)
     payload["schema"] = SCHEMA
     payload["saved"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    payload["saved_by"] = by
+    payload["revision"] = current["revision"] + 1
     tmp = target.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(target)

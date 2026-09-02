@@ -20,9 +20,7 @@ from splice.dtxcircuits.complexity import read_harness_file
 async def load(wb: Workbench) -> None:
     state = wb.state
     if not state["dtx"] or not state["uploads"]:
-        ui.notify("Load the DTx and at least one complexity file",
-                  type="warning")
-        return
+        return   # the action is gated; this is only a guard
 
     def work(report):
         report(0.05, "Reading the DTx…")
@@ -82,23 +80,28 @@ async def load(wb: Workbench) -> None:
                  harnesses=harnesses, metas=metas, mapping=mapping,
                  corr=corr, entries=[], charts=[], selected=None,
                  issues=issues)
+    # One toast per action (the runner's "Files loaded"). Everything else
+    # the load has to say stays on the page, under the button, where it
+    # can be read after the toasts are gone.
+    notes = [("info", f"{len(mapping)} of {len(families)} families matched "
+                      "automatically")]
     if restored_count:
-        ui.notify(f"Restored {restored_count} mapping(s) from your last "
-                  "session", type="info")
+        notes.append(("info", f"Restored {restored_count} mapping(s) from "
+                              "the saved workbench"))
     # a repair confirmed on an earlier DTx applies to any later one
     # repeating the same text — say so, or it happens invisibly
     carried = sum(1 for i in issues if i.expression in state["fixes"])
     if carried:
-        ui.notify(f"{carried} sales-code repair(s) carried over from an "
-                  "earlier session and were applied to this DTx",
-                  type="info", multi_line=True)
+        notes.append(("info", f"{carried} sales-code repair(s) carried over "
+                              "from an earlier session and applied to this DTx"))
     for problem in failed[:5]:
-        ui.notify(problem, type="negative", multi_line=True,
-                  close_button=True)
-    ui.notify(f"{len(mapping)} of {len(families)} families matched "
-              "automatically", type="positive")
+        notes.append(("blocker", problem))
+    if len(failed) > 5:
+        notes.append(("blocker", f"…and {len(failed) - 5} more file(s) could not be read"))
+    state["load_notes"] = notes
+    c.header_chip(f"{meta.program or '?'} · {meta.phase or '?'}")
     wb.measure()
-    wb.refresh("integrity", "mapping", "results")
+    wb.refresh("load_notes", "integrity", "mapping", "results")
 
 
 def _conditions_by(rows, attribute: str) -> dict:
@@ -116,8 +119,7 @@ def _conditions_by(rows, attribute: str) -> dict:
 async def run(wb: Workbench) -> None:
     state = wb.state
     if not any(state["mapping"].values()):
-        ui.notify("Connect at least one family first", type="warning")
-        return
+        return   # the action is gated; this is only a guard
 
     def work(report):
         # repairs first: an unfixed expression is false everywhere and
@@ -163,10 +165,8 @@ async def run(wb: Workbench) -> None:
         added = [k for k in picked if k not in state["cleanup"]]
         state["cleanup"].update({k: v for k, v in picked.items()
                                  if k in added})
-        if added:
-            ui.notify(f"{len(added)} finding(s) added to the review "
-                      "automatically — untick any you do not want the "
-                      "customer to see", type="info", multi_line=True)
+        # said in the review card, not as a toast the SE has already lost
+        state["auto_added"] = len(added)
         wb.persist()
         wb.measure()
         wb.refresh("chart")

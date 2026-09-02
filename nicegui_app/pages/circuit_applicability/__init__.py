@@ -15,6 +15,10 @@ One module per card. They share a :class:`Workbench` — the state dict and
 a registry of each card's refreshable view — and nothing else. The order
 below is the order on the page; the quality card is measured only once an
 analysis exists, so it sits after the review.
+
+Archetype B: a sticky step bar names every stage from the first paint and
+carries its state; a KPI strip under it follows the same state; the header
+says who saved the workbench last.
 """
 
 from __future__ import annotations
@@ -23,9 +27,9 @@ from nicegui import ui
 
 from nicegui_app import components as c
 from nicegui_app.pages.circuit_applicability import (
-    chart, common, inputs, integrity, mapping, quality, review,
+    chart, common, inputs, integrity, kpis, mapping, quality, review,
 )
-from nicegui_app.pages.circuit_applicability.workbench import Workbench
+from nicegui_app.pages.circuit_applicability.workbench import STEPS, Workbench
 
 
 @ui.page("/circuit-applicability")
@@ -34,6 +38,9 @@ def page() -> None:
     with c.frame("Circuit Applicability",
                  "DTx circuits × harness complexity — mapped, then resolved "
                  "per circuit and per connector."):
+        wb.envelope = c.envelope("")
+        c.step_bar(*STEPS)
+        kpis.build(wb)
         common.guide()
         inputs.build(wb)       # 1 · Inputs
         integrity.build(wb)    # 2 · Sales-code integrity
@@ -41,3 +48,4 @@ def page() -> None:
         review.build(wb)       # 4 · Review
         quality.build(wb)      # 5 · DTx data quality
         chart.build(wb)        # 6 · Circuit chart
+        wb.sync()

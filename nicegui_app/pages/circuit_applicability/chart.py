@@ -18,13 +18,14 @@ def build(wb: Workbench) -> None:
         charts = state["charts"]
         if not charts:
             return
-        with c.card("6 · Circuit chart",
+        with c.section("6 · Circuit chart",
                     "Which part number carries which wire, per harness "
                     "family. The DTx condition flows through the whole "
                     "circuit and is restated in each harness's own codes; "
                     "a circuit reaching three or more cavities gets a "
                     "splice. Same layout as the Circuit Summary that "
-                    "Circuit Health reads, so this feeds straight back."):
+                    "Circuit Health reads, so this feeds straight back.",
+                 step="Chart"):
             with ui.row().classes("gap-2 flex-wrap items-center"):
                 c.chip("info", f"{len(charts)} chart(s) · "
                                f"{sum(len(x.rows) for x in charts)} circuit end(s)")
@@ -35,7 +36,7 @@ def build(wb: Workbench) -> None:
                 c.chip("blocker" if findings else "ok",
                        f"{findings} row(s) no build carries"
                        if findings else "Every row is carried by a build")
-                ui.button("Download chart (.xlsx)", icon="download",
+                ui.button("Circuit_Chart.xlsx", icon="download",
                           on_click=lambda: _download_chart()) \
                     .props("outline dense no-caps")
 
@@ -105,7 +106,7 @@ def build(wb: Workbench) -> None:
         """)
         ui.label(f"Coverage: " + "  ".join(
             f"{pn[-6:]} {chart.coverage(pn)}/{len(chart.rows)}"
-            for pn in chart.part_numbers)).classes("text-xs sx-mono sx-muted")
+            for pn in chart.part_numbers)).classes("sx-caption sx-mono")
 
     def _other_end(chart, row) -> str:
         """Where the wire goes, named only as far as it needs to be."""

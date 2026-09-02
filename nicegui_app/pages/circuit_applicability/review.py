@@ -59,12 +59,11 @@ def build(wb: Workbench) -> None:
             state["selected"] = labels[0]
         entry = next(e for e in entries if e.label == state["selected"])
 
-        with c.card("4 · Review"):
+        with c.section("4 · Review", step="Review"):
             _cleanup_bar()
             with ui.row().classes("w-full gap-4 items-start no-wrap"):
                 with ui.column().classes("gap-1 min-w-[15rem]"):
-                    ui.label("FAMILY × HARNESS").classes(
-                        "sx-eyebrow")
+                    ui.label("Family × harness").classes("sx-eyebrow")
                     for e in entries:
                         _master_row(e)
                 with ui.column().classes("flex-1 min-w-0 gap-2"):
@@ -74,23 +73,23 @@ def build(wb: Workbench) -> None:
         a = entry.analysis
         n_find = len(a.findings) + len(a.cnum_findings)
         active = entry.label == state["selected"]
-        row = ui.element("div").classes(
-            "rounded px-2 py-1.5 cursor-pointer w-full") \
-            .style(f"background:{theme.BRAND}26" if active
+        row = ui.button(on_click=lambda _e, lbl=entry.label: (
+            state.update(selected=lbl), results_view.refresh())) \
+            .props(f'flat no-caps align=left aria-pressed="{"true" if active else "false"}"') \
+            .classes("rounded px-2 py-1.5 w-full normal-case") \
+            .style(f"background:{theme.wash(theme.BRAND)}" if active
                    else f"background:{theme.SURFACE_2}")
         with row:
-            with ui.row().classes("items-center gap-2 no-wrap"):
+            with ui.row().classes("items-center gap-2 no-wrap w-full"):
                 ui.icon("report" if n_find else "check_circle") \
                     .classes("text-sm") \
                     .style(f"color:{RED if n_find else GREEN}")
-                with ui.column().classes("gap-0 min-w-0"):
+                with ui.column().classes("gap-0 min-w-0 items-start"):
                     ui.label(entry.family).classes(
                         "text-xs font-semibold truncate")
                     ui.label(f"{a.harness} · {len(a.circuits)} ckt"
                              + (f" · {n_find} finding(s)" if n_find else "")) \
                         .classes("text-xs sx-muted truncate")
-        row.on("click", lambda _e, lbl=entry.label: (
-            state.update(selected=lbl), results_view.refresh()))
 
     def _cleanup_bar() -> None:
         """What is selected for cleanup, and the export that carries it."""
@@ -116,8 +115,12 @@ def build(wb: Workbench) -> None:
                                             results_view.refresh())) \
                     .props("flat dense size=sm")
             ui.space()
-            ui.button("Export review (.xlsx)", icon="download",
-                      on_click=lambda: _export()).props("outline dense")
+            ui.button("Circuit_Applicability_Review.xlsx", icon="download",
+                      on_click=lambda: _export()).props("outline dense no-caps")
+        if state["auto_added"]:
+            c.note("info", f"{state['auto_added']} finding(s) were added to the "
+                           "review by the last run — untick any you do not want "
+                           "the customer to see")
 
     async def _export() -> None:
         # Off the event loop. A real programme is ~5,400 circuit ends, and
@@ -188,8 +191,7 @@ def build(wb: Workbench) -> None:
         conditions = sorted({c.expression or "" for c in a.circuits
                              if c.expression})
         with ui.row().classes("items-center gap-2 flex-wrap mt-1"):
-            ui.label("FILTER").classes(
-                "sx-eyebrow")
+            ui.label("Filter").classes("sx-eyebrow")
             filter_chip("Findings", f["findings"],
                         lambda: _toggle_flag("findings"),
                         len([x for x in a.circuits if x.is_finding]))
@@ -203,7 +205,7 @@ def build(wb: Workbench) -> None:
                                 lambda v=verdict: _toggle_verdict(v), n)
             ui.select({None: "any condition",
                        **{x: x for x in conditions}},
-                      value=f["condition"], label=None,
+                      value=f["condition"], label="Condition",
                       on_change=lambda e: _set_condition(e.value)) \
                 .props("dense outlined options-dense").classes(
                     "text-xs min-w-[12rem]")
@@ -251,12 +253,12 @@ def build(wb: Workbench) -> None:
         selected = _is_selected(entry, kind, ident)
         with ui.row().classes(
                 "items-center gap-2 w-full no-wrap rounded px-2 py-1") \
-                .style(f"background:{theme.BRAND}1a" if selected
+                .style(f"background:{theme.wash(theme.BRAND)}" if selected
                        else f"background:{theme.SURFACE_2}"):
             ui.checkbox(value=selected,
                         on_change=lambda _e, k=kind, i=ident:
                             _toggle_cleanup(entry, k, i)) \
-                .props("dense size=xs")
+                .props(f'dense size=xs aria-label="Select {ident} for cleanup"')
             ui.label(ident).classes("text-xs font-semibold w-24 shrink-0")
             c.chip(VERDICT_KIND.get(verdict, "info"), verdict)
             ui.label(condition).classes("text-xs sx-mono w-40 truncate")
@@ -277,12 +279,12 @@ def build(wb: Workbench) -> None:
             selected = _is_selected(entry, "gap", g.code)
             with ui.row().classes(
                     "items-center gap-2 w-full no-wrap rounded px-2 py-1") \
-                    .style(f"background:{theme.BRAND}1a" if selected
+                    .style(f"background:{theme.wash(theme.BRAND)}" if selected
                            else f"background:{theme.SURFACE_2}"):
                 ui.checkbox(value=selected,
                             on_change=lambda _e, code=g.code:
                                 _toggle_cleanup(entry, "gap", code)) \
-                    .props("dense size=xs")
+                    .props(f'dense size=xs aria-label="Select gap {g.code} for cleanup"')
                 ui.label(g.code).classes("text-xs font-semibold w-20")
                 ui.label(f"{g.occurrences} DTx row(s)") \
                     .classes("text-xs sx-muted w-28")

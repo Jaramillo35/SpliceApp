@@ -50,7 +50,7 @@ def build(wb: Workbench) -> None:
     def integrity_view() -> None:
         if not state["issues"]:
             if state["rows"]:
-                with c.card("2 · Sales-code integrity"):
+                with c.section("2 · Sales-code integrity", step="Integrity"):
                     c.chip("ok", "Every sales-code expression in this DTx "
                                  "parses — nothing to fix")
             return
@@ -62,19 +62,18 @@ def build(wb: Workbench) -> None:
                  if not (f["unresolved_only"] and i.expression in state["fixes"])
                  and (not f["kinds"] or i.kind in f["kinds"])]
 
-        with c.card("2 · Sales-code integrity",
-                    "Checked before anything is resolved: a malformed "
-                    "expression is false for every configuration, so its "
-                    "circuits would read as 'never built' and look like "
-                    "real defects."):
+        with c.section("2 · Sales-code integrity",
+                       "Checked before anything is resolved: a malformed "
+                       "expression is false for every configuration, so its "
+                       "circuits would read as 'never built' and look like "
+                       "real defects.", step="Integrity"):
             with ui.row().classes("items-center gap-2 flex-wrap"):
                 c.chip("blocker" if open_issues else "ok",
                        f"{len(open_issues)} unresolved")
                 if len(issues) - len(open_issues):
                     c.chip("ok", f"{len(issues) - len(open_issues)} resolved "
                                  "(untick 'Unresolved only' to review)")
-                ui.label("FILTER").classes(
-                    "sx-eyebrow ml-2")
+                ui.label("Filter").classes("sx-eyebrow ml-2")
                 filter_chip("Unresolved only", f["unresolved_only"],
                             lambda: (f.__setitem__("unresolved_only",
                                                    not f["unresolved_only"]),
@@ -99,7 +98,7 @@ def build(wb: Workbench) -> None:
             with ui.row().classes("items-center gap-2 flex-wrap"):
                 c.chip("ok" if fixed else "blocker", issue.kind)
                 ui.label(issue.expression).classes(
-                    "text-xs sx-mono font-semibold")
+                    "sx-data sx-mono font-semibold")
                 if fixed:
                     ui.icon("arrow_forward").classes("text-xs")
                     ui.label(fixed).classes("text-xs sx-mono font-semibold") \
@@ -124,7 +123,8 @@ def build(wb: Workbench) -> None:
                                   _resolve(e, r)) \
                         .props("outline dense no-caps") \
                         .tooltip(suggestion.reason)
-                manual = ui.input(placeholder="or type the correct expression") \
+                manual = ui.input("Correct expression",
+                                  placeholder="or type it yourself") \
                     .props("dense outlined").classes("text-xs min-w-[14rem]")
                 ui.button("Use", icon="check",
                           on_click=lambda e=issue.expression, m=manual:
