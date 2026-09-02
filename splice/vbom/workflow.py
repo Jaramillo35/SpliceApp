@@ -146,34 +146,20 @@ def format_workbook_output(path: str | os.PathLike[str], on_sheet=None) -> str:
 
 
 def _resolve_vbom_root() -> Path:
-    from splice.config import VBOM_ROOT_CANDIDATES
+    """Where Template.xlsx and review_vbaProject.bin live.
 
-    fallback = None
-    for candidate in VBOM_ROOT_CANDIDATES:
-        if (candidate / "main_app.py").exists():
-            if fallback is None:
-                fallback = candidate
-            # Prefer an engine that also ships the review VBA project so the
-            # web flow can build the same macro-enabled review workbook the
-            # desktop app does (older roots lack review_vbaProject.bin).
-            if (candidate / "review_vbaProject.bin").exists():
-                return candidate
-    return fallback or VBOM_ROOT_CANDIDATES[0]
+    They ship inside the package now. SPLICE_VBOM_TEMPLATES_DIR overrides,
+    for a deployment that keeps customer templates outside the image.
+    """
+    from splice.config import VBOM_TEMPLATES_DIR
+    return VBOM_TEMPLATES_DIR
 
 
 def _load_vbom_module():
-    vbom_root = _resolve_vbom_root()
-    module_path = vbom_root / "main_app.py"
-    if not module_path.exists():
-        raise FileNotFoundError(f"Could not find VBOM legacy module at: {module_path}")
-
-    spec = importlib.util.spec_from_file_location("vbom_legacy_main", module_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Unable to load VBOM legacy module from: {module_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    """The VBOM engine. Once a tkinter desktop app loaded by file path; now
+    a plain module, imported like any other."""
+    from splice.vbom import engine
+    return engine
 
 
 def _write_uploaded_file(uploaded_file, destination_path: Path) -> Path:

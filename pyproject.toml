@@ -34,6 +34,10 @@ packages = [
     "splice_api",
 ]
 
+[tool.setuptools.package-data]
+# the VBOM output templates ship with the engine
+"splice.vbom" = ["templates/*"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

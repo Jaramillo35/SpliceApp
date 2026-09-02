@@ -39,7 +39,6 @@ COPY ui ./ui
 COPY splice ./splice
 COPY secrdb ./secrdb
 COPY assets ./assets
-COPY vbom_legacy ./vbom_legacy
 
 USER appuser
 EXPOSE 8504

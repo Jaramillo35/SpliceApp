@@ -65,8 +65,9 @@ def generate_defe(my: str, program: str, selections_df: pd.DataFrame,
     Same Template.xlsx and the same create_formatted_output the desktop
     macro path uses — one source of truth for the output format.
     """
+    from splice.config import VBOM_TEMPLATES_DIR
     vbom_main_app = _load_vbom_module()
-    template = Path(vbom_main_app.__file__).parent / vbom_main_app.TEMPLATE_SOURCE_FILE
+    template = VBOM_TEMPLATES_DIR / vbom_main_app.TEMPLATE_SOURCE_FILE
     with tempfile.TemporaryDirectory(prefix="vbom_defe_") as td:
         out_path = vbom_main_app.create_formatted_output(
             str(template), my, program, td, selections_df, vin_matrix_df)

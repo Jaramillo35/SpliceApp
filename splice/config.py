@@ -36,7 +36,9 @@ TICKETS_PATH = _path_from_env("SPLICE_TICKETS_PATH", DATA_DIR / "tickets.json")
 
 # Legacy VBOM desktop module, loaded dynamically by splice.vbom. Kept at the
 # project root; the alternate candidates preserve the previous lookup order.
-VBOM_LEGACY_DIR = _path_from_env("SPLICE_VBOM_LEGACY_DIR", PROJECT_ROOT / "vbom_legacy")
+VBOM_TEMPLATES_DIR = _path_from_env("SPLICE_VBOM_TEMPLATES_DIR", PROJECT_ROOT / "splice" / "vbom" / "templates")
+#: kept for callers that still name it; the engine no longer lives there
+VBOM_LEGACY_DIR = VBOM_TEMPLATES_DIR
 VBOM_ROOT_CANDIDATES = [
     VBOM_LEGACY_DIR,
     PROJECT_ROOT.parent / "VBOMxRISKMATRIX 2",
