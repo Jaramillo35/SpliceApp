@@ -59,6 +59,11 @@ logger = logging.getLogger(__name__)
 
 MARK = "X"
 
+#: The readable sheet. ``SHEET`` (imported from splice.inline.summary) is the
+#: blocked one Circuit Health parses; both are written, because flattening the
+#: blocks would have quietly cost the round trip.
+FLAT_SHEET = "Circuit Chart"
+
 #: Column headers for the human-facing sheet. Positions are fixed by the
 #: Circuit Summary contract, so the labels are placed, not appended.
 _LABELS = {
@@ -93,6 +98,18 @@ class ChartRow:
     builds: List[str] = field(default_factory=list)
     #: a wire running to a generated splice rather than to a device
     is_splice: bool = False
+    #: where the wire goes. A wire has two ends; the chart is written one end
+    #: per row, so without these the far end has to be found by eye.
+    other_family: str = ""
+    other_cnum: str = ""
+    other_cavity: str = ""
+    other_device: str = ""
+
+    @property
+    def end_type(self) -> str:
+        if self.is_splice:
+            return "Splice"
+        return "Inline" if is_pass_through(self.cnum) else "Device"
 
     def carried_by(self, part_number: str) -> bool:
         return part_number in self.builds
@@ -378,6 +395,7 @@ def build_charts(entries: Iterable, rows: Sequence,
         chart.rows.sort(key=lambda r: (r.circuit, r.cnum, _cavity_key(r.cavity)))
         charts.append(chart)
 
+    link_ends(charts, rows)
     logger.info("Built %d circuit chart(s), %d row(s), %d splice(s)",
                 len(charts), sum(len(c.rows) for c in charts),
                 sum(len(c.splices) for c in charts))
@@ -418,14 +436,85 @@ def _add_splices(chart: Chart, minimum: int) -> None:
         for index, end in enumerate(ends):
             # one wire per branch, device end to splice end; it carries
             # exactly what its branch carries
-            chart.rows.append(ChartRow(
+            branch = ChartRow(
                 circuit=circuit, cnum=name,
                 cavity=_int_to_alpha_suffix(index),
                 device=f"SPLICE {name}",
                 expression=end.expression,
                 harness_expression=end.harness_expression,
                 classification=end.classification,
-                builds=list(end.builds), is_splice=True))
+                builds=list(end.builds), is_splice=True)
+            # the two ends of one wire, each pointing at the other
+            _join(end, chart.family, branch)
+            _join(branch, chart.family, end)
+            chart.rows.append(branch)
+
+
+def _join(row: ChartRow, family: str, other: ChartRow) -> None:
+    row.other_family = family
+    row.other_cnum = other.cnum
+    row.other_cavity = other.cavity
+    row.other_device = other.device
+
+
+def link_ends(charts: Sequence[Chart], rows: Sequence = ()) -> None:
+    """Fill in the far end of every wire the splices did not already pair.
+
+    A spliced circuit is settled when the splice is made: each branch runs
+    device to splice, and both ends were joined then. What is left is the
+    simple traffic:
+
+    * an **inline** end continues at its mate — ``X301A`` at ``Y301A`` — which
+      is how a circuit crosses a harness boundary, and is the one case where
+      the far end is in a different family;
+    * a circuit with exactly **two** unpaired ends joins them.
+
+    Anything else is left blank on purpose. A circuit with three unpaired ends
+    and no splice has no single far end, and inventing one would put a wire in
+    the chart that nobody drew.
+
+    ``rows`` is the DTx the charts were built from. It is consulted for one
+    reason: the two-end shortcut has to count the circuit's ends in the
+    *export*, not in the charts. A circuit reaching three harnesses of which
+    only two are mapped would otherwise have its two charted ends joined to
+    each other, drawing a wire that runs past the harness in between.
+    """
+    total_ends: Dict[str, set] = {}
+    for row in rows:
+        circuit = getattr(row, "circuit", "")
+        if circuit:
+            total_ends.setdefault(circuit, set()).add(
+                (getattr(row, "cnum", ""), getattr(row, "pin", "")))
+    by_circuit: Dict[str, List[tuple]] = {}
+    for chart in charts:
+        for row in chart.rows:
+            by_circuit.setdefault(row.circuit, []).append((chart.family, row))
+
+    for ends in by_circuit.values():
+        open_ends = [(family, row) for family, row in ends if not row.other_cnum]
+        located = {(family, row.cnum): (family, row) for family, row in ends}
+
+        for family, row in list(open_ends):
+            if row.other_cnum:
+                continue
+            mate = mate_name(row.cnum)
+            if not mate:
+                continue
+            match = next(((f, r) for f, r in ends
+                          if r.cnum.upper() == mate and not r.other_cnum), None)
+            if match:
+                other_family, other = match
+                _join(row, other_family, other)
+                _join(other, family, row)
+
+        remaining = [(family, row) for family, row in ends if not row.other_cnum]
+        circuit = ends[0][1].circuit
+        known = total_ends.get(circuit)
+        charted_all = known is None or len(known) == len(ends)
+        if len(remaining) == 2 and charted_all:
+            (family_a, a), (family_b, b) = remaining
+            _join(a, family_b, b)
+            _join(b, family_a, a)
 
 
 def _int_to_alpha_suffix(index: int) -> str:
@@ -566,11 +655,116 @@ def write_chart_sheet(wb: Workbook, charts: Sequence[Chart],
     ws.freeze_panes = ws.cell(3, FIRST_BUILD_COL + 1)
 
 
+#: The flat sheet's fixed columns, in reading order. Everything the DTx does
+#: not state (wire size, material, colour) is left out rather than written as
+#: an empty column — the blocked sheet has to carry them because the Circuit
+#: Summary contract fixes their positions, but nothing here does.
+FLAT_COLUMNS = [
+    "Harness Family", "Harness", "Def Id", "Circuit", "End", "CNUM",
+    "Cavity", "Connector PN", "Device",
+    "Sales Code (DTx)", "Sales Code (this harness)", "Verdict",
+    "Other End Harness", "Other End CNUM", "Other End Cavity",
+    "Other End Device", "Builds Carrying",
+]
+
+
+def part_number_columns(charts: Sequence[Chart]) -> List[tuple]:
+    """Every part number in the study, kept in harness order.
+
+    One column each, grouped by the harness they belong to, so the matrix
+    reads left to right the way the harnesses are listed. Returned as
+    ``(harness, part number)`` because two harnesses can ship the same number
+    and the header has to say which column is which.
+    """
+    columns: List[tuple] = []
+    seen = set()
+    for chart in charts:
+        for part in chart.part_numbers:
+            key = (chart.harness, part)
+            if key not in seen:
+                seen.add(key)
+                columns.append(key)
+    return columns
+
+
+def write_flat_sheet(wb: Workbook, charts: Sequence[Chart],
+                     program: str = "", phase: str = "") -> None:
+    """One table, one header row, one row per circuit end.
+
+    The blocked sheet repeats a header for every harness because that is what
+    the Circuit Summary parser keys on. It is the wrong shape to read or to
+    filter: the repeated banners break sorting, and the fixed column positions
+    force four columns the DTx cannot fill. This sheet is the same data as a
+    plain table — title on row 1, the only header on row 2, and no column that
+    is empty for every row.
+    """
+    ws = wb.create_sheet(FLAT_SHEET)
+    ws.append(["Circuit Chart", " ".join(p for p in (program, phase) if p)])
+    ws.cell(1, 1).font = _TITLE_FONT
+
+    parts = part_number_columns(charts)
+    header = list(FLAT_COLUMNS) + [part for _harness, part in parts]
+    ws.append(header)
+    for index in range(1, len(header) + 1):
+        cell = ws.cell(2, index)
+        cell.fill, cell.font = _BLOCK_FILL, _BLOCK_FONT
+        cell.alignment = _BLOCK_ALIGN
+
+    index_of = {key: len(FLAT_COLUMNS) + offset
+                for offset, key in enumerate(parts)}
+    line_no = 2
+    for chart in charts:
+        own = [(index_of[(chart.harness, part)], part)
+               for part in chart.part_numbers]
+        for row in chart.rows:
+            line = [""] * len(header)
+            line[0] = chart.family
+            line[1] = chart.harness
+            line[2] = chart.def_id
+            line[3] = row.circuit
+            line[4] = row.end_type
+            line[5] = row.cnum
+            line[6] = row.cavity
+            line[7] = row.connector_pn
+            line[8] = row.device
+            line[9] = row.expression
+            line[10] = row.harness_expression
+            line[11] = row.classification
+            line[12] = row.other_family
+            line[13] = row.other_cnum
+            line[14] = row.other_cavity
+            line[15] = row.other_device
+            line[16] = len(row.builds)
+            carried = set(row.builds)
+            for column, part in own:
+                if part in carried:
+                    line[column] = MARK
+            ws.append(line)
+            line_no += 1
+            for column, part in own:
+                if part in carried:
+                    cell = ws.cell(line_no, column + 1)
+                    cell.alignment, cell.font = _CENTER, _MARK_FONT
+            if row.is_finding:
+                for column in range(1, len(header) + 1):
+                    ws.cell(line_no, column).fill = _NEVER_FILL
+
+    widths = [18, 18, 9, 12, 9, 12, 8, 15, 22, 24, 24, 14, 18, 15, 9, 22, 10]
+    for offset, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(offset)].width = width
+    for offset in range(len(FLAT_COLUMNS) + 1, len(header) + 1):
+        ws.column_dimensions[get_column_letter(offset)].width = 14
+    ws.freeze_panes = ws.cell(3, 5)
+    if line_no > 2:
+        ws.auto_filter.ref = f"A2:{get_column_letter(len(header))}{line_no}"
+
+
 def build_chart_workbook(charts: Sequence[Chart], program: str = "",
                          phase: str = "") -> bytes:
     """The chart on its own, ready to hand to Circuit Health."""
     wb = Workbook()
     wb.remove(wb.active)
+    write_flat_sheet(wb, charts, program, phase)
     write_chart_sheet(wb, charts, program, phase)
     buf = io.BytesIO()
     wb.save(buf)

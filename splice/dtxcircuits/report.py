@@ -434,7 +434,8 @@ def build_report(entries: Iterable[Entry],
     if charts:
         # Written last so it sits at the end of the book, but in the exact
         # layout splice.inline.summary parses: this sheet is also an input.
-        from splice.dtxcircuits.chart import write_chart_sheet
+        from splice.dtxcircuits.chart import write_chart_sheet, write_flat_sheet
+        write_flat_sheet(wb, charts, dtx_program, dtx_phase)
         write_chart_sheet(wb, charts, dtx_program, dtx_phase)
 
     _sheet(wb, "Complexity Cleanup",

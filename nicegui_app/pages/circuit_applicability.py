@@ -905,6 +905,8 @@ def page() -> None:
                  "field": "expression", "align": "left"},
                 {"name": "harness_expression", "label": "…in this harness",
                  "field": "harness_expression", "align": "left"},
+                {"name": "other", "label": "Other end", "field": "other",
+                 "align": "left"},
             ] + [
                 # the part number's tail is what an SE reads; the full number
                 # stays in the tooltip and in the workbook
@@ -921,6 +923,7 @@ def page() -> None:
                           "harness_expression": (
                               row.harness_expression
                               or ("—" if row.expression else "")),
+                          "other": _other_end(chart, row),
                           "_never": row.is_finding}
                 record.update(dict(zip(chart.part_numbers,
                                        row.marks(chart.part_numbers))))
@@ -938,6 +941,15 @@ def page() -> None:
             ui.label(f"Coverage: " + "  ".join(
                 f"{pn[-6:]} {chart.coverage(pn)}/{len(chart.rows)}"
                 for pn in chart.part_numbers)).classes("text-[10px] sx-mono sx-muted")
+
+        def _other_end(chart, row) -> str:
+            """Where the wire goes, named only as far as it needs to be."""
+            if not row.other_cnum:
+                return "—"
+            where = f"{row.other_cnum}/{row.other_cavity or '?'}"
+            # the family is worth saying only when the wire leaves this one
+            return where if row.other_family == chart.family \
+                else f"{where} · {row.other_family}"
 
         async def _download_chart() -> None:
             meta = state["dtx_meta"]

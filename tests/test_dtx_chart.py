@@ -450,6 +450,147 @@ class TestSplices:
         assert sum(1 for e in ends if e.connector == "SCKT_BRANCHA") == 4
 
 
+class TestOtherEnd:
+    """A wire has two ends; the chart writes one per row, so each says where
+    it goes. Shapes taken from 2028RU X2_A."""
+
+    def _dev(self, family, circuit, cnum, pin="1", code=""):
+        return CircuitRow(harness_family=family, circuit=circuit,
+                          sales_code=code, cnum=cnum, pin=pin)
+
+    def _rows_for(self, charts, circuit):
+        return {(c.family, r.cnum): r for c in charts for r in c.rows
+                if r.circuit == circuit}
+
+    def test_an_inline_continues_at_its_mate_in_the_other_harness(self):
+        """This is how a circuit crosses a harness boundary."""
+        rows = [self._dev("IP", "D442", "X402A", "27"),
+                self._dev("BODY_LEFT", "D442", "Y402A", "27")]
+        built = chart.build_charts(_entries(rows), rows)
+        ends = self._rows_for(built, "D442")
+        near = ends[("IP", "X402A")]
+        assert near.other_family == "BODY_LEFT"
+        assert near.other_cnum == "Y402A"
+        assert ends[("BODY_LEFT", "Y402A")].other_cnum == "X402A"
+
+    def test_two_device_ends_join_each_other(self):
+        rows = [self._dev("IP", "F946", "D2798A", "5"),
+                self._dev("BODY_LEFT", "F946", "D3872A", "13")]
+        built = chart.build_charts(_entries(rows), rows)
+        ends = self._rows_for(built, "F946")
+        assert ends[("IP", "D2798A")].other_cnum == "D3872A"
+        assert ends[("BODY_LEFT", "D3872A")].other_cnum == "D2798A"
+
+    def test_every_branch_of_a_splice_points_at_the_splice(self):
+        rows = [self._dev("IP", "A910", f"D{i}A", str(i)) for i in range(3)]
+        built = chart.build_charts(_entries(rows, families=("IP",)), rows)
+        ip = _by_family(built)["IP"]
+        for row in ip.rows:
+            if row.is_splice:
+                assert not row.other_cnum.startswith("S")
+            else:
+                assert row.other_cnum == "SA910A", row.cnum
+
+    def test_the_splice_end_points_back_at_its_branch(self):
+        rows = [self._dev("IP", "A910", f"D{i}A", str(i)) for i in range(3)]
+        built = chart.build_charts(_entries(rows, families=("IP",)), rows)
+        ip = _by_family(built)["IP"]
+        pairs = {(r.cnum, r.cavity): (r.other_cnum, r.other_cavity)
+                 for r in ip.rows}
+        for (cnum, cav), (other_cnum, other_cav) in pairs.items():
+            assert pairs[(other_cnum, other_cav)] == (cnum, cav), \
+                "the far end must point back"
+
+    def test_an_ambiguous_circuit_is_left_blank_rather_than_guessed(self):
+        """Three unpaired ends spread over harnesses have no single far end.
+        Inventing one would put a wire in the chart nobody drew."""
+        rows = [self._dev("IP", "CKT_X", "D1A"),
+                self._dev("BODY_LEFT", "CKT_X", "D2A"),
+                self._dev("DASH", "CKT_X", "D3A")]
+        built = chart.build_charts(_entries(rows, families=("IP", "BODY_LEFT")),
+                                   rows)
+        assert all(not r.other_cnum for c in built for r in c.rows)
+
+    def test_end_type_names_what_the_row_is(self):
+        rows = [self._dev("IP", "CKT_Y", "D1A"),
+                self._dev("IP", "CKT_Y", "X301A", "2")]
+        built = chart.build_charts(_entries(rows, families=("IP",)), rows)
+        kinds = {r.cnum: r.end_type for r in _by_family(built)["IP"].rows}
+        assert kinds["D1A"] == "Device"
+        assert kinds["X301A"] == "Inline"
+
+
+class TestFlatSheet:
+    """One table, one header, no column that is empty for every row."""
+
+    def _sheet(self, charts, name=chart.FLAT_SHEET):
+        data = chart.build_chart_workbook(charts, "9000ZZ", "X9_A")
+        return load_workbook(io.BytesIO(data))[name]
+
+    def test_the_only_header_is_row_two(self, charts):
+        ws = self._sheet(charts)
+        assert ws.cell(1, 1).value == "Circuit Chart"
+        assert [c.value for c in ws[2]][:4] == \
+            ["Harness Family", "Harness", "Def Id", "Circuit"]
+        # no repeated banner anywhere below it
+        first = [c.value for c in ws[2]]
+        for row in ws.iter_rows(min_row=3, values_only=True):
+            assert list(row) != first
+
+    def test_every_harness_is_in_the_one_table(self, charts):
+        ws = self._sheet(charts)
+        families = {row[0] for row in ws.iter_rows(min_row=3, values_only=True)}
+        assert families == {c.family for c in charts}
+
+    def test_no_column_is_empty_for_every_row(self, charts):
+        ws = self._sheet(charts)
+        headers = [c.value for c in ws[2]]
+        body = list(ws.iter_rows(min_row=3, values_only=True))
+        for index, name in enumerate(headers):
+            assert any(row[index] not in (None, "") for row in body), \
+                f"column {name!r} is empty everywhere"
+
+    def test_the_dropped_columns_are_the_ones_the_dtx_cannot_fill(self, charts):
+        headers = {c.value for c in self._sheet(charts)[2]}
+        assert not {"Size", "Material", "Color", "Suffix"} & headers
+
+    def test_the_other_end_columns_are_present(self, charts):
+        headers = [c.value for c in self._sheet(charts)[2]]
+        for name in ("Other End Harness", "Other End CNUM",
+                     "Other End Cavity", "Other End Device"):
+            assert name in headers
+
+    def test_a_part_number_column_marks_only_its_own_harness(self):
+        rows = circuit_rows()
+        charts = chart.build_charts(_entries(rows), rows)
+        ws = self._sheet(charts)
+        headers = [c.value for c in ws[2]]
+        column = headers.index("90000001AA")          # a BODY_LEFT build
+        for row in ws.iter_rows(min_row=3, values_only=True):
+            if row[0] != "BODY_LEFT":
+                assert row[column] in (None, ""), \
+                    "a build must not be marked outside its own harness"
+
+    def test_part_number_columns_stay_in_harness_order(self, charts):
+        columns = chart.part_number_columns(charts)
+        assert columns == sorted(
+            columns, key=lambda pair: [c.harness for c in charts].index(pair[0]))
+
+    def test_the_blocked_sheet_is_still_written_beside_it(self, charts):
+        """Flattening the blocks must not cost the Circuit Health round trip."""
+        data = chart.build_chart_workbook(charts)
+        wb = load_workbook(io.BytesIO(data))
+        assert wb.sheetnames == [chart.FLAT_SHEET, SHEET]
+        harns, ends = read_circuit_summary(data, "both.xlsx")
+        assert len(ends) == sum(len(c.rows) for c in charts)
+
+    def test_the_review_workbook_carries_both(self, charts):
+        rows = circuit_rows()
+        wb = load_workbook(io.BytesIO(
+            report.build_report(_entries(rows), {}, charts=charts)))
+        assert chart.FLAT_SHEET in wb.sheetnames and SHEET in wb.sheetnames
+
+
 class TestScale:
     """A real programme is ~5,400 circuit ends against ~20 part numbers.
 
