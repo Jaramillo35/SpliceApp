@@ -174,7 +174,9 @@ def frame(title: str, caption: str = "", *, context_chip: str = "", wide: bool =
     dialog = _feedback_dialog()
     route = current_route()
 
-    drawer = ui.left_drawer(value=True, fixed=True) \
+    # value=None: open above the breakpoint, closed below it — the rail never
+    # overlays the content column on its own; the header button opens it
+    drawer = ui.left_drawer(value=None, fixed=True) \
         .props("width=232 breakpoint=1023 show-if-above") \
         .classes("p-3") \
         .style(f"background:{theme.SURFACE_2};border-right:1px solid {theme.LINE}")
@@ -274,8 +276,13 @@ def header_chip(text: str, kind: str = "info") -> None:
     slot = bag["header"]
     if slot is None:
         return
+    old = bag.get("context_chip")
+    if old is not None and not old.is_deleted:
+        old.delete()
     with slot:
-        chip(kind, text)
+        with ui.element("div") as holder:
+            chip(kind, text)
+    bag["context_chip"] = holder
 
 
 def envelope(text: str) -> ui.label:
