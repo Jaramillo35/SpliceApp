@@ -12,7 +12,14 @@ from pathlib import Path
 from typing import Any
 from urllib import parse, request, error
 
-import streamlit as st
+# Streamlit is optional here. The ticket store is used by the NiceGUI app,
+# the admin page and the HRN supplier-ticket loop, none of which run under
+# Streamlit — and the new interface's image does not install it. Only the
+# secrets lookup and the sidebar widget need it, and both cope without.
+try:
+    import streamlit as st
+except ImportError:  # pragma: no cover - exercised by the no-streamlit test
+    st = None
 
 from splice.config import TICKETS_PATH
 
@@ -21,6 +28,8 @@ _GITHUB_TIMEOUT_SECONDS = 10
 
 
 def _get_streamlit_secret(*keys: str) -> str | None:
+    if st is None:
+        return None
     try:
         # Support both flat secrets and a nested [github] section.
         github_secrets = st.secrets.get("github", {})
@@ -279,6 +288,8 @@ def render_feedback_widget(
     store: FeedbackStore | None = None,
     key_prefix: str = "feedback",
 ) -> None:
+    if st is None:
+        raise RuntimeError('The feedback sidebar needs Streamlit; the ticket store itself does not.')
     store = store or FeedbackStore()
     tickets = store.load_tickets()
 

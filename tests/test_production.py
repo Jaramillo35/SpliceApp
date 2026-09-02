@@ -193,3 +193,32 @@ class TestAdminPage:
         assert admin.uptime_text(90) == "1m"
         assert admin.uptime_text(3700) == "1h 1m"
         assert admin.uptime_text(90000) == "1d 1h"
+
+
+class TestNoStreamlit:
+    """The NiceGUI image does not install Streamlit. Everything it reaches
+    must work without it — not merely import, since lazy imports let a
+    process start and then fail on the first click. CI caught exactly that
+    in feedback_system, which the feedback dialog and the admin inbox use."""
+
+    def test_the_feedback_store_works_without_streamlit(self, tmp_path, monkeypatch):
+        import sys
+        for name in ("streamlit", "altair", "pyarrow"):
+            monkeypatch.setitem(sys.modules, name, None)
+        sys.modules.pop("feedback_system", None)
+        import feedback_system
+        store = feedback_system.FeedbackStore(tmp_path / "tickets.json")
+        ticket = store.submit_ticket(reported_by="t", workflow="Admin", area="Admin",
+                                     description="works without streamlit",
+                                     category="feedback")
+        assert ticket and len(store.load_tickets()) == 1
+        assert feedback_system._get_streamlit_secret("token") is None
+
+    def test_the_interface_and_its_pages_import_without_streamlit(self, monkeypatch):
+        pytest.importorskip("nicegui")
+        import sys, importlib
+        for name in ("streamlit", "altair", "pyarrow"):
+            monkeypatch.setitem(sys.modules, name, None)
+        for module in ("nicegui_app.main", "nicegui_app.pages.admin",
+                       "nicegui_app.components", "splice.hrncmp.supplier_tickets"):
+            importlib.import_module(module)
