@@ -5,15 +5,15 @@ import io
 import openpyxl
 import pandas as pd
 
-from splice.secr import db as secr_db
-from splice.secr.enrich import (
+from secrdb.core.secr import db as secr_db
+from secrdb.core.secr.enrich import (
     build_bulletin_numbers_for_secr,
     build_dtcr_numbers_for_secr,
     build_enrichment_summary,
     build_reason_for_change_for_secr,
     harness_family_matches,
 )
-from splice.secr.generate import (
+from secrdb.core.secr.generate import (
     _process_circuit_sheet,
     _process_connector_sheet,
     _process_def_def_summary,

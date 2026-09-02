@@ -28,7 +28,6 @@ packages = [
     "splice",
     "splice.common",
     "splice.dtcr",
-    "splice.secr",
     "splice.splice_gen",
     "splice.dtx_compare",
     "splice.vbom",

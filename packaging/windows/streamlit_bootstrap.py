@@ -44,7 +44,7 @@ def _self_test_secr_database() -> None:
     import tempfile
 
     from splice.config import SECR_DB_PATH
-    from splice.secr import db as secr_db
+    from secrdb.core.secr import db as secr_db
 
     # Windows refuses to delete a file that still has an open handle, so the
     # temp directory only cleans up if every connection was closed. That makes
@@ -136,14 +136,14 @@ def _run_self_test(app_root: Path) -> int:
         "splice.common.logging",
         "splice.splice_gen",
         "splice.dtx_compare",
-        "splice.secr",
-        "splice.secr.api",
-        "splice.secr.db",
-        "splice.secr.enrich",
-        "splice.secr.generation",
-        "splice.secr.identity",
-        "splice.secr.importer",
-        "splice.secr.parse",
+        "secrdb.core.secr",
+        "secrdb.core.secr.api",
+        "secrdb.core.secr.db",
+        "secrdb.core.secr.enrich",
+        "secrdb.core.secr.generation",
+        "secrdb.core.secr.identity",
+        "secrdb.core.secr.importer",
+        "secrdb.core.secr.parse",
         "splice.vbom",
     ]
     for module_name in required_modules:

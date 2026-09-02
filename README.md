@@ -88,12 +88,12 @@ which DTCR, and what the value was before and after.
 
 | Module | Responsibility |
 |---|---|
-| `splice/secr/parse.py` | SECR workbook → metadata + one record per changed field |
-| `splice/secr/identity.py` | generated-SECR identity: metadata extraction, numbering, filenames |
-| `splice/secr/generation.py` | Create New SECR / Update Existing SECR workflows |
-| `splice/secr/db.py` | the only module that opens SQLite (save, delete, search, sequences, audit) |
-| `splice/secr/importer.py` | bulk import; reports every file as imported / duplicate / failed |
-| `splice/secr/api.py` | read-only query surface — also the future local-assistant tool set |
+| `secrdb/core/secr/parse.py` | SECR workbook → metadata + one record per changed field |
+| `secrdb/core/secr/identity.py` | generated-SECR identity: metadata extraction, numbering, filenames |
+| `secrdb/core/secr/generation.py` | Create New SECR / Update Existing SECR workflows |
+| `secrdb/core/secr/db.py` | the only module that opens SQLite (save, delete, search, sequences, audit) |
+| `secrdb/core/secr/importer.py` | bulk import; reports every file as imported / duplicate / failed |
+| `secrdb/core/secr/api.py` | read-only query surface — also the future local-assistant tool set |
 | `ui/pages/secr_database.py` | Browse · Create · Update · Import · Dashboard (thin UI, no SQL) |
 
 **Generated SECRs** are numbered per `Model Year + Phase`, each scope starting at 1000, and
@@ -162,7 +162,7 @@ Every workflow in this app is exposed as a pure Python function before it ever t
 |---|---|---|---|
 | Splice Generation | `splice/splice_gen/` | `run_analysis()`, `run_analysis_from_option_df()`, `validate_generated_expression()`, `validate_results()`, `export_excel()` | Watch a drop folder for new Complexity/OptionPerCkt workbooks, run analysis automatically, and only surface a file to the engineer once validation passes — flagging failures instead of silently forwarding bad data. |
 | DTx Compare | `splice/dtx_compare/` | `generate_dtx_change_report()`, `launch_preorder_generation_tool()`, `compare_reports()` | Take a before/after pair of DTx exports, generate the change and PreOrder workbooks unattended, and draft a plain-English summary of what was added, removed, or modified for the engineer to approve. |
-| SECR Creation & Enrichment | `splice/secr/` (+ `splice/dtcr/`) | `create_secr_bytes()`, `update_secr_bytes()`, `match_dtcr_to_harness_family()`, `update_secr_reason_for_change()`, `update_secr_dtcr_numbers()` | Match incoming DTCR records to the correct harness family and pre-fill "Reason for Change" and DTCR numbers on the SECR, so the engineer verifies a draft instead of transcribing it by hand. |
+| SECR Creation & Enrichment | `secrdb/core/secr/` (+ `splice/dtcr/`) | `create_secr_bytes()`, `update_secr_bytes()`, `match_dtcr_to_harness_family()`, `update_secr_reason_for_change()`, `update_secr_dtcr_numbers()` | Match incoming DTCR records to the correct harness family and pre-fill "Reason for Change" and DTCR numbers on the SECR, so the engineer verifies a draft instead of transcribing it by hand. |
 | VBOM Risk Matrix | `splice/vbom/` | `run_vbom_workflow()`, `format_workbook_output()` | Orchestrate the VBOM engine end-to-end on a schedule or on file arrival, and hand back a formatted workbook plus a risk summary. |
 | Feedback | `feedback_system.py` | `FeedbackStore` | Read submitted local tickets and generate a digest of what broke and what should improve without exposing uploaded workbook contents. |
 
