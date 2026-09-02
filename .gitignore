@@ -43,3 +43,6 @@ demo/showcase/
 
 # per-user workbench state (mappings, cleanup ticks, sales-code repairs)
 data/circuit_applicability/
+# runtime output of the admin page and the log handler
+data/backups/
+data/logs/

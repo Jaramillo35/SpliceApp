@@ -14,6 +14,7 @@ EXPECTED_ROUTES = {
     "/", "/splice-generation", "/dtx-compare", "/harness-complexity",
     "/hrn-chart", "/vbom",
     "/circuit-applicability", "/circuit-health", "/secr", "/ask", "/transcripts", "/downloads",
+    "/admin", "/version",
 }
 
 

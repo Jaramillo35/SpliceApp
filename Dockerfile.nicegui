@@ -12,18 +12,27 @@ RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir -r requirements-nicegui.txt
 
 FROM python:3.12-slim AS runtime
+# Stamped by the build so a running container can say what it is. Compose
+# passes these from the launcher scripts; a bare `docker build` leaves them
+# "unknown", which the version page reports honestly rather than guessing.
+ARG GIT_SHA=unknown
+ARG GIT_BRANCH=unknown
+ARG BUILD_DATE=unknown
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
     SPLICE_DATA_DIR=/data \
-    SPLICE_NICEGUI_PORT=8504
+    SPLICE_NICEGUI_PORT=8504 \
+    SPLICE_GIT_SHA=$GIT_SHA \
+    SPLICE_GIT_BRANCH=$GIT_BRANCH \
+    SPLICE_BUILD_DATE=$BUILD_DATE
 
 RUN useradd --create-home --uid 10001 appuser \
  && mkdir -p /data && chown appuser:appuser /data
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
-COPY app.py feedback_system.py ./
+COPY app.py feedback_system.py CHANGELOG.md ./
 COPY nicegui_app ./nicegui_app
 COPY pages ./pages
 COPY ui ./ui

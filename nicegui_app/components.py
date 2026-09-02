@@ -34,6 +34,7 @@ NAV = [
     ("Tools", [
         ("Meeting Transcripts", "graphic_eq", "/transcripts"),
         ("Downloads", "download", "/downloads"),
+        ("Admin", "admin_panel_settings", "/admin"),
     ]),
 ]
 
@@ -97,6 +98,11 @@ def frame(title: str, caption: str = ""):
             for label, icon, route in items:
                 with ui.link(target=route).classes("no-underline"):
                     _nav_row(label, icon, label == title)
+        # what is running, on every page — so a bug report can say so
+        from splice import version
+        info = version.current()
+        with ui.link(target="/admin").classes("no-underline mt-auto"):
+            ui.label(f"v{info.label}").classes("text-[10px] sx-mono sx-muted px-2 pt-4")
 
     with ui.header().classes("items-center justify-between px-5 py-2") \
             .style(f"background:{theme.SURFACE_2};border-bottom:1px solid {theme.LINE}"):

@@ -1,8 +1,10 @@
 name: CI
 
-# Runs on every push and PR once this repo is on GitHub. Scoped to the Phase 1-3 work
-# (splice-api + engine golden guard); the broader legacy suites need the optional UI deps
-# and proprietary data fixtures, so they are intentionally not part of this pipeline yet.
+# Runs on every push and PR. The whole suite runs: the ~900 tests added since
+# this file was first written run on committed synthetic fixtures, and the few
+# that need proprietary samples skip themselves when those are absent. For a
+# long stretch CI ran 14 tests of 900+, so the safety net existed only on the
+# developer's laptop and gated nothing.
 
 on:
   push:
@@ -19,20 +21,27 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install deps (engine + service + test tooling)
+      - name: Install deps (engine + both UIs + service + test tooling)
         run: |
           python -m pip install --upgrade pip
           pip install -e .                                    # splice + splice_api importable
+          pip install -r requirements-nicegui.txt             # nicegui app + engines
           pip install -r splice_api/requirements-runtime.txt  # fastapi/uvicorn/multipart
           pip install ruff httpx pytest
 
       - name: Ruff (service code)
         run: ruff check splice_api tests/test_splice_api.py tests/test_dtx_golden.py tests/fixtures/dtx_golden/build_fixtures.py
 
-      - name: Pytest
-        # Data-dependent cases skip automatically when the proprietary Validatehere samples
-        # are absent (they are, in CI); the golden guard runs on committed synthetic fixtures.
-        run: pytest -q tests/test_splice_api.py tests/test_dtx_golden.py tests/test_dtx_enhanced_report.py
+      - name: Ruff (repo-wide, structural rules only)
+        # Blind excepts and silent passes hide real failures. Style rules are
+        # left out until the existing debt is paid down; these must not grow.
+        run: ruff check . --select BLE001,S110,B023,F821,F811 --output-format=github
+        continue-on-error: true
+
+      - name: Pytest (whole suite)
+        # Data-dependent cases skip automatically when the proprietary samples
+        # are absent, as they are here.
+        run: pytest -q
 
   docker:
     name: build image

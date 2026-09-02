@@ -9,6 +9,10 @@ echo
 echo "  Keep THIS window open while you use the tool."
 echo "============================================================"
 echo
+# Record what is being built, so the Admin page can say what is running.
+export GIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+export GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+export BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if ! docker compose up --build -d; then
   echo
   echo "-----------------------------------------------------------"
@@ -24,11 +28,14 @@ fi
 echo
 echo "Getting the tool ready..."
 sleep 10
-open "http://localhost:8501"
+open "http://localhost:8504"
 echo
 echo "The tool is running and should have opened in your web browser."
 echo "If it did not, open your browser and type this address:"
 echo
+echo "        http://localhost:8504"
+echo
+echo "The previous (Streamlit) version is still available at:"
 echo "        http://localhost:8501"
 echo
 echo "When you are finished, double-click \"Stop (Mac).command\"."

@@ -10,6 +10,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.nicegui
+      args:
+        # exported by the Start/Update scripts; "unknown" on a bare `compose up`
+        GIT_SHA: ${GIT_SHA:-unknown}
+        GIT_BRANCH: ${GIT_BRANCH:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
     image: harness-platform/splice-nicegui:0.1.0
     container_name: splice-nicegui
     ports:
