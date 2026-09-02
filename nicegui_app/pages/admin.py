@@ -128,7 +128,7 @@ async def page() -> None:
                                 f"color:{theme.STATUS['ok' if ok else 'blocker']}")
                             ui.label(name).classes("font-semibold text-sm")
                         ui.label(f"{kind} · {'answering' if ok else 'not answering'}"
-                                 f" · {detail}").classes("text-[10px] sx-muted sx-mono")
+                                 f" · {detail}").classes("text-xs sx-muted sx-mono")
 
         with c.card("Services", "Whether each part of the toolkit answers right now."):
             await services_view()
@@ -148,7 +148,7 @@ async def page() -> None:
                       warn=not backups)
 
             if backups:
-                ui.label("BACKUPS").classes("text-[10px] font-bold tracking-widest sx-muted mt-3")
+                ui.label("BACKUPS").classes("sx-eyebrow mt-3")
                 for item in backups:
                     with ui.row().classes("items-center gap-3 w-full py-1") \
                             .style(f"border-bottom:1px solid {theme.LINE}"):
@@ -202,14 +202,14 @@ async def page() -> None:
                 ui.label(f"The newest {backup.KEEP} are kept. Backups live inside "
                          "the data directory, so they survive a rebuild — but not "
                          "a deleted volume. Download one somewhere else too.") \
-                    .classes("text-[10px] sx-muted self-center")
+                    .classes("text-xs sx-muted self-center")
 
         # --------------------------------------------------------------- logs
         @ui.refreshable
         def log_view() -> None:
             text = tail(LOG_DIR)
             ui.code(text or "(empty)", language=None) \
-                .classes("w-full text-[11px]").style("max-height:24rem;overflow:auto")
+                .classes("w-full text-xs").style("max-height:24rem;overflow:auto")
             with ui.row().classes("gap-2"):
                 ui.button("Refresh", icon="refresh", on_click=log_view.refresh) \
                     .props("outline dense")
@@ -235,7 +235,7 @@ def _fact(label: str, value: str, mono: bool = False, warn: bool = False) -> Non
                    f"{theme.STATUS['review'] if warn else theme.LINE}"):
         ui.label(value).classes("text-sm font-semibold break-all"
                                 + (" sx-mono" if mono else ""))
-        ui.label(label).classes("text-[10px] sx-muted")
+        ui.label(label).classes("text-xs sx-muted")
 
 
 def _feedback_table() -> None:
@@ -264,5 +264,5 @@ def _feedback_table() -> None:
         {"name": "status", "label": "Status", "field": "status", "align": "left"},
         {"name": "text", "label": "Description", "field": "text", "align": "left"},
     ], pagination=10).classes("w-full").props("dense flat")
-    ui.label(f"{len(tickets)} ticket(s) in total").classes("text-[10px] sx-muted")
+    ui.label(f"{len(tickets)} ticket(s) in total").classes("text-xs sx-muted")
 

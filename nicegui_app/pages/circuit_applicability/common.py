@@ -8,8 +8,8 @@ from nicegui_app import theme
 
 ROW_H = 34          # px; every cell in a row shares it so the lines align
 GRID = "grid-template-columns: 1.1fr 64px 1.25fr 1.5fr"
-GREEN = "#3fb950"
-RED = "#f85149"
+GREEN = theme.STATUS["ok"]
+RED = theme.STATUS["blocker"]
 
 VERDICT_KIND = {
     "unconditional": "ok", "all builds": "ok", "variant": "info",
@@ -77,6 +77,6 @@ def filter_chip(label: str, active: bool, on_click, count: int) -> None:
                if active else
                f"background:{theme.SURFACE_2};border:1px solid {colour}")
     with chip:
-        ui.label(f"{label} · {count}").classes("text-[10px] font-semibold") \
+        ui.label(f"{label} · {count}").classes("text-xs font-semibold") \
             .style(f"color:{theme.BRAND}" if active else "")
     chip.on("click", lambda _e: on_click())

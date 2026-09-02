@@ -40,7 +40,7 @@ def build(wb: Workbench) -> None:
             ])
 
             ui.label("FINDINGS").classes(
-                "text-[10px] font-bold tracking-widest sx-muted mt-2")
+                "sx-eyebrow mt-2")
             _metric_row([
                 ("Malformed expressions", q.malformed_expressions,
                  "blocker" if q.malformed_expressions else "ok"),
@@ -68,7 +68,7 @@ def build(wb: Workbench) -> None:
                 with ui.expansion(f"Sales-code coverage ({len(q.coverage)} codes)") \
                         .classes("w-full").props("dense"):
                     ui.label("Where each code the DTx uses is known, and "
-                             "where it is not.").classes("text-[10px] sx-muted")
+                             "where it is not.").classes("text-xs sx-muted")
                     ui.table(rows=[{
                         "code": x.code, "status": x.status, "rows": x.dtx_rows,
                         "families": ", ".join(x.families[:4]),
@@ -98,7 +98,7 @@ def build(wb: Workbench) -> None:
                                f"border:1px solid {colour}55"):
                     ui.label(str(value)).classes("text-base font-bold") \
                         .style(f"color:{colour}")
-                    ui.label(label).classes("text-[10px] sx-muted")
+                    ui.label(label).classes("text-xs sx-muted")
 
     wb.views["quality"] = quality_view
     # measured only once an analysis exists, so it is placed after the review

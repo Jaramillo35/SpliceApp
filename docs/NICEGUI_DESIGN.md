@@ -6,19 +6,28 @@ side-by-side with Streamlit until parity, then the Streamlit shell retires.
 
 ## Information architecture
 
-One fixed left rail, three groups, ordered by frequency of use:
+One fixed left rail grouped by how the engineer works, not by what the code
+is (interface schema study, 2026-09-02). Every entry comes from the page
+registry in `nicegui_app/components.py` (`PAGES`); the rail, the Overview
+grid and the feedback dialog read the same list.
 
 ```
-  WORKFLOWS            DATA                    TOOLS
-  Splice Generation    SECR Database           Meeting Transcripts
-  DTx Compare          Ask the Database        Downloads (kits/extension)
-  HRN Chart Builder
-  VBOM Risk Matrix
-  Circuit Health
+  OVERVIEW                 continue where you left off · needs attention
+
+  WORKBENCHES              judgement, saved, signed off
+    Circuit Applicability · Circuit Health · Harness Complexity · VBOM Risk Matrix
+  CONVERTERS               files in, workbook out
+    DTx Compare · Splice Generation · HRN Chart Builder
+  RECORDS                  search the history
+    SECR Database · Ask the Database
+  UTILITIES
+    Meeting Transcripts · Downloads
+  ---------------------------------------------------------------
+  Admin · v0.1.0           rail footer
 ```
 
-Home is a dashboard, not a brochure: recent activity + one card per workflow.
-Inline Continuity does not migrate — Circuit Health absorbed it (per audit).
+Active state is by route. Below 1024 px the rail hides and a header button
+opens it; it never overlays the content column on its own.
 
 ## Design language
 

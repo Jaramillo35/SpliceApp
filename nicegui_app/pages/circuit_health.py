@@ -84,7 +84,7 @@ def matrix_data(open_findings) -> dict:
 def matrix_options(open_findings) -> dict:
     m = matrix_data(open_findings)
     axis = {"type": "category", "data": m["names"],
-            "axisLabel": {"color": "rgba(232,232,236,0.75)", "fontSize": 10,
+            "axisLabel": {"color": theme.AXIS_TEXT, "fontSize": 10,
                           "rotate": 35},
             "splitLine": {"show": False}, "axisTick": {"show": False}}
     return {
@@ -93,7 +93,7 @@ def matrix_options(open_findings) -> dict:
         "xAxis": axis,
         "yAxis": {**axis, "axisLabel": {**axis["axisLabel"], "rotate": 0}},
         "series": [{"type": "heatmap", "data": m["data"],
-                    "label": {"show": True, "color": "#0e1117",
+                    "label": {"show": True, "color": theme.CANVAS,
                               "fontWeight": "bold",
                               "formatter": "{@[2]}"},
                     "emphasis": {"itemStyle": {"shadowBlur": 6}}}],
@@ -111,10 +111,10 @@ def kind_bar_options(open_findings) -> dict:
         "backgroundColor": "transparent",
         "grid": {"left": 150, "right": 24, "top": 8, "bottom": 24},
         "xAxis": {"type": "value",
-                  "axisLabel": {"color": "rgba(232,232,236,0.6)"},
-                  "splitLine": {"lineStyle": {"color": "rgba(232,232,236,0.08)"}}},
+                  "axisLabel": {"color": theme.AXIS_TEXT},
+                  "splitLine": {"lineStyle": {"color": theme.GRID}}},
         "yAxis": {"type": "category", "data": labels,
-                  "axisLabel": {"color": "rgba(232,232,236,0.8)"}},
+                  "axisLabel": {"color": theme.TEXT}},
         "series": [{"type": "bar", "data": [counts[k] for k in labels],
                     "barWidth": 12,
                     "itemStyle": {"color": theme.CHART[1],
@@ -136,11 +136,11 @@ def circuit_bar_options(open_findings, top: int = 10) -> dict:
         "backgroundColor": "transparent",
         "grid": {"left": 70, "right": 24, "top": 8, "bottom": 24},
         "xAxis": {"type": "value",
-                  "axisLabel": {"color": "rgba(232,232,236,0.6)"},
-                  "splitLine": {"lineStyle": {"color": "rgba(232,232,236,0.08)"}}},
+                  "axisLabel": {"color": theme.AXIS_TEXT},
+                  "splitLine": {"lineStyle": {"color": theme.GRID}}},
         "yAxis": {"type": "category",
                   "data": [k for k, _ in reversed(ranked)],
-                  "axisLabel": {"color": "rgba(232,232,236,0.8)",
+                  "axisLabel": {"color": theme.TEXT,
                                 "fontFamily": "monospace"}},
         "series": [{"type": "bar", "data": [v for _, v in reversed(ranked)],
                     "barWidth": 12,
@@ -217,7 +217,7 @@ def page() -> None:
                     with ui.card().classes("sx-card px-4 py-2 items-center gap-0"):
                         ui.label(str(value)).classes("text-2xl font-bold leading-none") \
                             .style(f"color:{theme.STATUS[kind]}")
-                        ui.label(label).classes("text-[11px] sx-muted")
+                        ui.label(label).classes("text-xs sx-muted")
             segments = progress_segments(r, baseline)
             if segments:
                 with ui.row().classes("w-full h-2 rounded-full overflow-hidden gap-0"):
@@ -414,7 +414,7 @@ def page() -> None:
                         with ui.row().classes("gap-1 flex-wrap max-w-xs"):
                             for pn in f.builds_with:
                                 ui.label(pn).classes(
-                                    "text-[10px] sx-mono px-1.5 py-0.5 rounded") \
+                                    "text-xs sx-mono px-1.5 py-0.5 rounded") \
                                     .style(f"background:{theme.STATUS['ok']}22;"
                                            f"color:{theme.STATUS['ok']}")
                 if f.builds_without:
@@ -425,7 +425,7 @@ def page() -> None:
                         with ui.row().classes("gap-1 flex-wrap max-w-xs"):
                             for pn in f.builds_without:
                                 ui.label(pn).classes(
-                                    "text-[10px] sx-mono px-1.5 py-0.5 rounded") \
+                                    "text-xs sx-mono px-1.5 py-0.5 rounded") \
                                     .style(f"background:{theme.STATUS['blocker']}22;"
                                            f"color:{theme.STATUS['blocker']}")
 
@@ -456,7 +456,7 @@ def page() -> None:
                                    f"border:1px solid {theme.BRAND}66"):
                         ui.icon("cable").style(f"color:{theme.BRAND}")
                         ui.label(f.harness_with).classes("text-xs font-semibold")
-                        ui.label("one harness").classes("text-[10px] sx-muted")
+                        ui.label("one harness").classes("text-xs sx-muted")
                     with ui.column().classes("gap-1"):
                         for crossing in f.crossings:
                             with ui.row().classes("items-center gap-1"):
@@ -482,9 +482,9 @@ def page() -> None:
                     ui.icon("settings_input_component").classes("text-lg") \
                         .style(f"color:{theme.BRAND}")
                     ui.label(f.inline.split(' ')[0] if one_sided else f.inline) \
-                        .classes("text-[10px] sx-mono sx-muted")
+                        .classes("text-xs sx-mono sx-muted")
                     if f.cavity:
-                        ui.label(f"cav {f.cavity}").classes("text-[10px] sx-muted")
+                        ui.label(f"cav {f.cavity}").classes("text-xs sx-muted")
                 ui.element("div").classes("flex-1 h-0.5") \
                     .style(f"background:repeating-linear-gradient(90deg,{bad} 0 6px,"
                            f"transparent 6px 12px)" if one_sided else f"background:{ok}")
@@ -511,7 +511,7 @@ def page() -> None:
                         ("Inline pairs", f"{len(study.pairs):,}")]:
                     with ui.column().classes("items-center gap-0"):
                         ui.label(value).classes("text-xl font-bold")
-                        ui.label(label).classes("text-[11px] sx-muted")
+                        ui.label(label).classes("text-xs sx-muted")
             if r.gaps:
                 with ui.expansion(f"Input readiness notes ({len(r.gaps)})") \
                         .classes("w-full").props("dense"):

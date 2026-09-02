@@ -59,7 +59,7 @@ def build(wb: Workbench) -> None:
                               "Harness complexity file(s)",
                               "Suggested — click to add"):
                     ui.label(title).classes(
-                        "text-[10px] font-bold tracking-wide sx-muted")
+                        "sx-eyebrow")
                 for family, n_rows in rows:
                     chosen = mapped.get(family, [])
                     _family_cell(family, n_rows, len(chosen))
@@ -74,7 +74,7 @@ def build(wb: Workbench) -> None:
                     .set_enabled(any(mapped.values()))
                 ui.label("Only connected families are analyzed; each "
                          "family × harness pairing is resolved separately.") \
-                    .classes("text-[10px] sx-muted")
+                    .classes("text-xs sx-muted")
                 if wb.open_issues():
                     c.chip("blocker",
                            f"{len(wb.open_issues())} sales-code expression(s) "
@@ -86,9 +86,9 @@ def build(wb: Workbench) -> None:
                 "rounded px-2 flex items-center justify-between gap-1") \
                 .style(f"min-height:{ROW_H}px;background:{theme.SURFACE_2};"
                        f"border:1px solid {theme.LINE}"):
-            ui.label(family).classes("text-[11px] font-semibold truncate")
+            ui.label(family).classes("text-xs font-semibold truncate")
             text = str(n_rows) if n_mapped < 2 else f"{n_rows} · ×{n_mapped}"
-            ui.label(text).classes("text-[10px] sx-muted shrink-0")
+            ui.label(text).classes("text-xs sx-muted shrink-0")
 
     def _select_cell(family: str, chosen: list, suggestions, orphans: set,
                      labels: dict) -> None:
@@ -103,7 +103,7 @@ def build(wb: Workbench) -> None:
                 value=list(chosen), multiple=True,
                 label=None if chosen else "add harness…",
             ).props("dense outlined use-chips=false options-dense") \
-                .classes("w-full text-[11px]")
+                .classes("w-full text-xs")
             select.on_value_change(
                 lambda e, fam=family: _set_mapping(fam, e.value))
             if chosen:
@@ -119,9 +119,9 @@ def build(wb: Workbench) -> None:
                 "items-center gap-1 rounded px-2 py-0.5 shrink-0") \
                 .style(f"background:{GREEN}1f;border:1px solid {GREEN}66"):
             ui.label(labels.get(filename, filename)) \
-                .classes("text-[10px] font-semibold").style(f"color:{GREEN}")
+                .classes("text-xs font-semibold").style(f"color:{GREEN}")
             if detail:
-                ui.label(detail).classes("text-[10px] sx-muted")
+                ui.label(detail).classes("text-xs sx-muted")
             ui.button(icon="close",
                       on_click=lambda f=family, n=filename: _remove(f, n)) \
                 .props("flat dense round size=xs")
@@ -132,7 +132,7 @@ def build(wb: Workbench) -> None:
             available = [s for s in suggestions if s.key not in chosen]
             if not available:
                 ui.label("—" if chosen else "no candidate") \
-                    .classes("text-[10px] sx-muted")
+                    .classes("text-xs sx-muted")
                 return
             for s in available:
                 _chip(s.key, s.label, s.score, family=family,
@@ -149,7 +149,7 @@ def build(wb: Workbench) -> None:
                    f"max-width:12rem")
         with chip:
             text = label if sscore is None else f"{label}  {sscore:.0%}"
-            ui.label(text).classes("text-[10px] font-semibold truncate") \
+            ui.label(text).classes("text-xs font-semibold truncate") \
                 .style(f"color:{colour}")
             if tooltip:
                 ui.tooltip(tooltip)

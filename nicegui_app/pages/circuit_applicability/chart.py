@@ -105,7 +105,7 @@ def build(wb: Workbench) -> None:
         """)
         ui.label(f"Coverage: " + "  ".join(
             f"{pn[-6:]} {chart.coverage(pn)}/{len(chart.rows)}"
-            for pn in chart.part_numbers)).classes("text-[10px] sx-mono sx-muted")
+            for pn in chart.part_numbers)).classes("text-xs sx-mono sx-muted")
 
     def _other_end(chart, row) -> str:
         """Where the wire goes, named only as far as it needs to be."""

@@ -74,7 +74,7 @@ def build(wb: Workbench) -> None:
                     c.chip("ok", f"{len(issues) - len(open_issues)} resolved "
                                  "(untick 'Unresolved only' to review)")
                 ui.label("FILTER").classes(
-                    "text-[10px] font-bold tracking-widest sx-muted ml-2")
+                    "sx-eyebrow ml-2")
                 filter_chip("Unresolved only", f["unresolved_only"],
                             lambda: (f.__setitem__("unresolved_only",
                                                    not f["unresolved_only"]),
@@ -99,16 +99,16 @@ def build(wb: Workbench) -> None:
             with ui.row().classes("items-center gap-2 flex-wrap"):
                 c.chip("ok" if fixed else "blocker", issue.kind)
                 ui.label(issue.expression).classes(
-                    "text-[12px] sx-mono font-semibold")
+                    "text-xs sx-mono font-semibold")
                 if fixed:
                     ui.icon("arrow_forward").classes("text-xs")
-                    ui.label(fixed).classes("text-[12px] sx-mono font-semibold") \
+                    ui.label(fixed).classes("text-xs sx-mono font-semibold") \
                         .style(f"color:{GREEN}")
                 ui.label(f"{issue.rows} DTx row(s) · "
                          f"{len(issue.circuits)} circuit(s) · "
                          + ", ".join(issue.families[:3])) \
-                    .classes("text-[10px] sx-muted")
-            ui.label(issue.detail).classes("text-[10px] sx-muted")
+                    .classes("text-xs sx-muted")
+            ui.label(issue.detail).classes("text-xs sx-muted")
             if fixed:
                 with ui.row().classes("gap-2 items-center"):
                     ui.button("Undo", icon="undo",
@@ -125,14 +125,14 @@ def build(wb: Workbench) -> None:
                         .props("outline dense no-caps") \
                         .tooltip(suggestion.reason)
                 manual = ui.input(placeholder="or type the correct expression") \
-                    .props("dense outlined").classes("text-[11px] min-w-[14rem]")
+                    .props("dense outlined").classes("text-xs min-w-[14rem]")
                 ui.button("Use", icon="check",
                           on_click=lambda e=issue.expression, m=manual:
                               _resolve_manual(e, m.value or "")) \
                     .props("flat dense size=sm")
             if not issue.suggestions:
                 ui.label("No automatic suggestion — this one needs a human "
-                         "reading.").classes("text-[10px] sx-muted")
+                         "reading.").classes("text-xs sx-muted")
 
     wb.views["integrity"] = integrity_view
     integrity_view()

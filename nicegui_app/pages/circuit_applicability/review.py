@@ -64,7 +64,7 @@ def build(wb: Workbench) -> None:
             with ui.row().classes("w-full gap-4 items-start no-wrap"):
                 with ui.column().classes("gap-1 min-w-[15rem]"):
                     ui.label("FAMILY × HARNESS").classes(
-                        "text-[10px] font-bold tracking-widest sx-muted")
+                        "sx-eyebrow")
                     for e in entries:
                         _master_row(e)
                 with ui.column().classes("flex-1 min-w-0 gap-2"):
@@ -88,7 +88,7 @@ def build(wb: Workbench) -> None:
                         "text-xs font-semibold truncate")
                     ui.label(f"{a.harness} · {len(a.circuits)} ckt"
                              + (f" · {n_find} finding(s)" if n_find else "")) \
-                        .classes("text-[10px] sx-muted truncate")
+                        .classes("text-xs sx-muted truncate")
         row.on("click", lambda _e, lbl=entry.label: (
             state.update(selected=lbl), results_view.refresh()))
 
@@ -189,7 +189,7 @@ def build(wb: Workbench) -> None:
                              if c.expression})
         with ui.row().classes("items-center gap-2 flex-wrap mt-1"):
             ui.label("FILTER").classes(
-                "text-[10px] font-bold tracking-widest sx-muted")
+                "sx-eyebrow")
             filter_chip("Findings", f["findings"],
                         lambda: _toggle_flag("findings"),
                         len([x for x in a.circuits if x.is_finding]))
@@ -206,7 +206,7 @@ def build(wb: Workbench) -> None:
                       value=f["condition"], label=None,
                       on_change=lambda e: _set_condition(e.value)) \
                 .props("dense outlined options-dense").classes(
-                    "text-[11px] min-w-[12rem]")
+                    "text-xs min-w-[12rem]")
             if f["findings"] or f["needs_review"] or f["verdicts"] \
                     or f["condition"]:
                 ui.button("Clear", icon="filter_alt_off",
@@ -217,7 +217,7 @@ def build(wb: Workbench) -> None:
         shown = [x for x in a.circuits if _passes(a, x, "circuit")]
         ui.label(f"{len(shown)} of {len(a.circuits)} circuit(s) shown · tick "
                  f"a row to add it to {report_mod.CLEANUP_COLUMN}") \
-            .classes("text-[10px] sx-muted")
+            .classes("text-xs sx-muted")
         if not shown:
             c.empty("No circuit matches these filters.", icon="filter_alt")
             return
@@ -233,7 +233,7 @@ def build(wb: Workbench) -> None:
         a = entry.analysis
         shown = [x for x in a.cnums if _passes(a, x, "connector")]
         ui.label(f"{len(shown)} of {len(a.cnums)} connector(s) shown") \
-            .classes("text-[10px] sx-muted")
+            .classes("text-xs sx-muted")
         if not shown:
             c.empty("No connector matches these filters.", icon="filter_alt")
             return
@@ -257,11 +257,11 @@ def build(wb: Workbench) -> None:
                         on_change=lambda _e, k=kind, i=ident:
                             _toggle_cleanup(entry, k, i)) \
                 .props("dense size=xs")
-            ui.label(ident).classes("text-[11px] font-semibold w-24 shrink-0")
+            ui.label(ident).classes("text-xs font-semibold w-24 shrink-0")
             c.chip(VERDICT_KIND.get(verdict, "info"), verdict)
-            ui.label(condition).classes("text-[10px] sx-mono w-40 truncate")
-            ui.label(builds).classes("text-[10px] sx-muted w-14 shrink-0")
-            ui.label(carried).classes("text-[10px] sx-muted truncate flex-1")
+            ui.label(condition).classes("text-xs sx-mono w-40 truncate")
+            ui.label(builds).classes("text-xs sx-muted w-14 shrink-0")
+            ui.label(carried).classes("text-xs sx-muted truncate flex-1")
             if untracked:
                 c.chip("review", f"untracked: {untracked}")
 
@@ -270,7 +270,7 @@ def build(wb: Workbench) -> None:
         ui.label("Sales codes the DTx conditions on for this family that its "
                  "complexity file does not track. They are read as PRESENT, "
                  "so every circuit below applies more widely than the data "
-                 "can justify.").classes("text-[10px] sx-muted")
+                 "can justify.").classes("text-xs sx-muted")
         if not a.code_gaps:
             c.chip("ok", "Every code the DTx uses here is tracked")
         for g in a.code_gaps:
@@ -283,16 +283,16 @@ def build(wb: Workbench) -> None:
                             on_change=lambda _e, code=g.code:
                                 _toggle_cleanup(entry, "gap", code)) \
                     .props("dense size=xs")
-                ui.label(g.code).classes("text-[11px] font-semibold w-20")
+                ui.label(g.code).classes("text-xs font-semibold w-20")
                 ui.label(f"{g.occurrences} DTx row(s)") \
-                    .classes("text-[10px] sx-muted w-28")
+                    .classes("text-xs sx-muted w-28")
                 ui.label("circuits: " + ", ".join(g.circuits[:8])) \
-                    .classes("text-[10px] sx-muted truncate flex-1")
+                    .classes("text-xs sx-muted truncate flex-1")
         if a.unused_codes:
             ui.label("Tracked by the complexity file but never conditioned "
                      "on by a DTx circuit in this family:").classes(
-                "text-[10px] sx-muted mt-2")
-            ui.label(", ".join(a.unused_codes)).classes("text-[10px] sx-mono")
+                "text-xs sx-muted mt-2")
+            ui.label(", ".join(a.unused_codes)).classes("text-xs sx-mono")
 
     wb.views["results"] = results_view
     results_view()

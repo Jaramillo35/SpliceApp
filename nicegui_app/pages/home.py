@@ -47,7 +47,7 @@ def page() -> None:
                 with ui.link(target=route).classes("no-underline"):
                     with ui.card().classes(
                             "sx-card sx-reveal w-full h-full cursor-pointer "
-                            "hover:border-orange-700 transition-colors"):
+                            "sx-hover transition-colors"):
                         with ui.row().classes("items-center gap-2"):
                             ui.icon(icon).classes("text-xl") \
                                 .style(f"color:{theme.BRAND}")
