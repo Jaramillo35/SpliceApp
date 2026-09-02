@@ -505,8 +505,15 @@ def build_bulletin_numbers_for_secr(
 
 
 def _style_dtcr_mapping_sheet(ws: openpyxl.worksheet.worksheet.Worksheet) -> None:
-    """Apply readable formatting to the DTCR_Harness_Mapping sheet."""
-    if ws.max_row < 1 or ws.max_column < 1:
+    """Apply readable formatting to the DTCR_Harness_Mapping sheet.
+
+    ``max_row`` and ``max_column`` are read once. On a regular worksheet each
+    call walks every cell, so asking for ``max_column`` inside a per-row loop
+    made styling quadratic — invisible on a small mapping, and the reason a
+    large one took as long to format as to compute.
+    """
+    max_row, max_column = ws.max_row, ws.max_column
+    if max_row < 1 or max_column < 1:
         return
 
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
@@ -520,10 +527,11 @@ def _style_dtcr_mapping_sheet(ws: openpyxl.worksheet.worksheet.Worksheet) -> Non
 
     # Data alignment and zebra striping
     stripe_fill = PatternFill(start_color="EAF2FA", end_color="EAF2FA", fill_type="solid")
-    for row in range(2, ws.max_row + 1):
-        for col in range(1, ws.max_column + 1):
+    body_alignment = Alignment(vertical="top", wrap_text=True)
+    for row in range(2, max_row + 1):
+        for col in range(1, max_column + 1):
             cell = ws.cell(row=row, column=col)
-            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            cell.alignment = body_alignment
             if row % 2 == 0:
                 cell.fill = stripe_fill
 
@@ -532,10 +540,10 @@ def _style_dtcr_mapping_sheet(ws: openpyxl.worksheet.worksheet.Worksheet) -> Non
     ws.freeze_panes = "A2"
 
     # Column widths based on content (bounded for readability)
-    for col_idx in range(1, ws.max_column + 1):
+    for col_idx in range(1, max_column + 1):
         col_letter = get_column_letter(col_idx)
         max_len = 0
-        for row in range(1, ws.max_row + 1):
+        for row in range(1, max_row + 1):
             val = ws.cell(row=row, column=col_idx).value
             if val is None:
                 continue
@@ -543,9 +551,9 @@ def _style_dtcr_mapping_sheet(ws: openpyxl.worksheet.worksheet.Worksheet) -> Non
         ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 120)
 
     # Give multiline cells enough height
-    for row_idx in range(2, ws.max_row + 1):
+    for row_idx in range(2, max_row + 1):
         max_lines = 1
-        for col_idx in range(1, ws.max_column + 1):
+        for col_idx in range(1, max_column + 1):
             val = ws.cell(row=row_idx, column=col_idx).value
             if val is None:
                 continue

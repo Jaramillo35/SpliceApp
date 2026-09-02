@@ -320,3 +320,35 @@ def test_an_update_can_re_enrich_against_the_report(db_path: Path) -> None:
     assert second.enriched
     assert second.version_number == 2
     assert {a.cnum for a in second.dtcr_assignments} == {"SD401"}
+
+
+def test_the_mapping_styler_never_rescans_the_sheet():
+    """``max_row``/``max_column`` walk every cell; reading them inside a
+    per-row loop made styling quadratic. The number of reads must not grow
+    with the sheet — openpyxl's own ``dimensions`` accounts for a constant
+    one, so the assertion is "the same count for 10 rows and 200".
+    """
+    from openpyxl import Workbook
+    from openpyxl.worksheet.worksheet import Worksheet
+    from secrdb.core.secr.enrich import _style_dtcr_mapping_sheet
+
+    def reads_for(rows: int) -> tuple[int, int]:
+        wb = Workbook(); ws = wb.active
+        ws.append(["DTCR#", "Harness Family", "Reason"])
+        for i in range(rows):
+            ws.append([f"5{i:04d}", "IP", f"line one\nline {i}"])
+        seen = []
+        originals = {n: getattr(Worksheet, n) for n in ("max_row", "max_column")}
+        for name, original in originals.items():
+            setattr(Worksheet, name, property(
+                lambda self, _n=name, _o=original: (seen.append(_n), _o.fget(self))[1]))
+        try:
+            _style_dtcr_mapping_sheet(ws)
+        finally:
+            for name, original in originals.items():
+                setattr(Worksheet, name, original)
+        return seen.count("max_row"), seen.count("max_column")
+
+    small, large = reads_for(10), reads_for(200)
+    assert small == large, f"reads scale with rows: {small} vs {large}"
+    assert max(large) <= 3, f"more reads than a constant handful: {large}"
