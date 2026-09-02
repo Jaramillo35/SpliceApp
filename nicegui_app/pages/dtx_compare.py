@@ -1,4 +1,9 @@
-"""DTx Compare — NiceGUI page over the enhanced compare + preorder engines."""
+"""DTx Compare — NiceGUI page over the enhanced compare + preorder engines.
+
+Archetype A (converter): inputs panel with one gated primary, result panel
+that exists before the run. The PreOrder list is the secondary path and
+says so; it no longer shares the primary's colour or its result card.
+"""
 
 from __future__ import annotations
 
@@ -6,53 +11,64 @@ from nicegui import ui
 
 from nicegui_app import components as c
 
+REQUIRED = (("OLD DTx", "old"), ("NEW DTx", "new"), ("DTCR report", "dtcr"))
+KPIS = (("Added CNUMs", "added_cnum_count"), ("Removed CNUMs", "removed_cnum_count"),
+        ("Added circuits", "added_circuit_count"),
+        ("Removed circuits", "removed_circuit_count"),
+        ("Modified circuits", "modified_circuit_count"))
+
 
 @ui.page("/dtx-compare")
 def page() -> None:
-    state: dict = {"old": None, "new": None, "dtcr": None, "result": None}
+    state: dict = {"old": None, "new": None, "dtcr": None}
 
     with c.frame("DTx Compare",
                  "OLD vs NEW DTx with DTCR tagging → the WEAVE change workbook, "
                  "plus the PreOrder list."):
-        with c.card("Inputs", "All three files are required for the compare."):
-            with ui.row().classes("w-full gap-4 flex-wrap"):
-                c.upload_zone("OLD DTx report (.xls)",
-                              lambda n, b: state.update(old=(n, b)), accept=".xls,.xlsx")
-                c.upload_zone("NEW DTx report (.xls)",
-                              lambda n, b: state.update(new=(n, b)), accept=".xls,.xlsx")
-                c.upload_zone("DTCR report (.xls)",
-                              lambda n, b: state.update(dtcr=(n, b)), accept=".xls,.xlsx")
-            with ui.row().classes("gap-2"):
-                ui.button("Generate compare workbook", icon="play_arrow",
-                          on_click=lambda: compare()).props("unelevated")
-                ui.button("PreOrder list only", icon="playlist_add_check",
-                          on_click=lambda: preorder()).props("outline")
+        inputs, result = c.converter(
+            "Drop the OLD and NEW DTx exports and the DTCR report. The compare "
+            "lists every added, removed and changed circuit and connector, "
+            "tagged by DTCR, and builds the change workbook.",
+            inputs_caption="All three files are needed for the compare; the "
+                           "PreOrder list needs only OLD and NEW.")
 
-        @ui.refreshable
-        def render_result() -> None:
-            r = state["result"]
-            if not r:
-                return
-            with c.card("Result"):
-                with ui.row().classes("gap-6"):
-                    for label, key in [("Added CNUMs", "added_cnum_count"),
-                                       ("Removed CNUMs", "removed_cnum_count"),
-                                       ("Added ckts", "added_circuit_count"),
-                                       ("Removed ckts", "removed_circuit_count"),
-                                       ("Modified ckts", "modified_circuit_count")]:
+        def missing(keys):
+            return [label for label, key in REQUIRED if key in keys and not state[key]]
+
+        with inputs:
+            c.upload_row("OLD DTx report (.xls)",
+                         lambda n, b: state.update(old=(n, b)), accept=".xls,.xlsx")
+            c.upload_row("NEW DTx report (.xls)",
+                         lambda n, b: state.update(new=(n, b)), accept=".xls,.xlsx")
+            c.upload_row("DTCR report (.xls)",
+                         lambda n, b: state.update(dtcr=(n, b)), accept=".xls,.xlsx")
+            c.action("Run compare", lambda: compare(),
+                     needs=lambda: missing({"old", "new", "dtcr"}))
+            c.action("PreOrder list only", lambda: preorder(),
+                     needs=lambda: missing({"old", "new"}),
+                     icon="playlist_add_check", secondary=True)
+
+        def show_compare(r: dict) -> None:
+            with result.show():
+                with c.kpi_strip():
+                    for label, key in KPIS:
                         if key in r:
-                            with ui.column().classes("items-center gap-0"):
-                                ui.label(str(int(r[key]))).classes("text-xl font-bold")
-                                ui.label(label).classes("text-[11px] sx-muted")
-                c.download_button(r["output_file_name"], lambda: r["output_excel_bytes"])
+                            c.kpi(int(r[key]), label)
+                ui.label("Every change is tagged with its DTCR in the workbook; "
+                         "the PreOrder sheet lists what to order first.") \
+                    .classes("sx-caption")
+            with result.actions:
+                c.download(r["output_file_name"], lambda: r["output_excel_bytes"])
 
-        render_result()
+        def show_preorder(r: dict) -> None:
+            with result.show():
+                c.note("info", "PreOrder list built from OLD and NEW only — "
+                               "no DTCR tagging. Run the compare for the "
+                               "change workbook.")
+            with result.actions:
+                c.download(r["output_file_name"], lambda: r["output_excel_bytes"])
 
         async def compare() -> None:
-            if not (state["old"] and state["new"] and state["dtcr"]):
-                ui.notify("Load OLD, NEW, and DTCR files first", type="warning")
-                return
-
             def work():
                 from splice.dtx_compare.engine import load_dtcr_report
                 from splice.dtx_compare.enhanced_report import generate_enhanced_dtx_report
@@ -64,14 +80,9 @@ def page() -> None:
             r = await c.run_engine(work, running="Comparing reports and building the workbook…",
                                    done="Compare workbook ready")
             if r is not None:
-                state["result"] = r
-                render_result.refresh()
+                show_compare(r)
 
         async def preorder() -> None:
-            if not (state["old"] and state["new"]):
-                ui.notify("Load OLD and NEW files first", type="warning")
-                return
-
             def work():
                 import tempfile
                 from pathlib import Path
@@ -87,6 +98,4 @@ def page() -> None:
             r = await c.run_engine(work, running="Generating the PreOrder workbook…",
                                    done="PreOrder ready")
             if r is not None:
-                state["result"] = {"output_file_name": r["output_file_name"],
-                                   "output_excel_bytes": r["output_excel_bytes"]}
-                render_result.refresh()
+                show_preorder(r)

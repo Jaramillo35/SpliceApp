@@ -1,8 +1,10 @@
 """HRN Chart Builder — NiceGUI page over splice.hrncmp.engine.
 
-Includes the supplier-list loop: download the shipped list, upload a modified
-one (used immediately for this session's builds) which auto-files a
-deduplicated supplier-update ticket, and the admin panel over those tickets.
+Archetype A (converter): inputs panel with the pairing preview and one gated
+primary, result panel that exists before the run. Below the grid sits the
+supplier-list loop: download the shipped list, upload a modified one (used
+immediately for this session's builds) which auto-files a deduplicated
+supplier-update ticket, and the admin panel over those tickets.
 """
 
 from __future__ import annotations
@@ -15,6 +17,9 @@ from nicegui import ui
 
 from nicegui_app import components as c
 from splice.hrncmp import engine, supplier_tickets
+
+PAIR_LABELS = {"hrn": "HRN file", "harness": "Harness", "csv": "Matrix CSV",
+               "cmp": "CMP", "out": "Output"}
 
 
 def _norm_stem(name: str) -> str:
@@ -31,15 +36,25 @@ def page() -> None:
     with c.frame("HRN Chart Builder",
                  "HRN + Matrix CSV (+ CMP) → chart workbooks named "
                  "{Family}_{ModelYear}{Program}_Chart_{date}"):
-        with c.card("Inputs", "Any mix of .hrn / .csv / .cmp — they pair by file name."):
-            c.upload_zone("HRN / CSV / CMP files",
-                          lambda n, b: (files.__setitem__(n, b), refresh_jobs.refresh()),
-                          accept=".hrn,.csv,.cmp", multiple=True)
+        inputs, result = c.converter(
+            "Drop any mix of .hrn, .csv and .cmp files. They pair by file "
+            "name; every HRN with a Matrix CSV becomes one chart workbook, "
+            "its CNUMs tagged with supplier prefixes from the supplier list.",
+            inputs_caption="Any mix of .hrn / .csv / .cmp — they pair by file name.")
+
+        def runnable() -> list[dict]:
+            return [j for j in _pair(files) if j["csv"]]
+
+        with inputs:
+            c.upload_row("HRN / CSV / CMP files",
+                         lambda n, b: (files.__setitem__(n, b), refresh_jobs.refresh()),
+                         accept=".hrn,.csv,.cmp", multiple=True)
 
             @ui.refreshable
             def refresh_jobs() -> None:
                 jobs = _pair(files)
                 if not jobs:
+                    c.empty("Drop files to see how they pair.", icon="join_inner")
                     return
                 rows = [{
                     "hrn": j["hrn"],
@@ -48,17 +63,68 @@ def page() -> None:
                     "cmp": j["cmp"] or "—",
                     "out": f'{engine.output_basename(j["hrn"])}.xlsx',
                 } for j in jobs]
-                ui.table(rows=rows, columns=[
-                    {"name": k, "label": lbl, "field": k, "align": "left"}
-                    for k, lbl in [("hrn", "HRN file"), ("harness", "Harness"),
-                                   ("csv", "Matrix CSV"), ("cmp", "CMP"),
-                                   ("out", "Output")]]) \
-                    .classes("w-full").props("dense flat")
+                c.frame_table(rows, labels=PAIR_LABELS, mono=("hrn", "csv", "cmp", "out"))
 
             refresh_jobs()
-            ui.button("Build charts", icon="play_arrow", on_click=lambda: build()) \
-                .props("unelevated")
+            c.action("Build charts", lambda: build(),
+                     needs=lambda: [] if runnable() else ["an HRN + Matrix CSV pair"])
 
+        def show_results() -> None:
+            def zip_all() -> bytes:
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for res in results:
+                        zf.writestr(res.filename, res.workbook)
+                return buf.getvalue()
+
+            with result.show():
+                for res in results:
+                    with ui.row().classes("items-center gap-3 w-full"):
+                        c.download(res.filename, lambda r=res: r.workbook)
+                        notes = []
+                        if res.unmatched:
+                            notes.append(f"{len(res.unmatched)} unmatched connector(s)")
+                        if res.invalid_prefixes:
+                            notes.append(f"{len(res.invalid_prefixes)} invalid prefix(es)")
+                        if notes:
+                            c.chip("high", ", ".join(notes))
+                        else:
+                            c.chip("ok", "clean")
+            with result.actions:
+                if len(results) > 1:
+                    c.downloads([(r.filename, lambda r=r: r.workbook) for r in results]
+                                + [("hrn_charts.zip", zip_all)],
+                                label=f"{len(results)} workbooks")
+                else:
+                    c.download(results[0].filename, lambda: results[0].workbook)
+
+        async def build() -> None:
+            jobs = runnable()
+
+            def work():
+                out, used = [], set()
+                for j in jobs:
+                    res = engine.build_chart(
+                        j["hrn"], files[j["hrn"]], files[j["csv"]],
+                        files[j["cmp"]] if j["cmp"] else None,
+                        supplier_map=supplier["map"])
+                    name, n = res.filename, 1
+                    while name in used:
+                        n += 1
+                        name = res.filename.replace(".xlsx", f"_{n}.xlsx")
+                    used.add(name)
+                    res.filename = name
+                    out.append(res)
+                return out
+
+            built = await c.run_engine(work, running=f"Building {len(jobs)} chart(s)…",
+                                       done="Charts built")
+            if built:
+                results.clear()
+                results.extend(built)
+                show_results()
+
+        # ------------------------------------------------------ supplier list
         def supplier_upload(name: str, blob: bytes) -> None:
             supplier_note.clear()
             uploaded = engine.load_supplier_map(blob)
@@ -72,7 +138,7 @@ def page() -> None:
             try:
                 ticket_id, diff, already = supplier_tickets.file_supplier_ticket(
                     name, uploaded, shipped)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - a failed ticket must not block the build
                 with supplier_note:
                     c.chip("high", f"Ticket could not be filed: {exc}")
                 return
@@ -95,7 +161,7 @@ def page() -> None:
                     .classes("w-full").props("dense"):
                 ui.label("Hand a ticket's JSON to Claude ('apply supplier "
                          "ticket …') to regenerate the shipped list and mark "
-                         "it applied.").classes("text-xs sx-muted")
+                         "it applied.").classes("sx-caption")
                 for t in sorted(tickets, key=lambda x: x.get("created_at", ""),
                                 reverse=True):
                     with ui.row().classes("items-center gap-3 w-full"):
@@ -103,84 +169,25 @@ def page() -> None:
                         c.chip(kind, t.get("status", "new"))
                         ui.label(f"{t.get('ticket_id')} · "
                                  f"{t.get('created_at', '')[:16]}") \
-                            .classes("text-sm sx-muted")
-                        c.download_button(
-                            f"{t.get('ticket_id', 'ticket')}.json",
-                            lambda t=t: json.dumps(t, indent=2).encode())
+                            .classes("sx-caption sx-mono")
+                        c.download(f"{t.get('ticket_id', 'ticket')}.json",
+                                   lambda t=t: json.dumps(t, indent=2).encode())
 
-        with ui.expansion("Supplier list").classes("w-full sx-card px-2") \
-                .props("dense"):
-            ui.label("Used to tag CNUMs with supplier prefixes (PN-111~DZ). "
-                     "Missing or outdated supplier? Download, edit, and upload "
+        with c.card("Supplier list",
+                    "Used to tag CNUMs with supplier prefixes (PN-111~DZ)."):
+            ui.label("Missing or outdated supplier? Download, edit, and upload "
                      "— your builds use it right away, and an update ticket is "
                      "filed for the administrator automatically.") \
-                .classes("text-sm sx-muted")
-            with ui.row().classes("gap-3 items-start flex-wrap"):
+                .classes("sx-caption")
+            with ui.row().classes("gap-3 items-start flex-wrap w-full"):
                 if engine.DEFAULT_SUPPLIER_PATH.exists():
-                    c.download_button(engine.DEFAULT_SUPPLIER_PATH.name,
-                                      lambda: engine.DEFAULT_SUPPLIER_PATH.read_bytes())
-                c.upload_zone("Override supplier list (Excel/CSV)",
-                              lambda n, b: supplier_upload(n, b),
-                              accept=".xlsx,.xls,.csv")
+                    c.download(engine.DEFAULT_SUPPLIER_PATH.name,
+                               lambda: engine.DEFAULT_SUPPLIER_PATH.read_bytes())
+                c.upload_row("Override supplier list (Excel/CSV)",
+                             lambda n, b: supplier_upload(n, b),
+                             accept=".xlsx,.xls,.csv")
             supplier_note = ui.column().classes("gap-1")
             _admin_panel()
-
-        @ui.refreshable
-        def render_results() -> None:
-            if not results:
-                return
-            with c.card(f"{len(results)} workbook(s) built"):
-                for res in results:
-                    with ui.row().classes("items-center gap-3 w-full"):
-                        c.download_button(res.filename, lambda r=res: r.workbook)
-                        notes = []
-                        if res.unmatched:
-                            notes.append(f"{len(res.unmatched)} unmatched connector(s)")
-                        if res.invalid_prefixes:
-                            notes.append(f"{len(res.invalid_prefixes)} invalid prefix(es)")
-                        if notes:
-                            c.chip("high", ", ".join(notes))
-                        else:
-                            c.chip("ok", "clean")
-                if len(results) > 1:
-                    def zip_all() -> bytes:
-                        buf = io.BytesIO()
-                        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                            for res in results:
-                                zf.writestr(res.filename, res.workbook)
-                        return buf.getvalue()
-                    c.download_button("hrn_charts.zip", zip_all)
-
-        render_results()
-
-        async def build() -> None:
-            jobs = [j for j in _pair(files) if j["csv"]]
-            if not jobs:
-                ui.notify("No runnable HRN+CSV pair yet", type="warning")
-                return
-
-            def work():
-                out, used = [], set()
-                for j in jobs:
-                    res = engine.build_chart(
-                        j["hrn"], files[j["hrn"]], files[j["csv"]],
-                        files[j["cmp"]] if j["cmp"] else None,
-                        supplier_map=supplier["map"])
-                    name, n = res.filename, 1
-                    while name in used:
-                        n += 1
-                        name = res.filename.replace(".xlsx", f"_{n}.xlsx")
-                    used.add(name)
-                    res.filename = name
-                    out.append(res)
-                return out
-
-            built = await c.run_engine(work, running=f"Building {len(jobs)} chart(s)…",
-                                       done="Charts built")
-            if built is not None:
-                results.clear()
-                results.extend(built)
-                render_results.refresh()
 
 
 def _pair(files: dict[str, bytes]) -> list[dict]:

@@ -110,7 +110,8 @@ def _bag() -> dict:
     client = context.client
     bag = getattr(client, "sx", None)
     if bag is None:
-        bag = {"actions": [], "steps": [], "header": None, "step_bar": None}
+        bag = {"actions": [], "steps": [], "header": None, "step_bar": None,
+               "title": "", "context": ""}
         client.sx = bag
     return bag
 
@@ -118,7 +119,9 @@ def _bag() -> dict:
 def recheck() -> None:
     """Re-evaluate every gated action on this page. Upload rows call this
     after each file; pages call it after any other input changes."""
-    for act in list(_bag()["actions"]):
+    bag = _bag()
+    bag["actions"] = [a for a in bag["actions"] if not a.button.is_deleted]
+    for act in bag["actions"]:
         act.check()
 
 
@@ -167,6 +170,7 @@ def frame(title: str, caption: str = "", *, context_chip: str = "", wide: bool =
     """
     theme.apply()
     bag = _bag()
+    bag["title"] = title
     dialog = _feedback_dialog()
     route = current_route()
 
@@ -193,6 +197,7 @@ def frame(title: str, caption: str = "", *, context_chip: str = "", wide: bool =
             ui.element("div").classes("grow")
             with ui.column().classes("w-full gap-0 pt-3").style(f"border-top:1px solid {theme.LINE}"):
                 _nav_link(ADMIN, route == ADMIN.route)
+                _identity_row()
                 from splice import version
                 info = version.current()
                 ui.label(f"v{info.label}").classes("sx-caption sx-mono px-2 pt-1")
@@ -218,9 +223,55 @@ def frame(title: str, caption: str = "", *, context_chip: str = "", wide: bool =
         yield content
 
 
+def who() -> str:
+    """The engineer's name for the state envelope, from per-user storage.
+    Empty until they set it (rail footer)."""
+    try:
+        from nicegui import app
+        return str(app.storage.user.get("name", "") or "")
+    except Exception:  # noqa: BLE001 — no user storage outside a request
+        return ""
+
+
+def set_who(name: str) -> None:
+    try:
+        from nicegui import app
+        app.storage.user["name"] = name.strip()
+    except Exception as exc:  # noqa: BLE001 — no user storage outside a request
+        ui.notify(f"Could not remember your name: {exc}", type="warning")
+
+
+def _identity_row() -> None:
+    """Rail footer: who you are, editable in place."""
+    with ui.row().classes("items-center gap-1 px-2 no-wrap w-full"):
+        ui.icon("person").classes("text-sm").style(f"color:{theme.TEXT_3}")
+        label = ui.label(who() or "Set your name").classes("sx-caption truncate")
+
+        with ui.dialog() as dialog, ui.card().classes("w-80 sx-card"):
+            ui.label("Your name").classes("sx-section")
+            ui.label("Shown on everything you save so the team can see who "
+                     "decided what.").classes("sx-caption")
+            field = ui.input("Name or initials", value=who()).classes("w-full")
+
+            def save() -> None:
+                set_who(field.value or "")
+                label.set_text(who() or "Set your name")
+                dialog.close()
+
+            field.on("keydown.enter", save)
+            with ui.row().classes("justify-end w-full gap-2"):
+                ui.button("Cancel", on_click=dialog.close).props("flat no-caps")
+                ui.button("Save", on_click=save).props("unelevated no-caps")
+
+        ui.button(icon="edit", on_click=dialog.open).props("flat dense round size=xs") \
+            .tooltip("Change your name")
+
+
 def header_chip(text: str, kind: str = "info") -> None:
     """A context chip in the header (programme · phase, or a saved-by line)."""
-    slot = _bag()["header"]
+    bag = _bag()
+    bag["context"] = text
+    slot = bag["header"]
     if slot is None:
         return
     with slot:
@@ -273,7 +324,17 @@ class StepBar:
                         ui.label(step.note).classes("sx-caption")
 
 
-def step_bar() -> StepBar:
+def _anchor(step: str) -> str:
+    return "step-" + "".join(ch if ch.isalnum() else "-" for ch in step.lower())
+
+
+def step_bar(*names: str) -> StepBar:
+    """The workbench's sticky step bar. Pass the step names in page order so
+    every step shows from the first paint, waiting until its card renders."""
+    steps = _bag()["steps"]
+    for name in names:
+        if not any(x.name == name for x in steps):
+            steps.append(Step(name, _anchor(name)))
     bar = StepBar()
     _bag()["step_bar"] = bar
     return bar
@@ -296,10 +357,12 @@ def section(title: str, caption: str = "", *, step: str | None = None,
     and carries an anchor the bar links to. Only workbenches pass ``step``."""
     anchor = ""
     if step is not None:
-        anchor = "step-" + "".join(ch if ch.isalnum() else "-" for ch in step.lower())
-        s = Step(step, anchor)
-        s.state = state
-        _bag()["steps"].append(s)
+        anchor = _anchor(step)
+        steps = _bag()["steps"]
+        if not any(x.name == step for x in steps):
+            s = Step(step, anchor)
+            s.state = state
+            steps.append(s)
     with ui.card().classes("w-full sx-card sx-reveal") as c:
         if anchor:
             c.props(f'id="{anchor}"')
@@ -549,6 +612,19 @@ def echart(options: dict, **kwargs) -> ui.echart:
 
 
 # ================================================================= engines
+def _log_run(done: str) -> None:
+    """Every completed run lands in the activity feed, under the page's
+    name, so the Overview can say what to continue."""
+    try:
+        from splice.common import activity
+        bag = _bag()
+        activity.record(bag.get("title", ""), current_route(), done,
+                        by=who(), context=bag.get("context", ""))
+    except Exception as exc:  # noqa: BLE001 — the feed must never break a run
+        import logging
+        logging.getLogger(__name__).warning("activity not recorded: %s", exc)
+
+
 async def run_engine(fn: Callable, *args, running: str, done: str = "Done",
                      **kwargs):
     """Run an engine call off the UI thread with progress + completion toasts.
@@ -560,6 +636,7 @@ async def run_engine(fn: Callable, *args, running: str, done: str = "Done",
     try:
         result = await run.io_bound(fn, *args, **kwargs)
         ui.notify(done, type="positive")
+        _log_run(done)
         return result
     except Exception as exc:  # noqa: BLE001 - engine errors surface to the user
         ui.notify(f"{exc}", type="negative", multi_line=True, close_button=True)
@@ -599,6 +676,7 @@ async def run_engine_progress(fn: Callable, container, *, running: str,
     try:
         result = await run.io_bound(fn, report)
         ui.notify(done, type="positive")
+        _log_run(done)
         return result
     except Exception as exc:  # noqa: BLE001 - engine errors surface to the user
         ui.notify(f"{exc}", type="negative", multi_line=True, close_button=True)

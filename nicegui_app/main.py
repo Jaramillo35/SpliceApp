@@ -49,6 +49,9 @@ def run() -> None:
         dark=True,
         reload=False,
         show=False,
+        # per-user storage (rail identity, preferences); the secret only
+        # signs the browser cookie, nothing sensitive is stored
+        storage_secret=os.getenv("SPLICE_STORAGE_SECRET", "splice-toolkit"),
     )
 
 
