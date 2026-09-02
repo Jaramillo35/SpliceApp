@@ -118,17 +118,3 @@ def satisfiable(expression: str, configurations: Iterable[FrozenSet[str]]) -> bo
     return any(evaluate(expression, config) for config in configurations)
 
 
-def co_satisfiable(
-    left: str, right: str, configurations: Iterable[FrozenSet[str]]
-) -> bool:
-    """Is there a vehicle where both conditions hold at once?
-
-    Evaluated over configurations that are actually built rather than over every
-    combination of codes. The distinction is not academic: ``RSY`` and ``RTC``
-    both exist on the IP and the Dash, but no build carries both, so treating
-    them as independent invents a vehicle and reports a continuity gap in it.
-    """
-    return any(
-        evaluate(left, config) and evaluate(right, config)
-        for config in configurations
-    )

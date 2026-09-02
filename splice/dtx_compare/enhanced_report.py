@@ -35,7 +35,6 @@ from splice.dtx_compare.engine import (
     detect_layout,
     generate_dtcr_matching_report,
     generate_preorder_generation_workbook,
-    load_dtx_report,
     load_dtx_report_from_rows,
     write_table,
     _annotate_results_with_dtcr,

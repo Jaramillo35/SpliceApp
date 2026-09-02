@@ -23,7 +23,7 @@ This module deliberately has no Ollama dependency, so it is testable on its own.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 

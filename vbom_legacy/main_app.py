@@ -1546,3 +1546,32 @@ The DEFE template is intentionally withheld until the review is complete."""
         print(f"Completion message: {e}")
 if __name__ == "__main__":
     main()
+
+
+# Moved back from the engine: these open dialogs, so they are GUI.
+def collect_run_setup_inputs():
+    """Open startup setup window and return run inputs or None if cancelled."""
+    dlg = RunSetupDialog()
+    return dlg.result
+
+def ask_my_and_program():
+    """Prompt user for MY (model year) and Program (e.g., RU)."""
+    from tkinter import simpledialog
+    root = Tk(); root.withdraw(); root.attributes('-topmost', True)
+    
+    my = simpledialog.askstring(
+        "Model Year",
+        "Enter Model Year (MY):\n(e.g., 27)",
+        parent=root
+    )
+    if not my:
+        root.destroy()
+        return None, None
+    
+    program = simpledialog.askstring(
+        "Program",
+        "Enter Program:\n(e.g., RU)",
+        parent=root
+    )
+    root.destroy()
+    return my.strip() if my else None, program.strip() if program else None

@@ -124,9 +124,6 @@ class HarnessAnalysis:
     #: codes the complexity tracks that no DTx circuit on this family uses
     unused_codes: List[str] = field(default_factory=list)
 
-    def by_class(self, classification: str) -> List[CircuitApplicability]:
-        return [c for c in self.circuits if c.classification == classification]
-
     @property
     def counts(self) -> dict:
         out = {k: 0 for k in

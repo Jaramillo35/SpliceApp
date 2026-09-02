@@ -22,7 +22,6 @@ from __future__ import annotations
 import os
 import subprocess
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 PACKAGE_VERSION = "0.1.0"
@@ -104,5 +103,3 @@ def current() -> VersionInfo:
     return _CACHED
 
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()

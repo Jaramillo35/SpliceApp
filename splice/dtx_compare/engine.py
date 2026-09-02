@@ -20,7 +20,7 @@ from splice.common.text import (
     split_delimited_values as _split_delimited_values,
     extract_transmittal_number as _extract_transmittal_number,
 )
-from splice.common.validation import ensure_non_empty_upload, require_columns
+from splice.common.validation import ensure_non_empty_upload
 
 from splice.dtcr.matching import match_dtcr_to_harness_family
 
@@ -428,10 +428,6 @@ def _all_changes_record(row: pd.Series, change_type: str) -> dict[str, object]:
         "Changed Fields": "",
         "Change Detail": "",
     }
-
-
-def _pick_new_or_old(row: pd.Series, column: str) -> str:
-    return normalize_value(row.get(f"{column}_new", "")) or normalize_value(row.get(f"{column}_old", ""))
 
 
 def build_all_changes_df(results: dict[str, object]) -> pd.DataFrame:

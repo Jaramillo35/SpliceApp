@@ -276,15 +276,6 @@ class _Block:
     headers: Dict[str, int]
 
 
-def _header_map(ws, header_row: int) -> Dict[str, int]:
-    mapping: Dict[str, int] = {}
-    for col in range(1, (ws.max_column or 1) + 1):
-        header = _header_text(ws.cell(header_row, col).value)
-        if header and header not in mapping:
-            mapping[header] = col
-    return mapping
-
-
 def _find_blocks(ws) -> List[_Block]:
     """Split a sheet into header-delimited blocks.
 

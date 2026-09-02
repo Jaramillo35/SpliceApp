@@ -17,7 +17,7 @@ import io
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Tuple
 
 from openpyxl import load_workbook
 

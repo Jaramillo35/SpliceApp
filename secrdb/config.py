@@ -67,6 +67,3 @@ ASSISTANT_ENABLED = os.getenv("SECRDB_ASSISTANT", "1").strip().lower() not in (
     "off",
 )
 
-def configure_environment() -> None:
-    """Prepare the runtime: make sure the data directory exists."""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)

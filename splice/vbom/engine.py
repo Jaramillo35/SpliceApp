@@ -58,10 +58,6 @@ def _parse_drop_files(raw: str):
         out.append(path)
 
     return out
-def collect_run_setup_inputs():
-    """Open startup setup window and return run inputs or None if cancelled."""
-    dlg = RunSetupDialog()
-    return dlg.result
 def load_dataframe(path: str) -> pd.DataFrame:
     ext = os.path.splitext(path)[1].lower()
     if ext == ".csv":
@@ -1383,27 +1379,6 @@ def create_selection_review_workbook(output_path: str,
     _copy_template_sheet_to_xlsxwriter(workbook, template_path)
     workbook.close()
     return output_path
-def ask_my_and_program():
-    """Prompt user for MY (model year) and Program (e.g., RU)."""
-    from tkinter import simpledialog
-    root = Tk(); root.withdraw(); root.attributes('-topmost', True)
-    
-    my = simpledialog.askstring(
-        "Model Year",
-        "Enter Model Year (MY):\n(e.g., 27)",
-        parent=root
-    )
-    if not my:
-        root.destroy()
-        return None, None
-    
-    program = simpledialog.askstring(
-        "Program",
-        "Enter Program:\n(e.g., RU)",
-        parent=root
-    )
-    root.destroy()
-    return my.strip() if my else None, program.strip() if program else None
 def create_formatted_output(template_path: str, my: str, program: str, out_dir: str,
                            selections_df: pd.DataFrame, vin_matrix_df: pd.DataFrame):
     """

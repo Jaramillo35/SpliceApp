@@ -900,13 +900,6 @@ def _simplify_sales_code_for_display(internal_expr: str) -> str:
     return '&'.join(result_parts)
 
 
-def _evaluate_target_harnesses(expression: str, harness_code_map: dict[str, set[str]]) -> list[str]:
-    parsed = parse_sales_code_expression("" if expression == "TRUE" else expression)
-    return sorted(
-        [pn for pn, codes in harness_code_map.items() if evaluate_expression(parsed, codes)]
-    )
-
-
 def get_selected_harness_pns(edited_matrix_df: pd.DataFrame) -> dict[int, list[str]]:
     """Return selected Harness PNs per row index from checkbox grid."""
     fixed_cols = {"Device ID", "Connector No", "Device Name", "Pin", "Circuit", "Sales Code"}
@@ -1510,20 +1503,6 @@ def _validate_sales_expression_targets(
         if evaluate_expression(parsed, codes)
     }
     return matched == target_harnesses
-
-
-def _validate_topology_matches_table(diagram: str, rows: pd.DataFrame) -> bool:
-    diagram_compact = diagram.replace(" ", "")
-    for _, row in rows.iterrows():
-        required_tokens = [
-            str(row["Generated Circuit"]),
-            str(row["From CNUM"]),
-            str(row["To CNUM"]),
-        ]
-        for token in required_tokens:
-            if token and token.replace(" ", "") not in diagram_compact:
-                return False
-    return True
 
 
 def validate_results(

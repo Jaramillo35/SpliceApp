@@ -22,7 +22,6 @@ from __future__ import annotations
 from typing import Dict, List, Set
 
 from splice.common.logging import get_logger
-from splice.inline import salescode
 from splice.inline.complexity import counterpart_applies, satisfying_builds
 from splice.inline.summary import is_inline
 from splice.inline.model import (
