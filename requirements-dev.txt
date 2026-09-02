@@ -1,0 +1,7 @@
+# Test and lint tooling. Not installed in any image.
+pytest
+pytest-asyncio      # nicegui.testing's simulated-user fixture is async
+ruff
+httpx               # fastapi TestClient
+vulture             # dead-code scan (ruff does not do this)
+radon               # complexity scan

@@ -45,3 +45,9 @@ target-version = "py311"
 [tool.ruff.lint]
 # FastAPI's DI idiom uses callable defaults — File(...), Depends(...), Query(...) — by design.
 extend-ignore = ["B008"]
+
+[tool.pytest.ini_options]
+# NiceGUI's simulated-user fixture needs to know the app's entry file; it
+# imports it to register the routes, then drives pages without a browser.
+main_file = "nicegui_app/main.py"
+asyncio_mode = "auto"

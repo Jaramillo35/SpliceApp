@@ -27,7 +27,7 @@ jobs:
           pip install -e .                                    # splice + splice_api importable
           pip install -r requirements-nicegui.txt             # nicegui app + engines
           pip install -r splice_api/requirements-runtime.txt  # fastapi/uvicorn/multipart
-          pip install ruff httpx pytest
+          pip install -r requirements-dev.txt
 
       - name: Ruff (service code)
         run: ruff check splice_api tests/test_splice_api.py tests/test_dtx_golden.py tests/fixtures/dtx_golden/build_fixtures.py
