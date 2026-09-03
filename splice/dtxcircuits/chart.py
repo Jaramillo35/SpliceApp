@@ -104,12 +104,22 @@ class ChartRow:
     builds: List[str] = field(default_factory=list)
     #: a wire running to a generated splice rather than to a device
     is_splice: bool = False
-    #: where the wire goes. A wire has two ends; the chart is written one end
-    #: per row, so without these the far end has to be found by eye.
+    #: The far end of the WIRE, which never leaves this harness. A wire has
+    #: two ends; the chart is written one end per row, so without these the
+    #: far end has to be found by eye.
     other_family: str = ""
     other_cnum: str = ""
     other_cavity: str = ""
     other_device: str = ""
+    #: The connector this one mates with in the NEXT harness. An inline is a
+    #: joint, not a wire: the circuit runs device-to-inline inside this
+    #: harness, the two inline halves mate, and another wire continues on the
+    #: far side. Those are two different connections and the chart states
+    #: both — collapsing them into one drew wires through harnesses the
+    #: circuit only passes through.
+    mate_family: str = ""
+    mate_cnum: str = ""
+    mate_cavity: str = ""
 
     @property
     def end_type(self) -> str:
@@ -411,7 +421,7 @@ def build_charts(entries: Iterable, rows: Sequence,
         chart.rows.sort(key=lambda r: (r.circuit, r.cnum, _cavity_key(r.cavity)))
         charts.append(chart)
 
-    link_ends(charts, rows)
+    link_ends(charts)
     logger.info("Built %d circuit chart(s), %d row(s), %d splice(s)",
                 len(charts), sum(len(c.rows) for c in charts),
                 sum(len(c.splices) for c in charts))
@@ -473,64 +483,65 @@ def _join(row: ChartRow, family: str, other: ChartRow) -> None:
     row.other_device = other.device
 
 
-def link_ends(charts: Sequence[Chart], rows: Sequence = ()) -> None:
-    """Fill in the far end of every wire the splices did not already pair.
+def link_ends(charts: Sequence[Chart]) -> None:
+    """Fill in each wire's far end, and each inline's mate.
 
-    A spliced circuit is settled when the splice is made: each branch runs
-    device to splice, and both ends were joined then. What is left is the
-    simple traffic:
+    Two different relationships, and the chart needs both:
 
-    * an **inline** end continues at its mate — ``X301A`` at ``Y301A`` — which
-      is how a circuit crosses a harness boundary, and is the one case where
-      the far end is in a different family;
-    * a circuit with exactly **two** unpaired ends joins them.
+    * **The wire.** It runs between two ends *inside one harness* and never
+      leaves it — a wire cannot cross a harness boundary except through a
+      connector. So the pairing is done per chart: two open ends of a circuit
+      in the same harness are the two ends of one wire. Three or more were
+      already joined to a splice when it was made.
+    * **The mate.** An inline's other half sits in the next harness —
+      ``X301A`` at ``Y301A``. That is how the circuit continues, and it is a
+      joint rather than a wire.
 
-    Anything else is left blank on purpose. A circuit with three unpaired ends
-    and no splice has no single far end, and inventing one would put a wire in
-    the chart that nobody drew.
+    Pairing used to be global: "the circuit has exactly two unpaired ends
+    anywhere, join them". That drew a wire straight from a device in one
+    harness to a device in another, and it failed outright whenever one DTx
+    family was mapped to several complexity files — the same two DTx rows
+    then appear once per chart, so the count never matched and nothing was
+    joined at all. On 2028RU X1 that left circuit A0, two devices inside
+    BATTERY POSITIVE, unconnected in both of its charts.
 
-    ``rows`` is the DTx the charts were built from. It is consulted for one
-    reason: the two-end shortcut has to count the circuit's ends in the
-    *export*, not in the charts. A circuit reaching three harnesses of which
-    only two are mapped would otherwise have its two charted ends joined to
-    each other, drawing a wire that runs past the harness in between.
+    A single end alone in a harness gets no wire. That is honest: the DTx
+    does not say what it joins to.
     """
-    total_ends: Dict[str, set] = {}
-    for row in rows:
-        circuit = getattr(row, "circuit", "")
-        if circuit:
-            total_ends.setdefault(circuit, set()).add(
-                (getattr(row, "cnum", ""), getattr(row, "pin", "")))
-    by_circuit: Dict[str, List[tuple]] = {}
+    for chart in charts:
+        by_circuit: Dict[str, List[ChartRow]] = {}
+        for row in chart.rows:
+            by_circuit.setdefault(row.circuit, []).append(row)
+        for ends in by_circuit.values():
+            open_ends = [row for row in ends if not row.other_cnum]
+            if len(open_ends) == 2:
+                first, second = open_ends
+                _join(first, chart.family, second)
+                _join(second, chart.family, first)
+
+    # the mate is looked up across every chart, since it is by definition in
+    # another harness; a row is indexed per (circuit, connector)
+    elsewhere: Dict[tuple, List[tuple]] = {}
     for chart in charts:
         for row in chart.rows:
-            by_circuit.setdefault(row.circuit, []).append((chart.family, row))
+            elsewhere.setdefault((row.circuit, row.cnum.upper()), []).append(
+                (chart, row))
 
-    for ends in by_circuit.values():
-        open_ends = [(family, row) for family, row in ends if not row.other_cnum]
-        located = {(family, row.cnum): (family, row) for family, row in ends}
-
-        for family, row in list(open_ends):
-            if row.other_cnum:
-                continue
+    for chart in charts:
+        for row in chart.rows:
             mate = mate_name(row.cnum)
             if not mate:
                 continue
-            match = next(((f, r) for f, r in ends
-                          if r.cnum.upper() == mate and not r.other_cnum), None)
-            if match:
-                other_family, other = match
-                _join(row, other_family, other)
-                _join(other, family, row)
-
-        remaining = [(family, row) for family, row in ends if not row.other_cnum]
-        circuit = ends[0][1].circuit
-        known = total_ends.get(circuit)
-        charted_all = known is None or len(known) == len(ends)
-        if len(remaining) == 2 and charted_all:
-            (family_a, a), (family_b, b) = remaining
-            _join(a, family_b, b)
-            _join(b, family_a, a)
+            candidates = elsewhere.get((row.circuit, mate), [])
+            # prefer a half in a different harness — that is what a mate is
+            match = next((pair for pair in candidates
+                          if pair[0].harness != chart.harness), None)
+            if match is None:
+                continue
+            other_chart, other_row = match
+            row.mate_family = other_chart.family
+            row.mate_cnum = other_row.cnum
+            row.mate_cavity = other_row.cavity
 
 
 def _int_to_alpha_suffix(index: int) -> str:
@@ -681,7 +692,10 @@ FLAT_COLUMNS = [
     "Cavity", "Connector PN", "Device",
     "Sales Code (DTx)", "Sales Code (this harness)", "Verdict",
     "Other End Harness", "Other End CNUM", "Other End Cavity",
-    "Other End Device", "Builds Carrying",
+    "Other End Device",
+    # the inline's other half, in the next harness — a joint, not a wire
+    "Mates With Harness", "Mates With CNUM", "Mates With Cavity",
+    "Builds Carrying",
 ]
 
 
@@ -761,7 +775,10 @@ def write_flat_sheet(wb: Workbook, charts: Sequence[Chart],
             line[13] = row.other_cnum
             line[14] = row.other_cavity
             line[15] = row.other_device
-            line[16] = len(row.builds)
+            line[16] = row.mate_family
+            line[17] = row.mate_cnum
+            line[18] = row.mate_cavity
+            line[19] = len(row.builds)
             carried = set(row.builds)
             for column, part in own:
                 if part in carried:
@@ -776,7 +793,8 @@ def write_flat_sheet(wb: Workbook, charts: Sequence[Chart],
                 for column in range(1, len(header) + 1):
                     ws.cell(line_no, column).fill = _NEVER_FILL
 
-    widths = [18, 18, 9, 12, 9, 12, 8, 15, 22, 24, 24, 14, 18, 15, 9, 22, 10]
+    widths = [18, 18, 9, 12, 9, 12, 8, 15, 22, 24, 24, 14, 18, 15, 9, 22,
+              18, 15, 9, 10]
     for offset, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(offset)].width = width
     for offset in range(len(FLAT_COLUMNS) + 1, len(header) + 1):

@@ -462,24 +462,41 @@ class TestOtherEnd:
         return {(c.family, r.cnum): r for c in charts for r in c.rows
                 if r.circuit == circuit}
 
-    def test_an_inline_continues_at_its_mate_in_the_other_harness(self):
-        """This is how a circuit crosses a harness boundary."""
+    def test_an_inline_mates_with_its_other_half_next_door(self):
+        """Crossing a harness boundary is a mating joint, not a wire."""
         rows = [self._dev("IP", "D442", "X402A", "27"),
                 self._dev("BODY_LEFT", "D442", "Y402A", "27")]
         built = chart.build_charts(_entries(rows), rows)
         ends = self._rows_for(built, "D442")
         near = ends[("IP", "X402A")]
-        assert near.other_family == "BODY_LEFT"
-        assert near.other_cnum == "Y402A"
-        assert ends[("BODY_LEFT", "Y402A")].other_cnum == "X402A"
+        assert near.mate_family == "BODY_LEFT"
+        assert near.mate_cnum == "Y402A"
+        assert ends[("BODY_LEFT", "Y402A")].mate_cnum == "X402A"
 
-    def test_two_device_ends_join_each_other(self):
+    def test_a_lone_end_gets_no_wire_of_its_own(self):
+        """One end in a harness has nothing inside it to wire to. Saying so
+        beats inventing a partner."""
+        rows = [self._dev("IP", "D442", "X402A", "27"),
+                self._dev("BODY_LEFT", "D442", "Y402A", "27")]
+        built = chart.build_charts(_entries(rows), rows)
+        assert all(not r.other_cnum for c in built for r in c.rows)
+
+    def test_two_device_ends_in_ONE_harness_join_each_other(self):
+        rows = [self._dev("IP", "F946", "D2798A", "5"),
+                self._dev("IP", "F946", "D3872A", "13")]
+        built = chart.build_charts(_entries(rows, families=("IP",)), rows)
+        ends = self._rows_for(built, "F946")
+        assert ends[("IP", "D2798A")].other_cnum == "D3872A"
+        assert ends[("IP", "D3872A")].other_cnum == "D2798A"
+
+    def test_devices_in_DIFFERENT_harnesses_are_not_wired_together(self):
+        """A wire cannot leave its harness except through a connector, so
+        two devices either side of a boundary are not one wire — drawing
+        one ran it straight through whatever lay in between."""
         rows = [self._dev("IP", "F946", "D2798A", "5"),
                 self._dev("BODY_LEFT", "F946", "D3872A", "13")]
         built = chart.build_charts(_entries(rows), rows)
-        ends = self._rows_for(built, "F946")
-        assert ends[("IP", "D2798A")].other_cnum == "D3872A"
-        assert ends[("BODY_LEFT", "D3872A")].other_cnum == "D2798A"
+        assert all(not r.other_cnum for c in built for r in c.rows)
 
     def test_every_branch_of_a_splice_points_at_the_splice(self):
         rows = [self._dev("IP", "A910", f"D{i}A", str(i)) for i in range(3)]
@@ -520,6 +537,119 @@ class TestOtherEnd:
         assert kinds["X301A"] == "Inline"
 
 
+class TestOneFamilyManyHarnesses:
+    """The reported bug. A DTx family may be mapped to several complexity
+    files, and then the same DTx rows appear once per chart. Pairing used to
+    count a circuit's ends across every chart, so the count never matched the
+    export and nothing was joined — on 2028RU X1, circuit A0's two devices
+    inside BATTERY POSITIVE were unconnected in both of its charts.
+    """
+
+    def _rows(self):
+        return [CircuitRow(harness_family="BATTERY_POSITIVE", circuit="A0",
+                           sales_code="XHZ", cnum=cnum, pin="1",
+                           connector_pn="99999999",
+                           function="PWR - BATT TO PWR DISTRIBUTION POS")
+                for cnum in ("D6630A", "D7402E")]
+
+    def _two_charts(self, rows):
+        """One family, two harnesses — as the SE maps ESS1 and ESS2."""
+        from splice.dtxcircuits import analyze_harness
+        return chart.build_charts([
+            report.Entry(label=name, family="BATTERY_POSITIVE", filename=name,
+                         analysis=analyze_harness(rows, None, harness_name=name))
+            for name in ("BATTERY POSITIVE ESS1", "BATTERY POSITIVE ESS2")], rows)
+
+    def test_each_chart_wires_its_own_copy(self):
+        built = self._two_charts(self._rows())
+        assert len(built) == 2
+        for c in built:
+            pairs = {r.cnum: r.other_cnum for r in c.rows}
+            assert pairs == {"D6630A": "D7402E", "D7402E": "D6630A"}, c.harness
+
+    def test_the_wire_stays_inside_the_harness_it_belongs_to(self):
+        for c in self._two_charts(self._rows()):
+            for row in c.rows:
+                assert row.other_family == c.family
+
+    def test_a_third_harness_does_not_disturb_them(self):
+        rows = self._rows() + [
+            CircuitRow(harness_family="IP", circuit="A0", sales_code="XHZ",
+                       cnum="D100A", pin="1", connector_pn="99999999")]
+        from splice.dtxcircuits import analyze_harness
+        built = chart.build_charts([
+            report.Entry(label=n, family=f, filename=n,
+                         analysis=analyze_harness(
+                             [r for r in rows if r.harness_family == f], None,
+                             harness_name=n))
+            for f, n in (("BATTERY_POSITIVE", "ESS1"),
+                         ("BATTERY_POSITIVE", "ESS2"), ("IP", "IP"))], rows)
+        battery = [c for c in built if c.family == "BATTERY_POSITIVE"]
+        assert all(r.other_cnum for c in battery for r in c.rows)
+        # the lone IP end has nothing in its harness to wire to
+        ip = next(c for c in built if c.family == "IP")
+        assert all(not r.other_cnum for r in ip.rows)
+
+
+class TestInlinePath:
+    """Both connections, which is what the SE asked for: the wire from the
+    device to the inline inside one harness, and the inline-to-inline joint
+    that carries the circuit into the next.
+    """
+
+    def _dev(self, family, cnum, pin="1"):
+        return CircuitRow(harness_family=family, circuit="D442", sales_code="",
+                          cnum=cnum, pin=pin, connector_pn="99999999")
+
+    def _built(self):
+        rows = [self._dev("POWERTRAIN", "D2798A", "1"),
+                self._dev("POWERTRAIN", "X200A", "33"),
+                self._dev("DASH", "Y200A", "33"),
+                self._dev("DASH", "X402A", "27"),
+                self._dev("BODY_RIGHT", "Y402A", "27"),
+                self._dev("BODY_RIGHT", "D3872A", "9")]
+        from splice.dtxcircuits import analyze_harness
+        return {c.family: c for c in chart.build_charts([
+            report.Entry(label=f, family=f, filename=f,
+                         analysis=analyze_harness(
+                             [r for r in rows if r.harness_family == f], None,
+                             harness_name=f))
+            for f in ("POWERTRAIN", "DASH", "BODY_RIGHT")], rows)}
+
+    def test_the_device_is_wired_to_the_inline_in_its_own_harness(self):
+        pt = self._built()["POWERTRAIN"]
+        wires = {r.cnum: r.other_cnum for r in pt.rows}
+        assert wires == {"D2798A": "X200A", "X200A": "D2798A"}
+
+    def test_the_inline_mates_across_the_boundary(self):
+        built = self._built()
+        pt = next(r for r in built["POWERTRAIN"].rows if r.cnum == "X200A")
+        assert (pt.mate_family, pt.mate_cnum) == ("DASH", "Y200A")
+
+    def test_a_pass_through_harness_wires_its_two_inlines_together(self):
+        """DASH only passes the circuit along: its wire runs inline to inline."""
+        dash = self._built()["DASH"]
+        wires = {r.cnum: r.other_cnum for r in dash.rows}
+        assert wires == {"Y200A": "X402A", "X402A": "Y200A"}
+
+    def test_the_whole_path_is_walkable_end_to_end(self):
+        """Device to device across three harnesses, alternating wire and
+        mate, with nothing missing in the middle."""
+        built = self._built()
+        index = {(c.family, r.cnum): (c, r) for c in built.values() for r in c.rows}
+        family, cnum, walked = "POWERTRAIN", "D2798A", ["D2798A"]
+        for _ in range(6):
+            _c, row = index[(family, cnum)]
+            if row.other_cnum and row.other_cnum not in walked:
+                cnum = row.other_cnum
+            elif row.mate_cnum and row.mate_cnum not in walked:
+                family, cnum = row.mate_family, row.mate_cnum
+            else:
+                break
+            walked.append(cnum)
+        assert walked == ["D2798A", "X200A", "Y200A", "X402A", "Y402A", "D3872A"]
+
+
 class TestFlatSheet:
     """One table, one header, no column that is empty for every row."""
 
@@ -542,7 +672,24 @@ class TestFlatSheet:
         families = {row[0] for row in ws.iter_rows(min_row=3, values_only=True)}
         assert families == {c.family for c in charts}
 
-    def test_no_column_is_empty_for_every_row(self, charts):
+    def test_no_column_is_empty_for_every_row(self):
+        """Built with an inline pair, so the Mates With columns are exercised
+        too — a column nothing ever fills has no business on the sheet."""
+        rows = circuit_rows() + [
+            CircuitRow(harness_family="BODY_LEFT", circuit="CKT_SPAN",
+                       sales_code="", cnum="X301A", pin="1",
+                       connector_pn="99999999", function="TEST"),
+            CircuitRow(harness_family="BODY_LEFT", circuit="CKT_SPAN",
+                       sales_code="", cnum="D900A", pin="2",
+                       connector_pn="99999999", function="TEST"),
+            CircuitRow(harness_family="IP", circuit="CKT_SPAN",
+                       sales_code="", cnum="Y301A", pin="1",
+                       connector_pn="99999999", function="TEST"),
+            CircuitRow(harness_family="IP", circuit="CKT_SPAN",
+                       sales_code="", cnum="D901A", pin="2",
+                       connector_pn="99999999", function="TEST"),
+        ]
+        charts = chart.build_charts(_entries(rows), rows)
         ws = self._sheet(charts)
         headers = [c.value for c in ws[2]]
         body = list(ws.iter_rows(min_row=3, values_only=True))
@@ -684,8 +831,8 @@ class TestNoConnect:
         built = {c.family: c for c in chart.build_charts(
             _entries(rows, families=("IP", "BODY_LEFT")), rows)}
         near = next(r for r in built["IP"].rows if r.circuit == "D442")
-        assert near.other_cnum == "Y301A"
-        assert near.other_family == "BODY_LEFT"
+        assert near.mate_cnum == "Y301A"
+        assert near.mate_family == "BODY_LEFT"
 
     def test_a_family_of_nothing_but_no_connects_is_empty_not_broken(self):
         rows = [self._row("IP", "N0", "C1", "1", function="No Connect")]

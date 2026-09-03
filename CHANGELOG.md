@@ -68,6 +68,15 @@ after an update.
   repairs and selections it restored instead of looking empty.
 
 ### Fixed
+- **The circuit chart connects circuits it used to leave dangling.** A wire is
+  now paired inside the harness it belongs to, instead of across the whole
+  study. Two devices in one harness join even when that DTx family is mapped
+  to several complexity files — the case that left circuit `A0` in BATTERY
+  POSITIVE unconnected in both of its charts. Wired rows went from 89% to 99%.
+- **Inline connections are now both connections.** The wire from a device to
+  the inline inside its own harness, and the inline-to-inline joint into the
+  next one, are separate things and the chart states both. New columns:
+  Mates With Harness / CNUM / Cavity.
 - **The Versigent mark never appeared.** It was rendered through a component
   that fades itself in once its own load handler fires; in the packaged app
   that handler did not fire, so the logo sat in the page at zero opacity.
