@@ -37,6 +37,8 @@ opens it; it never overlays the content column on its own.
 | Brand primary | `#d95926` (Versigent orange) — spent on the primary action, the active nav item and selected rows, nowhere else |
 | Text / text-2 / text-3 | `#e8e8ec` / `#a7adb6` / `#767d87` — solid tiers, never opacity |
 | Line / grid | text @ 13 % / text @ 8 % |
+| Brand mark | `assets/versigent_logo_dark.png` in the rail, `..._light.png` on white paper — both cropped, transparent variants of the shipped JPG (`scripts/make_logo_variants.py`). Rendered as a plain `<img>` off the `/sx-assets` route: `ui.image()` is a Quasar `q-img` that fades in from `opacity: 0` on its own load handler, and in the packaged app that handler never fired, so the mark was in the DOM and invisible. |
+| Status | marks and borders take `STATUS`; anything read as text takes `STATUS_TEXT`, the same hues lightened until every pairing clears 4.5:1 |
 | Font | system UI (Segoe UI on the Windows hosts, San Francisco on Mac); mono for identifiers |
 | Type scale | title 20/600 · section 16/600 · body 14 · data 13 tabular · caption 12 (the floor) · eyebrow 11/600 uppercase +0.08em · KPI 24/600 tabular |
 | Space | 4 · 8 · 12 · 16 · 24 · 32 · 48; card padding 16, section gap 24, page padding 24; content max 1,280 |
@@ -88,6 +90,28 @@ contributes to the Overview.
 Every completed engine run is appended to `data/activity.jsonl` by the
 runner (tool, route, summary, who, programme); the Overview's Continue list
 reads it.
+
+## Accessibility
+
+`tests/test_accessibility.py` is the gate, and it computes rather than eyeballs:
+
+- **Contrast.** Every status colour is checked as text on its own chip wash
+  over all four surfaces, and on each surface directly; the three text tiers
+  are held to AAA / AA / AA-large. `STATUS` keeps the validated chart steps,
+  which read as marks but failed as 12 px text (`ok` was 4.13:1), so
+  `STATUS_TEXT` exists for text and the two roles never mix.
+- **Keyboard.** No page may attach a click handler to a non-interactive
+  element, every icon-only button carries a tooltip or an `aria-label`, and
+  filters and queue rows are native buttons with `aria-pressed` — which a
+  browser activates on Enter and Space by definition.
+
+Walked in the running app (2026-09-03, Docker image): on Circuit Health with
+a finding open, the tab order runs rail → step bar → guide → inputs →
+severity, kind and pair chips → search → the queue row → reason → the three
+verdict buttons → engineer → download, every one with an accessible name and
+nothing skipped. Activation by key press could not be driven from the
+automation (it delivers no key events to the page), so that half stays a
+manual check: Tab to a chip and press Enter.
 
 ## Exports
 

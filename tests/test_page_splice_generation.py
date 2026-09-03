@@ -75,5 +75,5 @@ async def test_drop_the_workbook_run_and_the_tables_appear(user: User):
     await user.should_see("Generated connections (")
     await user.should_see("Harness print matrix (")
     await user.should_see("OptionPerCkt (as read) (")
-    await user.should_see("Wiring_Harness_Output.xlsx")
+    await user.should_see("Wiring_Harness_Output_")
     await user.should_see("Sales-code editor")

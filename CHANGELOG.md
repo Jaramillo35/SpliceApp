@@ -40,9 +40,25 @@ after an update.
   the sheets are exactly what they were. Macro workbooks, the DTx change
   report, the SECR, the DEFE template and the complexity files are left as
   they are.
-- **Versigent mark in the rail.**
+- **Versigent mark in the rail** and on every workbook's Read Me sheet, as
+  cropped transparent variants — the shipped logo is mostly black plate,
+  which is why it read as an empty box in the rail and would have printed as
+  a black rectangle on a white sheet.
+- **Downloads are named after the run.** Exports whose names are ours now
+  carry the programme, the phase and the moment, so today's and yesterday's
+  no longer overwrite each other in a Downloads folder.
+- **Overview says what actually comes back.** The Continue list explains that
+  uploaded files are never kept, and a reopened workbench names the mapping,
+  repairs and selections it restored instead of looking empty.
 
 ### Fixed
+- **The Versigent mark never appeared.** It was rendered through a component
+  that fades itself in once its own load handler fires; in the packaged app
+  that handler did not fire, so the logo sat in the page at zero opacity.
+- **Status text was too dim to read** on four of the five chip colours — the
+  palette was validated for chart marks, not for small text.
+- **Long attention lines rendered as chips**, which collapsed into a blob at
+  narrow widths; they are notes now.
 - **HRN Chart Builder read comma-separated matrix files as one column** and
   built the chart from that. The delimiter is now decided by the header line.
 - **Showcase DTx exports** now carry every column the compare engine

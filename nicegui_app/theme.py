@@ -37,6 +37,20 @@ STATUS = {
     "ok": "#199e70",
     "info": "#3987e5",
 }
+#: The steps above are the validated CHART marks — they were checked for
+#: colour-vision separation, not for reading as small text. As 12 px chip
+#: text on a 14 % wash of themselves, four of the five fell under WCAG AA
+#: (ok was 4.13:1). These are the same hues lightened until every pairing
+#: the app actually renders clears 4.5:1; tests/test_accessibility.py holds
+#: the bar. Marks and borders keep STATUS, text takes STATUS_TEXT.
+STATUS_TEXT = {
+    "blocker": "#e97b7b",
+    "high": "#cf921c",
+    "review": "#d5c04b",
+    "ok": "#3eae87",
+    "info": "#5f9eea",
+}
+
 STATUS_ICON = {"blocker": "report", "high": "warning", "review": "help_outline",
                "ok": "check_circle", "info": "info"}
 
@@ -149,10 +163,10 @@ _CSS = f"""
   .sx-step {{ border: 1px solid {LINE}; border-radius: 6px; padding: 4px 10px;
               font-size: 12px; color: {TEXT_2}; display: flex; gap: 6px; align-items: center;
               min-height: 30px; text-decoration: none; }}
-  .sx-step--done {{ border-color: {STATUS['ok']}; color: {STATUS['ok']}; }}
+  .sx-step--done {{ border-color: {STATUS['ok']}; color: {STATUS_TEXT['ok']}; }}
   .sx-step--current {{ border-color: {BRAND}; color: {BRAND}; background: {wash(BRAND)};
                        font-weight: 600; }}
-  .sx-step--blocked {{ border-color: {STATUS['blocker']}; color: {STATUS['blocker']}; }}
+  .sx-step--blocked {{ border-color: {STATUS['blocker']}; color: {STATUS_TEXT['blocker']}; }}
   .sx-step--waiting {{ border-style: dashed; color: {TEXT_3}; }}
 
   /* ---- navigation rail ---- */

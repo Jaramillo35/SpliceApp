@@ -9,8 +9,10 @@ from nicegui_app import theme
 
 ROW_H = 34          # px; every cell in a row shares it so the lines align
 GRID = "grid-template-columns: 1.1fr 64px 1.25fr 1.5fr"
-GREEN = theme.STATUS["ok"]
+GREEN = theme.STATUS["ok"]            # marks: the connector line, borders
 RED = theme.STATUS["blocker"]
+GREEN_TEXT = theme.STATUS_TEXT["ok"]  # anything read as text on a wash
+RED_TEXT = theme.STATUS_TEXT["blocker"]
 
 VERDICT_KIND = {
     "unconditional": "ok", "all builds": "ok", "variant": "info",

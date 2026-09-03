@@ -7,7 +7,9 @@ from nicegui import ui
 from nicegui_app import components as c
 from nicegui_app import theme
 from nicegui_app.pages.circuit_applicability import actions
-from nicegui_app.pages.circuit_applicability.common import GREEN, GRID, ROW_H, line
+from nicegui_app.pages.circuit_applicability.common import (
+    GREEN, GREEN_TEXT, GRID, ROW_H, line,
+)
 from nicegui_app.pages.circuit_applicability.workbench import Workbench
 
 
@@ -119,7 +121,7 @@ def build(wb: Workbench) -> None:
                 "items-center gap-1 rounded px-2 py-0.5 shrink-0") \
                 .style(f"background:{GREEN}1f;border:1px solid {GREEN}66"):
             ui.label(labels.get(filename, filename)) \
-                .classes("text-xs font-semibold").style(f"color:{GREEN}")
+                .classes("text-xs font-semibold").style(f"color:{GREEN_TEXT}")
             if detail:
                 ui.label(detail).classes("text-xs sx-muted")
             ui.button(icon="close",
@@ -144,12 +146,13 @@ def build(wb: Workbench) -> None:
         """A suggestion. Clicking adds it to that family's mapping."""
         strong = sscore is not None and sscore >= 0.7
         colour = GREEN if strong else theme.STATUS["review"]
+        ink = GREEN_TEXT if strong else theme.STATUS_TEXT["review"]
         text = label if sscore is None else f"{label}  {sscore:.0%}"
         chip = ui.button(text, on_click=lambda _e, f=filename, fam=family: _add(fam, f)) \
             .props("flat dense no-caps") \
             .classes("rounded px-2 shrink-0 truncate text-xs font-semibold") \
             .style(f"background:{colour}1f;border:1px solid {colour}66;"
-                   f"color:{colour};max-width:12rem;min-height:26px")
+                   f"color:{ink};max-width:12rem;min-height:26px")
         with chip:
             ui.tooltip(tooltip or "Click to connect this harness to the family")
 

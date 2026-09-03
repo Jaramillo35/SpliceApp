@@ -6,7 +6,9 @@ from nicegui import ui
 
 from nicegui_app import components as c
 from nicegui_app import theme
-from nicegui_app.pages.circuit_applicability.common import GREEN, RED, filter_chip
+from nicegui_app.pages.circuit_applicability.common import (
+    GREEN, GREEN_TEXT, RED, filter_chip,
+)
 from nicegui_app.pages.circuit_applicability.workbench import Workbench
 from splice.dtxcircuits import integrity
 
@@ -102,7 +104,7 @@ def build(wb: Workbench) -> None:
                 if fixed:
                     ui.icon("arrow_forward").classes("text-xs")
                     ui.label(fixed).classes("text-xs sx-mono font-semibold") \
-                        .style(f"color:{GREEN}")
+                        .style(f"color:{GREEN_TEXT}")
                 ui.label(f"{issue.rows} DTx row(s) · "
                          f"{len(issue.circuits)} circuit(s) · "
                          + ", ".join(issue.families[:3])) \

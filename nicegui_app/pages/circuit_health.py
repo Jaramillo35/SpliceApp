@@ -637,7 +637,7 @@ def page() -> None:
                 with ui.expansion(f"{title} ({len(frame)})").classes("w-full") \
                         .props("dense"):
                     audit_table(frame)
-            c.download("Inline_Continuity_Findings.xlsx",
+            c.download(c.export_name("Inline_Continuity_Findings"),
                        lambda: inline_report.build_workbook(state["result"].study,
                                                             state["result"].gaps))
 
@@ -667,7 +667,7 @@ def page() -> None:
                              [f"{len(r.blocking_open(baseline()))} open "
                               "Blocker/High dispositioned"]
                              if r.blocking_open(baseline()) else []))
-                c.download("Circuit_Health_Report.xlsx",
+                c.download(c.export_name("Circuit_Health_Report"),
                            lambda: health.render_report(state["result"], baseline()))
             if state["signed"]:
                 c.note("ok", f"Signed off by {state['signed']} — recorded in the baseline")

@@ -20,17 +20,34 @@ family says how the page behaves, not what the code is:
 
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
-from nicegui import context, run, ui
+from nicegui import app, context, run, ui
 
 from nicegui_app import theme
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
-LOGO = ASSETS / "versigent_logo_horizontal.jpg"
+#: The white wordmark on a transparent ground, cropped to the mark itself —
+#: the shipped JPG is 85 % black plate, which read as an empty box in the
+#: dark rail (scripts/make_logo_variants.py).
+LOGO = ASSETS / "versigent_logo_dark.png"
+if not LOGO.exists():  # pragma: no cover - a checkout without the variants
+    LOGO = ASSETS / "versigent_logo_horizontal.jpg"
+
+#: The assets folder gets one stable URL, so the mark is a plain <img>.
+#: ui.image() renders a Quasar q-img, which fades itself in from opacity 0
+#: once its own load handler fires; in the packaged app that handler did not
+#: fire and the logo stayed invisible — the whole reason it "was not there".
+ASSETS_URL = "/sx-assets"
+try:
+    app.add_static_files(ASSETS_URL, str(ASSETS))
+except Exception as exc:  # noqa: BLE001 — a second import must not fail
+    logging.getLogger(__name__).debug("assets route already mounted: %s", exc)
+LOGO_URL = f"{ASSETS_URL}/{LOGO.name}"
 
 
 # ================================================================ registry
@@ -187,9 +204,10 @@ def frame(title: str, caption: str = "", *, context_chip: str = "", wide: bool =
                 with ui.column().classes("gap-1 px-2 pt-1 pb-3 w-full"):
                     # the horizontal mark sits on its own black ground, which
                     # is the rail's ground — no box around it
-                    ui.image(LOGO).classes("w-40 rounded-md").props("no-spinner") \
-                        .style("max-width:160px")
-                    ui.label("System Engineer Toolkit").classes("sx-caption leading-none px-1")
+                    ui.html(f'<img src="{LOGO_URL}" alt="Versigent" '
+                            f'width="184" height="40" decoding="sync" '
+                            f'style="display:block;object-fit:contain">')
+                    ui.label("System Engineer Toolkit").classes("sx-caption leading-none")
             _nav_link(OVERVIEW, route == "/")
             for family in FAMILIES:
                 ui.label(family).classes("sx-eyebrow px-2 mt-3 mb-1")
@@ -381,11 +399,16 @@ def section(title: str, caption: str = "", *, step: str | None = None,
 
 # ================================================================== status
 def chip(kind: str, label: str) -> None:
-    """Status: icon plus word, never colour alone."""
+    """Status: icon plus word, never colour alone.
+
+    A chip holds a word or a short count. For a sentence use ``note`` — a
+    pill that wraps to four lines reads as a blob, not as a status.
+    """
     color = theme.STATUS.get(kind, theme.STATUS["info"])
+    ink = theme.STATUS_TEXT.get(kind, theme.STATUS_TEXT["info"])
     icon = theme.STATUS_ICON.get(kind, "info")
     with ui.row().classes("items-center gap-1 px-2 py-0.5 rounded-full border inline-flex no-wrap") \
-            .style(f"border-color:{color}55;background:{theme.wash(color)};color:{color}"):
+            .style(f"border-color:{color}55;background:{theme.wash(color)};color:{ink}"):
         ui.icon(icon).classes("text-sm")
         ui.label(label).classes("text-xs font-semibold")
 
@@ -406,11 +429,11 @@ def toggle_chip(label: str, active: bool, on_click: Callable, count: int | None 
 def note(kind: str, text: str) -> None:
     """The one inline error / warning / info line, placed under the thing
     it is about."""
-    color = theme.STATUS.get(kind, theme.STATUS["info"])
+    ink = theme.STATUS_TEXT.get(kind, theme.STATUS_TEXT["info"])
     with ui.row().classes("items-start gap-1 no-wrap"):
         ui.icon(theme.STATUS_ICON.get(kind, "info")).classes("text-sm mt-0.5") \
-            .style(f"color:{color}")
-        ui.label(text).classes("text-sm").style(f"color:{color}")
+            .style(f"color:{ink}")
+        ui.label(text).classes("text-sm").style(f"color:{ink}")
 
 
 # ================================================================== inputs
@@ -479,7 +502,7 @@ def action(label: str, on_click: Callable, *,
 # ================================================================= outputs
 def kpi(value, label: str, kind: str | None = None, hint: str = "") -> None:
     """One figure, one label. ``kind`` colours the figure only."""
-    color = theme.STATUS[kind] if kind else theme.TEXT
+    color = theme.STATUS_TEXT[kind] if kind else theme.TEXT
     with ui.column().classes("sx-tile px-4 py-3 gap-1 min-w-[8.5rem] flex-1"):
         ui.label(f"{value:,}" if isinstance(value, int) else str(value)) \
             .classes("sx-kpi").style(f"color:{color}")
@@ -606,6 +629,13 @@ def deliver(data: bytes, filename: str, *, dress: bool = True) -> None:
             by=who(), context=bag.get("context", ""),
             purpose=page_.purpose if page_ else "", inputs=bag.get("inputs", ()))
     ui.download(data, filename)
+
+
+def export_name(stem: str, *, at=None, ext: str = ".xlsx") -> str:
+    """The filename an export should carry: stem, programme, phase, when."""
+    from splice.common import workbook
+    return workbook.export_name(stem, context=_bag().get("context", ""),
+                                at=at, ext=ext)
 
 
 def note_input(name: str) -> None:

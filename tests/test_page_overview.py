@@ -35,3 +35,20 @@ def test_activity_feed_is_bounded_and_newest_first(tmp_path):
     path.write_text(path.read_text() + "{not json\n")
     assert activity.recent(10, path)[0]["summary"] == "run 2"
     assert json.loads(path.read_text().splitlines()[0])["tool"] == "T"
+
+
+async def test_attention_lines_are_sentences_not_chips(user, tmp_path, monkeypatch):
+    """A chip is a word. The attention list carries sentences, so it must
+    render them as notes — a pill wrapping to four lines becomes a blob at
+    narrow widths."""
+    from nicegui import ui
+    from nicegui_app import components as c
+
+    await user.open("/")
+    await user.should_see("Needs attention")
+    long_chip_labels = [
+        lbl.text for lbl in user.find(ui.label).elements
+        if lbl.text and len(lbl.text) > 40
+        and "font-semibold" in " ".join(lbl.classes) and "text-xs" in " ".join(lbl.classes)
+    ]
+    assert not long_chip_labels, f"sentences rendered as chips: {long_chip_labels}"

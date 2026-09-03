@@ -216,3 +216,26 @@ class TestReview:
         user.find("Run analysis").click()
         await _settle(1.0)
         await wait_for(user, "7 row(s) selected")
+
+
+class TestContinuing:
+    """Reopening the page from the Overview's Continue list.
+
+    The uploads are per-session bytes; the mapping, the repairs and the
+    ticks are on disk. The page has to say which is which, or a reopened
+    workbench reads as an empty one.
+    """
+
+    async def test_a_fresh_page_says_nothing_is_saved(self, user: User, store_path, files):
+        await user.open("/circuit-applicability")
+        await user.should_see("1 · Inputs")
+        await user.should_not_see("Saved from your last session")
+
+    async def test_a_reopened_page_names_what_it_restored(self, user: User, store_path, files):
+        await open_analysed(user, files)
+        await user.should_see("8 row(s) selected")
+        assert store_path.exists(), "the run saved the workbench"
+        await user.open("/circuit-applicability")
+        await user.should_see("Saved from your last session")
+        await user.should_see("cleanup selection(s)")
+        await user.should_see("family mapping(s)")

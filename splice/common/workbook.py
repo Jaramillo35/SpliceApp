@@ -50,7 +50,11 @@ STATUS = {                  # fill, text — always beside the word, never alone
     "info": ("DDEBF7", "1F3B57"),
 }
 MIN_WIDTH, MAX_WIDTH, NOTES_WIDTH = 8, 60, 70
-LOGO = Path(__file__).resolve().parents[2] / "assets" / "versigent_logo_horizontal.jpg"
+_ASSETS = Path(__file__).resolve().parents[2] / "assets"
+#: the ink wordmark on a transparent ground — the black JPG plate would
+#: print as a rectangle on a white sheet (scripts/make_logo_variants.py)
+LOGO = _ASSETS / "versigent_logo_light.png"
+LOGO_FALLBACK = _ASSETS / "versigent_logo_horizontal.jpg"
 README_TITLE = "Read Me"
 #: customer-format files pass through untouched, whatever their extension
 PASS_THROUGH = (r"^SECR_", r"template", r"defe", r"Harness_Complexity_")
@@ -245,9 +249,10 @@ def _readme(wb, *, filename: str, tool: str, version: str, by: str,
 def _logo(ws, anchor: str) -> bool:
     try:
         from openpyxl.drawing.image import Image
-        if not LOGO.exists():
+        source = LOGO if LOGO.exists() else LOGO_FALLBACK
+        if not source.exists():
             return False
-        img = Image(str(LOGO))
+        img = Image(str(source))
         img.width, img.height = 214, 60   # the mark at print size
         ws.add_image(img, anchor)
         ws.row_dimensions[1].height = 48
@@ -255,6 +260,23 @@ def _logo(ws, anchor: str) -> bool:
     except Exception as exc:  # noqa: BLE001 — a missing logo is not a failure
         logger.debug("logo not embedded: %s", exc)
         return False
+
+
+def export_name(stem: str, *, context: str = "", at: Optional[datetime] = None,
+                ext: str = ".xlsx") -> str:
+    """``Circuit_Chart_2030QX_V1_A_2026-09-03_0754.xlsx``.
+
+    A constant filename means yesterday's export and today's are the same
+    file in a Downloads folder. The programme, the phase and the moment the
+    run happened make each one identifiable; ``context`` is the page's
+    programme chip, in whatever punctuation it uses.
+    """
+    parts = [stem.strip("_")]
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", context or "").strip("_")
+    if cleaned:
+        parts.append(cleaned)
+    parts.append((at or datetime.now()).strftime("%Y-%m-%d_%H%M"))
+    return "_".join(parts) + ext
 
 
 def status_style(kind: str):

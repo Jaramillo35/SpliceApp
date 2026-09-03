@@ -7,7 +7,7 @@ from nicegui import ui
 from nicegui_app import components as c
 from nicegui_app import theme
 from nicegui_app.pages.circuit_applicability.common import (
-    GREEN, RED, VERDICT_KIND, filter_chip,
+    GREEN_TEXT, RED_TEXT, VERDICT_KIND, filter_chip,
 )
 from nicegui_app.pages.circuit_applicability.workbench import Workbench
 from splice.dtxcircuits import report as report_mod
@@ -83,7 +83,7 @@ def build(wb: Workbench) -> None:
             with ui.row().classes("items-center gap-2 no-wrap w-full"):
                 ui.icon("report" if n_find else "check_circle") \
                     .classes("text-sm") \
-                    .style(f"color:{RED if n_find else GREEN}")
+                    .style(f"color:{RED_TEXT if n_find else GREEN_TEXT}")
                 with ui.column().classes("gap-0 min-w-0 items-start"):
                     ui.label(entry.family).classes(
                         "text-xs font-semibold truncate")
@@ -115,14 +115,15 @@ def build(wb: Workbench) -> None:
                                             results_view.refresh())) \
                     .props("flat dense size=sm")
             ui.space()
-            ui.button("Circuit_Applicability_Review.xlsx", icon="download",
-                      on_click=lambda: _export()).props("outline dense no-caps")
+            name = c.export_name("Circuit_Applicability_Review")
+            ui.button(name, icon="download",
+                      on_click=lambda n=name: _export(n)).props("outline dense no-caps")
         if state["auto_added"]:
             c.note("info", f"{state['auto_added']} finding(s) were added to the "
                            "review by the last run — untick any you do not want "
                            "the customer to see")
 
-    async def _export() -> None:
+    async def _export(name: str) -> None:
         # Off the event loop. A real programme is ~5,400 circuit ends, and
         # building the workbook inline blocks the websocket long enough
         # that the browser reports a lost connection and reconnects —
@@ -140,7 +141,7 @@ def build(wb: Workbench) -> None:
             repairs=dict(state["fixes"]), repair_context=context,
             quality=state["quality"], charts=list(state["charts"]))
         if data is not None:
-            c.deliver(data, "Circuit_Applicability_Review.xlsx")
+            c.deliver(data, name)
 
     def _toggle_cleanup(entry, kind: str, ident: str) -> None:
         key = report_mod.item_key(entry.family, entry.analysis.harness,

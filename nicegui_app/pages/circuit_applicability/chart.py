@@ -36,8 +36,9 @@ def build(wb: Workbench) -> None:
                 c.chip("blocker" if findings else "ok",
                        f"{findings} row(s) no build carries"
                        if findings else "Every row is carried by a build")
-                ui.button("Circuit_Chart.xlsx", icon="download",
-                          on_click=lambda: _download_chart()) \
+                name = c.export_name("Circuit_Chart")
+                ui.button(name, icon="download",
+                          on_click=lambda n=name: _download_chart(n)) \
                     .props("outline dense no-caps")
 
             for chart in charts:
@@ -117,14 +118,14 @@ def build(wb: Workbench) -> None:
         return where if row.other_family == chart.family \
             else f"{where} · {row.other_family}"
 
-    async def _download_chart() -> None:
+    async def _download_chart(name: str) -> None:
         meta = state["dtx_meta"]
         data = await c.run_engine(
             chart_mod.build_chart_workbook, list(state["charts"]),
             meta.program if meta else "", meta.phase if meta else "",
             running="Building the circuit chart…", done="Chart ready")
         if data is not None:
-            c.deliver(data, "Circuit_Chart.xlsx")
+            c.deliver(data, name)
 
     wb.views["chart"] = chart_view
     chart_view()

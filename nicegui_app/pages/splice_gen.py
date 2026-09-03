@@ -18,7 +18,7 @@ from nicegui_app import components as c
 
 ASSETS = Path(__file__).resolve().parents[2] / "assets" / "downloads"
 SAMPLE = ASSETS / "Z913_example_input.xlsx"
-OUTPUT_NAME = "Wiring_Harness_Output.xlsx"
+OUTPUT_STEM = "Wiring_Harness_Output"
 TABLES = (("Configurations", "configurations_df"),
           ("Generated connections", "generated_connections_df"),
           ("Harness print matrix", "harness_print_matrix_df"),
@@ -68,7 +68,8 @@ def page() -> None:
                                       labels={str(col): str(col) for col in df.columns})
                     first = False
             with result.actions:
-                c.download(OUTPUT_NAME, lambda: r["output_excel_bytes"])
+                c.download(c.export_name(OUTPUT_STEM),
+                           lambda: r["output_excel_bytes"])
             render_editor(r)
 
         def render_editor(r: dict) -> None:

@@ -84,7 +84,10 @@ def _attention() -> list[tuple[str, str, str, str]]:
 def page() -> None:
     with c.frame("Overview", "Continue where you left off; what needs attention."):
         with ui.element("div").classes("w-full grid gap-6 grid-cols-1 lg:grid-cols-2 items-start"):
-            with c.card("Continue", "The last run of each tool, newest first."):
+            with c.card("Continue", "The last run of each tool, newest first. "
+                                    "Uploaded files are never kept — load the same "
+                                    "ones again and each workbench applies the "
+                                    "mapping and decisions it saved."):
                 rows = _continue()
                 if not rows:
                     c.empty("Run any tool and it appears here, with the programme "
@@ -112,11 +115,12 @@ def page() -> None:
                             icon="task_alt")
                 for kind, text, route, stamp in items:
                     with ui.link(target=route).classes("no-underline w-full"):
-                        with ui.row().classes("items-center gap-3 no-wrap w-full rounded px-2 py-1.5 sx-hover"):
-                            c.chip(kind, text)
-                            ui.element("div").classes("grow")
+                        # a sentence is a note, not a chip: a chip is a word,
+                        # and a pill wrapping to four lines becomes a blob
+                        with ui.column().classes("gap-0 w-full rounded px-2 py-1.5 sx-hover"):
+                            c.note(kind, text)
                             if stamp:
-                                ui.label(stamp).classes("sx-caption sx-mono shrink-0")
+                                ui.label(stamp).classes("sx-caption sx-mono pl-5")
 
         for family in c.FAMILIES:
             pages = c.pages_in(family)

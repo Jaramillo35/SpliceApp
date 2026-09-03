@@ -11,6 +11,14 @@ from nicegui_app.pages.circuit_applicability import actions
 from nicegui_app.pages.circuit_applicability.workbench import Workbench
 
 
+def _restored(stored: dict) -> str:
+    """What the store is holding, in the engineer's words."""
+    counts = [(len(stored.get("mapping", {})), "family mapping(s)"),
+              (len(stored.get("fixes", {})), "sales-code repair(s)"),
+              (len(stored.get("cleanup", {})), "cleanup selection(s)")]
+    return ", ".join(f"{n} {label}" for n, label in counts if n)
+
+
 def build(wb: Workbench) -> None:
     state = wb.state
 
@@ -38,6 +46,16 @@ def build(wb: Workbench) -> None:
 
         @ui.refreshable
         def notes_view() -> None:
+            # Reopening the page from the Overview's Continue list used to
+            # look like nothing had been kept: the uploads are per-session
+            # bytes, while the mapping, the repairs and the ticks are on
+            # disk. Say so before a file is loaded, so "continue" is true.
+            if not state["rows"]:
+                waiting = _restored(state["stored"])
+                if waiting:
+                    c.note("info", "Saved from your last session: " + waiting
+                           + ". Load the same DTx and complexity files and it "
+                             "is applied again.")
             for kind, text in state["load_notes"]:
                 c.note(kind, text)
 
