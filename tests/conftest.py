@@ -30,3 +30,12 @@ def _fresh_pages_for_simulated_user(request):
             if name == "nicegui_app.main" or name.startswith("nicegui_app.pages"):
                 del sys.modules[name]
     yield
+
+
+@pytest.fixture(autouse=True)
+def _activity_feed_in_tmp(tmp_path, monkeypatch):
+    """The engine runners append every completed run to data/activity.jsonl;
+    a test run must not land in the engineer's Overview."""
+    from splice.common import activity
+    monkeypatch.setattr(activity, "ACTIVITY_PATH", tmp_path / "activity.jsonl")
+    yield
