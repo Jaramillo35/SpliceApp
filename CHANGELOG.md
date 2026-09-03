@@ -81,6 +81,12 @@ after an update.
   longer reported as a gap.
 
 ### Fixed
+- **The circuit chart no longer treats "No Connect" as a circuit.** `N0` marks
+  a cavity wired to nothing — 1,570 of 5,412 rows in a real export. Counting
+  it produced 3,120 chart rows that were not wires, joined them into one
+  fabricated 269-cavity splice, and gave 3,106 of them a far end. The chart
+  now excludes them and says on the sheet how many it left out.
+
 - Downloading the circuit chart on a large programme dropped the browser
   connection; the workbook write was quadratic and ran on the UI thread.
 - Sales-code applicability is reconciled per harness from its device ends, so

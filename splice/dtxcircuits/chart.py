@@ -20,6 +20,12 @@ copying an existing format rather than inventing one:
 The one thing it cannot invent is wire physicals — size, material, colour are
 not in the DTx, so those columns are left empty rather than guessed. A blank
 cell says "not stated"; a made-up gauge would be read as fact.
+
+The one thing it leaves out is the **No Connect**. ``N0`` is the DTx's marker
+for a cavity wired to nothing — 29% of a real export's rows. It is not a
+circuit, so it is not a row here; see ``splice.dtxcircuits.conventions``. The
+count of what was dropped is kept on each chart and printed on the sheet,
+because a chart much shorter than its export should say why.
 """
 
 from __future__ import annotations
@@ -133,6 +139,10 @@ class Chart:
     rows: List[ChartRow] = field(default_factory=list)
     #: circuit -> generated splice name, for the circuits that needed one
     splices: Dict[str, str] = field(default_factory=dict)
+    #: DTx rows dropped as No Connect. Reported, never silent: the chart is
+    #: markedly shorter than the export it came from, and an SE comparing
+    #: the two deserves to be told why rather than left to wonder.
+    no_connect_rows: int = 0
 
     @property
     def block_title(self) -> str:
@@ -366,6 +376,12 @@ def build_charts(entries: Iterable, rows: Sequence,
             key = (row.circuit, row.cnum, row.pin)
             if not row.circuit or key in seen:
                 continue
+            # A No Connect is a cavity wired to nothing. It has no far end and
+            # nothing to splice to, so it never becomes a chart row — leaving
+            # it in fabricated both.
+            if conventions.is_no_connect(row.circuit, getattr(row, "function", "")):
+                chart.no_connect_rows += 1
+                continue
             seen.add(key)
             if row.circuit not in resolved:
                 condition = conditions.get((row.circuit, entry.family))
@@ -591,7 +607,8 @@ def write_chart_sheet(wb: Workbook, charts: Sequence[Chart],
     loop, dropped the browser's connection.
     """
     ws = wb.create_sheet(SHEET)
-    ws.append(["Circuit Summary", " ".join(p for p in (program, phase) if p)])
+    ws.append(["Circuit Summary", " ".join(p for p in (program, phase) if p),
+               _no_connect_note(charts)])
     ws.cell(1, 1).font = _TITLE_FONT
     line_no = 1
 
@@ -668,6 +685,15 @@ FLAT_COLUMNS = [
 ]
 
 
+def _no_connect_note(charts: Sequence[Chart]) -> str:
+    """What was left out, said on the sheet rather than left to be noticed."""
+    dropped = sum(c.no_connect_rows for c in charts)
+    if not dropped:
+        return ""
+    return (f"{dropped} No Connect row(s) excluded — a cavity wired to "
+            f"nothing is not a circuit")
+
+
 def part_number_columns(charts: Sequence[Chart]) -> List[tuple]:
     """Every part number in the study, kept in harness order.
 
@@ -699,7 +725,8 @@ def write_flat_sheet(wb: Workbook, charts: Sequence[Chart],
     is empty for every row.
     """
     ws = wb.create_sheet(FLAT_SHEET)
-    ws.append(["Circuit Chart", " ".join(p for p in (program, phase) if p)])
+    ws.append(["Circuit Chart", " ".join(p for p in (program, phase) if p),
+               _no_connect_note(charts)])
     ws.cell(1, 1).font = _TITLE_FONT
 
     parts = part_number_columns(charts)

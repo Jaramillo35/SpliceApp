@@ -591,6 +591,136 @@ class TestFlatSheet:
         assert chart.FLAT_SHEET in wb.sheetnames and SHEET in wb.sheetnames
 
 
+class TestNoConnect:
+    """``N0`` is the DTx's marker for a cavity wired to nothing.
+
+    It is 1,570 of 5,412 rows in 2028RU X2_A. Treated as a circuit it became
+    3,120 chart rows, one fabricated 269-cavity splice, and 3,106 far-end
+    links to wires nobody drew. The chart's job is to say where wires go, so
+    a No Connect is not one of its rows.
+
+    Note the scope: the *chart* excludes them. The applicability analysis
+    still sees them, because that was the ask and because a No Connect can
+    still carry a sales code worth reviewing.
+    """
+
+    def _row(self, family, circuit, cnum, pin="1", function="TEST", code=""):
+        return CircuitRow(harness_family=family, circuit=circuit,
+                          sales_code=code, cnum=cnum, pin=pin,
+                          connector_pn="99999999", function=function)
+
+    # ------------------------------------------------------- the predicate
+    def test_it_knows_a_no_connect_by_name(self):
+        assert conventions.is_no_connect("N0")
+        assert conventions.is_no_connect(" n0 "), "case and padding are noise"
+
+    def test_it_knows_one_by_its_function_too(self):
+        """Both columns agreed on all 1,570 rows of the reference export, so
+        either alone identifies the row and a rename of one is still caught."""
+        assert conventions.is_no_connect("SOMETHING", "No Connect")
+        assert conventions.is_no_connect("SOMETHING", "  no connect  ")
+
+    def test_a_real_circuit_is_not_one(self):
+        assert not conventions.is_no_connect("QK101", "IP - POWER FEED")
+        assert not conventions.is_no_connect("", "")
+
+    def test_a_name_that_merely_starts_with_n0_is_not_one(self):
+        """N01 is a circuit. The rule matches the whole name, not a prefix."""
+        assert not conventions.is_no_connect("N01")
+        assert not conventions.is_no_connect("N0A")
+
+    # ----------------------------------------------------------- the chart
+    def _built(self, rows, families=("IP",)):
+        return _by_family(chart.build_charts(_entries(rows, families=families), rows))
+
+    def test_no_connect_rows_never_become_chart_rows(self):
+        rows = [self._row("IP", "QK900", "C1"),
+                self._row("IP", "N0", "C2", "2", function="No Connect"),
+                self._row("IP", "N0", "C3", "3", function="No Connect")]
+        ip = self._built(rows)["IP"]
+        assert [r.circuit for r in ip.rows] == ["QK900"]
+
+    def test_what_was_dropped_is_counted_not_hidden(self):
+        rows = [self._row("IP", "QK900", "C1"),
+                self._row("IP", "N0", "C2", "2", function="No Connect"),
+                self._row("IP", "N0", "C3", "3", function="No Connect")]
+        assert self._built(rows)["IP"].no_connect_rows == 2
+
+    def test_nothing_is_counted_when_there_is_nothing_to_drop(self):
+        rows = [self._row("IP", "QK900", "C1")]
+        assert self._built(rows)["IP"].no_connect_rows == 0
+
+    def test_no_connects_are_never_spliced_together(self):
+        """The 269-cavity SN0A splice: three or more ends of the same circuit
+        normally get one, and N0 had hundreds. It must not."""
+        rows = [self._row("IP", "N0", f"C{i}", str(i), function="No Connect")
+                for i in range(5)]
+        ip = self._built(rows)["IP"]
+        assert ip.splices == {}
+        assert ip.rows == []
+        assert ip.no_connect_rows == 5
+
+    def test_a_real_circuit_still_splices_beside_them(self):
+        rows = [self._row("IP", "QK900", f"C{i}", str(i)) for i in range(3)]
+        rows += [self._row("IP", "N0", f"D{i}", str(i), function="No Connect")
+                 for i in range(4)]
+        ip = self._built(rows)["IP"]
+        assert ip.splices == {"QK900": "SQK900A"}
+        assert all(r.circuit == "QK900" for r in ip.rows)
+
+    def test_no_far_end_is_invented_between_two_no_connects(self):
+        rows = [self._row("IP", "N0", "X301A", "1", function="No Connect"),
+                self._row("BODY_LEFT", "N0", "Y301A", "1", function="No Connect")]
+        built = chart.build_charts(
+            _entries(rows, families=("IP", "BODY_LEFT")), rows)
+        assert all(not r.other_cnum for c in built for r in c.rows)
+        assert sum(c.no_connect_rows for c in built) == 2
+
+    def test_a_real_pair_still_finds_each_other_past_the_dropped_rows(self):
+        """Removing rows must not strand the circuits that remain."""
+        rows = [self._row("IP", "N0", "C9", "9", function="No Connect"),
+                self._row("IP", "D442", "X301A", "1"),
+                self._row("BODY_LEFT", "D442", "Y301A", "1")]
+        built = {c.family: c for c in chart.build_charts(
+            _entries(rows, families=("IP", "BODY_LEFT")), rows)}
+        near = next(r for r in built["IP"].rows if r.circuit == "D442")
+        assert near.other_cnum == "Y301A"
+        assert near.other_family == "BODY_LEFT"
+
+    def test_a_family_of_nothing_but_no_connects_is_empty_not_broken(self):
+        rows = [self._row("IP", "N0", "C1", "1", function="No Connect")]
+        ip = self._built(rows)["IP"]
+        assert ip.rows == [] and ip.no_connect_rows == 1
+        assert ip.circuits == 0 and ip.findings == 0
+
+    # -------------------------------------------------------- the workbook
+    def test_the_workbook_says_what_it_left_out(self):
+        rows = [self._row("IP", "QK900", "C1"),
+                self._row("IP", "N0", "C2", "2", function="No Connect")]
+        built = chart.build_charts(_entries(rows, families=("IP",)), rows)
+        data = chart.build_chart_workbook(built, "9000ZZ", "X9_A")
+        wb = load_workbook(io.BytesIO(data))
+        for sheet in (chart.FLAT_SHEET, SHEET):
+            note = str(wb[sheet].cell(1, 3).value or "")
+            assert "1 No Connect row(s) excluded" in note, sheet
+
+    def test_the_note_is_absent_when_nothing_was_excluded(self):
+        rows = [self._row("IP", "QK900", "C1")]
+        built = chart.build_charts(_entries(rows, families=("IP",)), rows)
+        wb = load_workbook(io.BytesIO(
+            chart.build_chart_workbook(built, "9000ZZ", "X9_A")))
+        assert not wb[chart.FLAT_SHEET].cell(1, 3).value
+
+    def test_the_workbook_still_round_trips_without_them(self):
+        rows = [self._row("IP", "QK900", "C1"),
+                self._row("IP", "QK901", "C2", "2"),
+                self._row("IP", "N0", "C3", "3", function="No Connect")]
+        built = chart.build_charts(_entries(rows, families=("IP",)), rows)
+        data = chart.build_chart_workbook(built)
+        _harns, ends = read_circuit_summary(data, "nc.xlsx")
+        assert {e.circuit for e in ends} == {"QK900", "QK901"}
+
+
 class TestScale:
     """A real programme is ~5,400 circuit ends against ~20 part numbers.
 
