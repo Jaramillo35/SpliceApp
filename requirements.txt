@@ -2,9 +2,11 @@
 # Versions match the known-good environment the app currently runs on.
 # Runtime: Python 3.11+ (dev/devcontainer on 3.11; verified locally on 3.12).
 #
-# Optional desktop-GUI deps for vbom_legacy/main_app.py (tkinterdnd2, cairosvg,
-# pillow) are intentionally NOT listed: they are imported under try/except and
-# are only needed for the standalone desktop UI, not the Streamlit server.
+# Optional desktop-GUI deps for the legacy VBOM window (tkinterdnd2, cairosvg)
+# are intentionally NOT listed: they are imported under try/except and are only
+# needed for the standalone desktop UI, not the server. Pillow used to be in
+# that sentence and no longer belongs there — openpyxl needs it to embed the
+# Versigent mark in every dressed workbook, and it fails silently without it.
 
 streamlit==1.58.0
 pandas==3.0.3
@@ -12,6 +14,7 @@ openpyxl==3.1.5
 xlsxwriter==3.2.9
 sympy==1.14.0
 xlrd==2.0.2
+pillow==12.1.1
 
 # Streamlit pulls these in transitively, but the SECR Database page imports
 # altair directly (the change-explorer charts) and the frozen build needs

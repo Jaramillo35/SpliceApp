@@ -10,6 +10,7 @@ openpyxl==3.1.5
 xlsxwriter==3.2.9
 sympy==1.14.0
 xlrd==2.0.2
+pillow==12.1.1
 requests==2.34.2
 nicegui==3.15.0
 

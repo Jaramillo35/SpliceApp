@@ -15,6 +15,9 @@ dependencies = [
     "xlsxwriter==3.2.9",
     "sympy==1.14.0",
     "xlrd==2.0.2",
+    # openpyxl needs Pillow to embed an image; without it every exported
+    # workbook silently loses the Versigent mark on its Read Me sheet.
+    "pillow==12.1.1",
 ]
 
 [project.optional-dependencies]
