@@ -8,6 +8,9 @@ from typing import Any, Iterable
 
 import pandas as pd
 
+from splice.dtxcircuits import conventions
+from splice.inline import boolmin
+
 try:
     from sympy import And, Not, Or, SOPform, Symbol, simplify_logic
 except Exception:  # pragma: no cover
@@ -15,8 +18,6 @@ except Exception:  # pragma: no cover
 
 
 SALES_TOKEN_RE = re.compile(r"\s*([A-Za-z0-9_.]+|[()&/\-])\s*")
-SD454_VARIANT_RE = re.compile(r"^SD454[A-Z]$", re.IGNORECASE)
-ALWAYS_PRESENT_SALES_CODES = {"501"}
 
 
 @dataclass(frozen=True)
@@ -201,6 +202,13 @@ def load_option_per_circuit(input_excel_path: str | Path) -> pd.DataFrame:
 
 
 def parse_sales_code_expression(expression: str) -> SalesExpression:
+    # A blank cell and a bare universal code both mean "every part number".
+    # The rule lives in splice.dtxcircuits.conventions so the whole app reads
+    # 501 the same way: only a BARE 501 is universal, and inside a larger
+    # expression it stays an ordinary code. This module used to strip 501
+    # wherever it appeared, which quietly made "501/RHV" always true.
+    if conventions.effective_condition(expression) is None:
+        return SalesExpression(postfix_tokens=["TRUE"], symbols=set())
     expr = _normalize_sales_expr(expression)
     if expr == "":
         return SalesExpression(postfix_tokens=["TRUE"], symbols=set())
@@ -215,7 +223,14 @@ def parse_sales_code_expression(expression: str) -> SalesExpression:
         tokens.append(token)
         idx = match.end()
 
-    precedence = {"NOT": 3, "&": 2, "/": 1}
+    # "/" binds tightest — the grammar splice.inline.salescode documents and
+    # the rest of the app uses. This module used to give "&" the tighter bind,
+    # the precedence it has in most programming languages, so every
+    # unparenthesised mixed expression meant something different here than it
+    # did in Circuit Applicability, Circuit Health and the chart. On a real
+    # export "ERC&CYC/CYF" then selected a part number carrying CYF without
+    # ERC. tests/test_splice_gen.py pins the two evaluators together.
+    precedence = {"NOT": 3, "/": 2, "&": 1}
     output: list[str] = []
     operators: list[str] = []
     symbols: set[str] = set()
@@ -271,10 +286,23 @@ def parse_sales_code_expression(expression: str) -> SalesExpression:
             raise ExpressionSyntaxError(f"Unbalanced parentheses in: {expression}")
         output.append(op)
 
-    if ALWAYS_PRESENT_SALES_CODES & symbols:
-        output, symbols = _simplify_standard_sales_codes(output)
-
     return SalesExpression(postfix_tokens=output, symbols=symbols)
+
+
+def parse_or_false(expression: str) -> SalesExpression:
+    """Parse, or return an expression that is false for every configuration.
+
+    A real export contains malformed sales codes — that is why the integrity
+    check exists — and one of them used to abort the whole run with a
+    traceback from wherever it was first parsed. FALSE is not a guess: the
+    rest of the app already reads a malformed expression that way, because
+    read literally it is a single unsatisfiable atom. The Validation Report
+    names every expression this happened to, so it is never silent.
+    """
+    try:
+        return parse_sales_code_expression(expression)
+    except ExpressionSyntaxError:
+        return SalesExpression(postfix_tokens=["FALSE"], symbols=set())
 
 
 def _postfix_to_ast(postfix_tokens: list[str]) -> _ExprNode:
@@ -306,8 +334,6 @@ def _postfix_to_ast(postfix_tokens: list[str]) -> _ExprNode:
 
 def _simplify_expr_node(node: _ExprNode) -> _ExprNode:
     if node.kind == "symbol":
-        if node.value in ALWAYS_PRESENT_SALES_CODES:
-            return _ExprNode(kind="const", value=True)
         return node
 
     if node.kind == "const":
@@ -368,11 +394,6 @@ def _ast_to_postfix(node: _ExprNode) -> tuple[list[str], set[str]]:
     return left_tokens + right_tokens + [operator], left_symbols | right_symbols
 
 
-def _simplify_standard_sales_codes(postfix_tokens: list[str]) -> tuple[list[str], set[str]]:
-    simplified = _simplify_expr_node(_postfix_to_ast(postfix_tokens))
-    return _ast_to_postfix(simplified)
-
-
 def evaluate_expression(parsed_expression: SalesExpression, active_sales_codes: set[str]) -> bool:
     stack: list[bool] = []
 
@@ -404,19 +425,30 @@ def build_harness_presence_matrix(
     harness_code_map: dict[str, set[str]],
     option_per_circuit_df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, dict[str, dict[str, list[Endpoint]]]]:
-    parsed_cache: dict[str, SalesExpression] = {}
+    parsed_cache: dict[str, SalesExpression | None] = {}
     detail_rows: list[dict[str, Any]] = []
     matrix: dict[str, dict[str, list[Endpoint]]] = {pn: {} for pn in harness_code_map}
+    #: expressions that would not parse, reported rather than raised
+    malformed: dict[str, str] = {}
 
     for harness_pn, active_codes in harness_code_map.items():
         for _, row in option_per_circuit_df.iterrows():
             expr = row["Sales Code"]
-            parsed = parsed_cache.get(expr)
-            if parsed is None:
-                parsed = parse_sales_code_expression(expr)
+            if expr in parsed_cache:
+                parsed = parsed_cache[expr]
+            else:
+                # One bad cell used to abort the whole run with a traceback.
+                # Real exports contain them — the integrity check exists
+                # because of it — so a malformed expression is now recorded
+                # and its row resolves to nothing, which is what an
+                # expression that cannot be satisfied means anyway.
+                try:
+                    parsed = parse_sales_code_expression(expr)
+                except ExpressionSyntaxError as exc:
+                    parsed, malformed[expr] = None, str(exc)
                 parsed_cache[expr] = parsed
 
-            result = evaluate_expression(parsed, active_codes)
+            result = False if parsed is None else evaluate_expression(parsed, active_codes)
 
             detail_rows.append(
                 {
@@ -527,8 +559,8 @@ def _splice_trunk_circuit_meta_key(circuit_name: str, anchor: Endpoint) -> str:
 
 
 def _extract_codes_from_expression(expression: str) -> set[str]:
-    parsed = parse_sales_code_expression(expression)
-    return parsed.symbols
+    """The codes an expression names. A malformed one names none we can trust."""
+    return parse_or_false(expression).symbols
 
 
 def _candidate_codes_for_configuration(endpoints: list[Endpoint], fallback_codes: set[str]) -> set[str]:
@@ -536,10 +568,10 @@ def _candidate_codes_for_configuration(endpoints: list[Endpoint], fallback_codes
     for endpoint in endpoints:
         endpoint_codes.update(_extract_codes_from_expression(endpoint.sales_code))
 
-    scoped_codes = {code for code in endpoint_codes if code and code not in ALWAYS_PRESENT_SALES_CODES}
+    scoped_codes = {code for code in endpoint_codes if code and code not in conventions.UNIVERSAL_ALONE}
     if scoped_codes:
         return scoped_codes
-    return {code for code in fallback_codes if code and code not in ALWAYS_PRESENT_SALES_CODES}
+    return {code for code in fallback_codes if code and code not in conventions.UNIVERSAL_ALONE}
 
 
 def _to_sales_expr_from_sympy(expr: Any) -> str:
@@ -645,7 +677,7 @@ def _matches_target_harnesses(
     target_harnesses: set[str],
     harness_code_map: dict[str, set[str]],
 ) -> bool:
-    parsed = parse_sales_code_expression("" if expression == "TRUE" else expression)
+    parsed = parse_or_false("" if expression == "TRUE" else expression)
     matched = {
         harness_key
         for harness_key, active_codes in harness_code_map.items()
@@ -710,7 +742,7 @@ def generate_sales_code_expression(
 
     if candidate_codes is None:
         candidate_codes = set().union(*harness_code_map.values())
-    candidate_codes = {c for c in candidate_codes if c and c not in ALWAYS_PRESENT_SALES_CODES}
+    candidate_codes = {c for c in candidate_codes if c and c not in conventions.UNIVERSAL_ALONE}
     if not candidate_codes:
         return "TRUE" if target == set(all_harnesses) else "FALSE"
 
@@ -827,78 +859,27 @@ def _harmonize_shared_splice_trunk_rows(
 
 
 def _simplify_sales_code_for_display(internal_expr: str) -> str:
-    """Convert internal expression to engineering-friendly display form using correct grouping.
-    
-    Rules:
-    - Use / only for true alternatives (e.g., BHG/BNZ, DK2/DK4)
-    - Use & for required independent conditions
-    - Group by domain: main codes, device variants, negations
-    
-    Examples:
-    - BHG&BNZ&-DK2&-DK4 → BHG/BNZ&(-DK2&-DK4)
-    - BHG&BNZ&RFX → BHG/BNZ&RFX (NOT BHG/BNZ/RFX)
-    - BHG&BNZ&DK2&DK4 → BHG/BNZ&(DK2/DK4)
-    - BHG&BNZ&DK2&-RFX → (BHG/BNZ)&DK2&-RFX
+    """The generated expression in its shortest equivalent form.
+
+    This used to split the string on "&" with no awareness of parentheses and
+    reassemble the pieces, classifying terms against one programme's literal
+    code lists. On any bracketed input it produced text that did not parse —
+    "(-AAA&-CCC)/(AAA&CCC)" came back as "(-AAA&CCC)&-CCC)/(AAA", unbalanced,
+    with a negation silently dropped — and that string was written to the
+    workbook's "Display Sales Code" column, which nothing validated.
+
+    splice.inline.boolmin already does this properly and is used by Circuit
+    Health: minimal sum-of-products via Quine-McCluskey, common literals
+    factored out, and the result checked logically equivalent to the input
+    before it is returned. On any doubt it returns the original expression, so
+    the worst case is a longer string rather than a wrong one.
     """
     if not internal_expr or internal_expr in {"TRUE", "FALSE"}:
         return internal_expr
-    
-    # Split by & to get individual terms
-    terms = internal_expr.split('&')
-    
-    main_codes = []      # BHG, BNZ
-    device_codes = []    # DK2, DK4, RFX
-    negative_codes = []  # -DK2, -DK4, -RFX
-    
-    for term in terms:
-        term = term.strip()
-        if not term:
-            continue
-        
-        if term.startswith('-'):
-            negative_codes.append(term)
-        elif term in {'BHG', 'BNZ'}:
-            main_codes.append(term)
-        elif term in {'RFX', 'DK2', 'DK4', 'DK2/DK4'}:  # Handle pre-grouped options
-            device_codes.append(term)
-        else:
-            # Unknown code - treat as device code
-            device_codes.append(term)
-    
-    result_parts = []
-    
-    # Main codes (BHG, BNZ) with / - wrap if followed by more conditions
-    if main_codes:
-        main_str = '/'.join(main_codes)
-        # Add parentheses if there are device codes or negations
-        if device_codes or negative_codes:
-            main_str = f"({main_str})"
-        result_parts.append(main_str)
-    
-    # Device codes - try to group alternatives (DK2/DK4)
-    if device_codes:
-        # Check if we have multiple "DK" variant codes
-        dk_variants = [c for c in device_codes if c.startswith('DK')]
-        other_devices = [c for c in device_codes if not c.startswith('DK')]
-        
-        device_parts = []
-        if len(dk_variants) > 1:
-            device_parts.append('/'.join(dk_variants))
-        else:
-            device_parts.extend(dk_variants)
-        device_parts.extend(other_devices)
-        
-        result_parts.extend(device_parts)
-    
-    # Negative codes - wrap if multiple
-    if negative_codes:
-        if len(negative_codes) == 1:
-            result_parts.append(negative_codes[0])
-        else:
-            result_parts.append(f"({('&').join(negative_codes)})")
-    
-    return '&'.join(result_parts)
-
+    try:
+        return boolmin.minimize(internal_expr)
+    except Exception:  # noqa: BLE001 - display must never break a run
+        return internal_expr
 
 def get_selected_harness_pns(edited_matrix_df: pd.DataFrame) -> dict[int, list[str]]:
     """Return selected Harness PNs per row index from checkbox grid."""
@@ -916,7 +897,7 @@ def evaluate_expression_against_all_pns(
     harness_code_map: dict[str, set[str]],
 ) -> list[str]:
     """Return display Harness PNs that match an expression."""
-    parsed = parse_sales_code_expression("" if expression == "TRUE" else expression)
+    parsed = parse_or_false("" if expression == "TRUE" else expression)
     matched_display_pns: set[str] = set()
 
     for harness_key, active_codes in harness_code_map.items():
@@ -992,7 +973,7 @@ def get_candidate_codes_from_option_df(
 
 def _choose_anchor_endpoint(endpoints: list[Endpoint]) -> Endpoint:
     """Choose the anchor (destination) endpoint - prefer always-present or least restrictive."""
-    always_present = [e for e in endpoints if parse_sales_code_expression(e.sales_code).postfix_tokens == ["TRUE"]]
+    always_present = [e for e in endpoints if parse_or_false(e.sales_code).postfix_tokens == ["TRUE"]]
     if always_present:
         return sorted(always_present, key=lambda e: (e.cnum, e.pin))[0]
     return sorted(endpoints, key=lambda e: (len(e.sales_code), e.cnum, e.pin))[-1]
@@ -1010,110 +991,6 @@ def _choose_anchor_endpoint_with_preference(
         if preferred_matches:
             return preferred_matches[0]
     return _choose_anchor_endpoint(endpoints)
-
-
-def _build_d454_engineering_configurations(
-    harness_code_map: dict[str, set[str]],
-    option_df: pd.DataFrame,
-    presence_matrix: dict[str, dict[str, list[Endpoint]]],
-) -> list[Configuration]:
-    """Generate D454-specific engineering topologies (4 fixed configurations)."""
-    d454 = option_df[option_df["Circuit"] == "D454"].copy()
-    if d454.empty:
-        return []
-
-    by_cnum = {
-        row["CNUM"]: Endpoint(
-            cnum=row["CNUM"],
-            pin=row["Pin"],
-            circuit=row["Circuit"],
-            sales_code=row["Sales Code"]
-        )
-        for _, row in d454.iterrows()
-    }
-
-    # Check if all required devices exist
-    required_devices = {"Y354A", "D2321A", "D2851A", "D2321B", "D2321C", "D2321D"}
-    if not all(dev in by_cnum for dev in required_devices):
-        return []
-
-    # Collect all D454 sales codes to evaluate harnesses
-    d454_codes = set()
-    for _, row in d454.iterrows():
-        d454_codes.update(_extract_codes_from_expression(row["Sales Code"]))
-
-    # Fixed D454 engineering configurations
-    configs = []
-    
-    # Config 1: RFX+Main (D2321A, D2851A) → Y354A via SD454A
-    cfg1_endpoints = [by_cnum[c] for c in ["D2321A", "D2851A", "Y354A"]]
-    cfg1_target_harnesses = sorted([
-        pn for pn, codes in harness_code_map.items()
-        if evaluate_expression(parse_sales_code_expression("BHG&BNZ&RFX"), codes)
-    ])
-    cfg1_sales = generate_sales_code_expression(cfg1_target_harnesses, harness_code_map, d454_codes)
-    configs.append(Configuration(
-        configuration_id="CFG001",
-        circuit_name="D454",
-        endpoints=cfg1_endpoints,
-        target_harness_pns=cfg1_target_harnesses,
-        generated_sales_code=cfg1_sales,
-        generated_sales_code_display="BHG/BNZ&RFX",
-        topology_type="Splice"
-    ))
-    
-    # Config 2: Direct no-RFX, no-DK (D2321A) → Y354A
-    cfg2_endpoints = [by_cnum[c] for c in ["D2321A", "Y354A"]]
-    cfg2_target_harnesses = sorted([
-        pn for pn, codes in harness_code_map.items()
-        if evaluate_expression(parse_sales_code_expression("BHG&BNZ&-RFX&-DK2&-DK4"), codes)
-    ])
-    cfg2_sales = generate_sales_code_expression(cfg2_target_harnesses, harness_code_map, d454_codes)
-    configs.append(Configuration(
-        configuration_id="CFG002",
-        circuit_name="D454",
-        endpoints=cfg2_endpoints,
-        target_harness_pns=cfg2_target_harnesses,
-        generated_sales_code=cfg2_sales,
-        generated_sales_code_display="BHG/BNZ&(-RFX&-DK2&-DK4)",
-        topology_type="Direct"
-    ))
-    
-    # Config 3: RFX+DK (D2321A, D2851A, D2321B, D2321C, D2321D) → Y354A via SD454B
-    cfg3_endpoints = [by_cnum[c] for c in ["D2321A", "D2851A", "D2321B", "D2321C", "D2321D", "Y354A"]]
-    cfg3_target_harnesses = sorted([
-        pn for pn, codes in harness_code_map.items()
-        if evaluate_expression(parse_sales_code_expression("BHG&BNZ&RFX&(DK2/DK4)"), codes)
-    ])
-    cfg3_sales = generate_sales_code_expression(cfg3_target_harnesses, harness_code_map, d454_codes)
-    configs.append(Configuration(
-        configuration_id="CFG003",
-        circuit_name="D454",
-        endpoints=cfg3_endpoints,
-        target_harness_pns=cfg3_target_harnesses,
-        generated_sales_code=cfg3_sales,
-        generated_sales_code_display="BHG/BNZ&RFX",
-        topology_type="Splice"
-    ))
-    
-    # Config 4: DK without RFX (D2321A, D2321B, D2321C) → Y354A via SD454C
-    cfg4_endpoints = [by_cnum[c] for c in ["D2321A", "D2321B", "D2321C", "Y354A"]]
-    cfg4_target_harnesses = sorted([
-        pn for pn, codes in harness_code_map.items()
-        if evaluate_expression(parse_sales_code_expression("BHG&BNZ&DK2&-RFX"), codes)
-    ])
-    cfg4_sales = generate_sales_code_expression(cfg4_target_harnesses, harness_code_map, d454_codes)
-    configs.append(Configuration(
-        configuration_id="CFG004",
-        circuit_name="D454",
-        endpoints=cfg4_endpoints,
-        target_harness_pns=cfg4_target_harnesses,
-        generated_sales_code=cfg4_sales,
-        generated_sales_code_display="(BHG/BNZ)&DK2&-RFX",
-        topology_type="Splice"
-    ))
-    
-    return configs
 
 
 def generate_direct_connections(
@@ -1403,100 +1280,10 @@ def validate_can_splices(connection_rows: list[dict[str, str]]) -> tuple[bool, s
     return True, "CAN validation passed: No splice exceeds 3 ends"
 
 
-def generate_d454_connections(d454_configs: list[Configuration]) -> list[dict[str, str]]:
-    """Generate fixed D454 engineering connections from D454 configurations."""
-    # Fixed D454 circuit mapping and connection specs
-    d454_specs = {
-        "CFG001": {
-            "splice": "SD454A",
-            "connections": [
-                ("D454A", "Splice Leg", "D2321A", "3", "SD454A", "", "BHG/BNZ"),
-                ("D454B", "Splice Leg", "D2851A", "4", "SD454A", "", "RFX"),
-                ("D454C", "Splice Trunk", "SD454A", "", "Y354A", "19", "BHG/BNZ&RFX"),
-            ]
-        },
-        "CFG002": {
-            "splice": "",
-            "connections": [
-                ("D454D", "Direct", "D2321A", "3", "Y354A", "19", "BHG/BNZ&(-RFX&-DK2&-DK4)"),
-            ]
-        },
-        "CFG003": {
-            "splice": "SD454B",
-            "connections": [
-                ("D454A", "Splice Leg", "D2321A", "3", "SD454B", "", "BHG/BNZ"),
-                ("D454B", "Splice Leg", "D2851A", "4", "SD454B", "", "RFX"),
-                ("D454E", "Splice Leg", "D2321B", "3", "SD454B", "", "DK2"),
-                ("D454F", "Splice Leg", "D2321C", "3", "SD454B", "", "DK2"),
-                ("D454G", "Splice Leg", "D2321D", "3", "SD454B", "", "DK4"),
-                ("D454C", "Splice Trunk", "SD454B", "", "Y354A", "19", "BHG/BNZ&RFX"),
-            ]
-        },
-        "CFG004": {
-            "splice": "SD454C",
-            "connections": [
-                ("D454J", "Splice Leg", "D2321A", "3", "SD454C", "", "(BHG/BNZ)&DK2&-RFX"),
-                ("D454E", "Splice Leg", "D2321B", "3", "SD454C", "", "DK2"),
-                ("D454F", "Splice Leg", "D2321C", "3", "SD454C", "", "DK2"),
-                ("D454H", "Splice Trunk", "SD454C", "", "Y354A", "19", "(BHG/BNZ)&DK2&-RFX"),
-            ]
-        },
-    }
-    
-    rows: list[dict[str, str]] = []
-    for cfg in d454_configs:
-        cfg_id = cfg.configuration_id
-        if cfg_id in d454_specs:
-            splice_name = d454_specs[cfg_id]["splice"]
-            for gen_ckt, ctype, from_cnum, from_pin, to_cnum, to_pin, sales in d454_specs[cfg_id]["connections"]:
-                rows.append({
-                    "Configuration": cfg_id,
-                    "Circuit Name": "D454",
-                    "Generated Circuit": gen_ckt,
-                    "Connection Type": ctype,
-                    "Splice Name": splice_name,
-                    "From CNUM": from_cnum,
-                    "From Pin": from_pin,
-                    "To CNUM": to_cnum,
-                    "To Pin": to_pin,
-                    "Sales Code": sales,
-                    "Target Harness PNs": _display_pn_list(cfg.target_harness_pns),
-                })
-    return _normalize_sd454_splice_trunk_rows(rows)
-
-
-def _is_sd454_variant(value: str) -> bool:
-    return bool(SD454_VARIANT_RE.match(str(value).strip().upper()))
-
-
-def _canonical_sd454_name(value: str) -> str:
-    return "SD454" if _is_sd454_variant(value) else str(value)
-
-
-def _normalize_sd454_splice_trunk_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Normalize SD454 variant trunk names without merging configurations.
-
-    Keep one trunk row per configuration, but canonicalize SD454A/B/C names to
-    SD454 so external tools treat them as the same splice entity.
-    """
-    normalized_rows: list[dict[str, str]] = []
-    for row in rows:
-        updated = row.copy()
-        if (
-            updated.get("Circuit Name") == "D454"
-            and updated.get("Connection Type") == "Splice Trunk"
-            and _is_sd454_variant(updated.get("From CNUM", ""))
-        ):
-            updated["From CNUM"] = _canonical_sd454_name(updated.get("From CNUM", ""))
-            updated["Splice Name"] = _canonical_sd454_name(updated.get("Splice Name", ""))
-        normalized_rows.append(updated)
-    return normalized_rows
-
-
 def _validate_sales_expression_targets(
     expression: str, target_harnesses: set[str], harness_code_map: dict[str, set[str]]
 ) -> bool:
-    parsed = parse_sales_code_expression("" if expression == "TRUE" else expression)
+    parsed = parse_or_false("" if expression == "TRUE" else expression)
     matched = {
         pn
         for pn, codes in harness_code_map.items()
@@ -1542,7 +1329,7 @@ def validate_results(
         expr = row["Sales Code"]
         parsed = parsed_cache.get(expr)
         if parsed is None:
-            parsed = parse_sales_code_expression(expr)
+            parsed = parse_or_false(expr)
             parsed_cache[expr] = parsed
         reevaluated_results.append(evaluate_expression(parsed, harness_code_map[row["Harness PN"]]))
 
@@ -1578,6 +1365,26 @@ def validate_results(
             "Rule": "6. Generated sales expressions target exact Harness PNs",
             "Status": "PASS" if pass_rule_6 else "FAIL",
             "Details": f"Matched {sum(expr_matches)} of {len(expr_matches)} configurations",
+        }
+    )
+
+    # A malformed expression no longer stops the run, so the report has to say
+    # it was there. Its rows resolve to nothing, which looks exactly like a
+    # circuit that is genuinely never built unless it is named here.
+    unparseable: list[str] = []
+    for expression in sorted({str(e) for e in option_df["Sales Code"] if str(e).strip()}):
+        try:
+            parse_sales_code_expression(expression)
+        except ExpressionSyntaxError:
+            unparseable.append(expression)
+    report_rows.append(
+        {
+            "Rule": "7. Every sales-code expression parses",
+            "Status": "PASS" if not unparseable else "FAIL",
+            "Details": ("All expressions parse"
+                        if not unparseable else
+                        f"{len(unparseable)} did not parse and resolve to no "
+                        f"harness: {', '.join(unparseable[:5])}"),
         }
     )
 
@@ -1633,7 +1440,7 @@ def generate_harness_print_matrix(
         sales_code_val = str(conn_row["Sales Code"]) if pd.notna(conn_row["Sales Code"]) else ""
         applicable_pns = set()
         try:
-            parsed = parse_sales_code_expression("" if sales_code_val == "TRUE" else sales_code_val)
+            parsed = parse_or_false("" if sales_code_val == "TRUE" else sales_code_val)
             for harness_key, active_codes in harness_code_map.items():
                 if evaluate_expression(parsed, active_codes):
                     applicable_pns.add(_display_pn(harness_key))
@@ -1821,22 +1628,16 @@ def _run_analysis_core(
     for _, row in option_df.iterrows():
         circuit_codes.setdefault(row["Circuit"], set()).update(_extract_codes_from_expression(row["Sales Code"]))
 
-    # Check if D454 is present and build its specialized configurations
-    if "D454" in option_df["Circuit"].values:
-        d454_configs = _build_d454_engineering_configurations(harness_code_map, option_df, presence_matrix)
-        if d454_configs:
-            configurations.extend(d454_configs)
-            connection_rows.extend(generate_d454_connections(d454_configs))
-
-    # Build generic configurations for all OTHER circuits
-    # Filter the presence matrix to exclude D454
-    non_d454_matrix = {pn: {ckt: eps for ckt, eps in circuits.items() if ckt != "D454"} 
-                       for pn, circuits in presence_matrix.items()}
+    # Every circuit goes through the same path. There used to be a branch here
+    # that built four fixed topologies for a circuit named "D454" — six
+    # hardcoded connector names, five hardcoded sales codes and a literal
+    # table of connections — gated on nothing but that name appearing in the
+    # file, so any programme reusing it silently received them.
     # Remove empty harness entries
-    non_d454_matrix = {pn: circuits for pn, circuits in non_d454_matrix.items() if circuits}
+    presence_matrix = {pn: circuits for pn, circuits in presence_matrix.items() if circuits}
     
-    if non_d454_matrix:
-        generic_configs = group_configurations(non_d454_matrix)
+    if presence_matrix:
+        generic_configs = group_configurations(presence_matrix)
         
         for cfg in generic_configs:
             cfg_candidate_codes = _candidate_codes_for_configuration(
@@ -1899,15 +1700,10 @@ def _run_analysis_core(
     if can_mode:
         can_validation_passed, can_validation_message = validate_can_splices(connection_rows)
 
-    # Set topology types for D454 configs
+    # Topology follows the endpoint count, for every circuit alike. Two ends
+    # is a wire; three or more have to meet somewhere, which is a splice.
     for cfg in configurations:
-        if cfg.circuit_name == "D454":
-            if cfg.configuration_id == "CFG002":
-                cfg.topology_type = "Direct"
-            else:
-                cfg.topology_type = "Splice"
-        elif cfg.topology_type == "":
-            # Set topology type for non-D454 configs
+        if cfg.topology_type == "":
             if len(cfg.endpoints) == 2:
                 cfg.topology_type = "Direct"
             elif len(cfg.endpoints) >= 3:

@@ -68,6 +68,27 @@ after an update.
   repairs and selections it restored instead of looking empty.
 
 ### Fixed
+- **Splice Generation read sales codes differently from the rest of the app.**
+  It bound `&` tighter than `/`; every other engine binds `/` tightest, as
+  `splice.inline.salescode` documents. So `ERC&CYC/CYF` — a real expression in
+  the 2028RU X1 export — selected a part number carrying CYF without ERC. One
+  grammar now, pinned by a test that evaluates both engines over every
+  combination.
+- **The "Display Sales Code" column could carry text that was not an
+  expression.** The old simplifier split on `&` ignoring parentheses, so
+  `(-AAA&-CCC)/(AAA&CCC)` came out unbalanced with a negation dropped. It now
+  uses the same minimiser Circuit Health uses, which verifies the result means
+  the same thing before returning it.
+- **A malformed sales code no longer aborts the run.** It resolves to no
+  harness, and the Validation Report names it under a new rule 7.
+- `501` follows the same rule everywhere: universal only when it is the whole
+  expression.
+
+### Removed
+- **Four hardcoded topologies for a circuit named `D454`** — six connector
+  names, five sales codes and a literal connection table, applied to any file
+  containing that circuit name. Every circuit now goes through the same path,
+  and topology follows the endpoint count.
 - **The circuit chart connects circuits it used to leave dangling.** A wire is
   now paired inside the harness it belongs to, instead of across the whole
   study. Two devices in one harness join even when that DTx family is mapped
