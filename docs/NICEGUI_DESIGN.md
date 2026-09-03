@@ -91,6 +91,22 @@ Every completed engine run is appended to `data/activity.jsonl` by the
 runner (tool, route, summary, who, programme); the Overview's Continue list
 reads it.
 
+## The hand-off sheets
+
+The applicability review exists to be sent on, so its last two sheets are
+written for the reader rather than the run:
+
+- **Complexity Cleanup** is the work list. One row per ticked finding plus
+  every confirmed sales-code repair, sorted worst first, each leading with an
+  imperative action and a `Fix in` column: `DTx`, `Complexity matrix`,
+  `DTx or complexity`, `Confirm only`, `Your mapping`. `report.prescribe`
+  decides that from the data — a contradiction over tracked codes is the DTx's,
+  a code a sibling complexity file tracks is this file's, a code nobody tracks
+  is a question — and phrases identical fixes identically, which is what lets
+  the email collapse a circuit, its connector and the gap into one request.
+- **Customer email** is that list as sendable text, grouped by fix location.
+  `report.email_lines` builds it; the page passes the engineer's name.
+
 ## Accessibility
 
 `tests/test_accessibility.py` is the gate, and it computes rather than eyeballs:

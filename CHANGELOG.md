@@ -40,6 +40,22 @@ after an update.
   the sheets are exactly what they were. Macro workbooks, the DTx change
   report, the SECR, the DEFE template and the complexity files are left as
   they are.
+- **The Complexity Cleanup sheet is now a work list, not a list of findings.**
+  Every row leads with what to change and, in its own column, whether the
+  correction belongs in the DTx, in the complexity matrix, or whether the two
+  documents disagree and the customer has to say which is right. That call is
+  made from the data: a condition no build can satisfy whose codes the matrix
+  does track is a DTx contradiction; a code this file is missing but a sibling
+  file tracks is real, so this file is the one to fix; a code no file tracks
+  could be either, so the row asks the question instead of guessing. Rows are
+  sorted worst first, carry the affected part numbers as evidence, and leave a
+  Status column for you. Sales-code repairs you confirmed during the review are
+  listed too — the workbench applied them locally, but unless the customer
+  fixes the source they come back with the next export.
+- **A 'Customer email' sheet** in the same workbook: the same list as text to
+  paste into a mail client, grouped by where the change belongs, with findings
+  that share one request collapsed into one numbered line. Read it before you
+  send it; nothing is sent for you.
 - **Versigent mark in the rail** and on every workbook's Read Me sheet, as
   cropped transparent variants — the shipped logo is mostly black plate,
   which is why it read as an empty box in the rail and would have printed as

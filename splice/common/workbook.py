@@ -101,11 +101,19 @@ def dress(data: bytes, filename: str, *, tool: str = "", version: str = "",
 
 # --------------------------------------------------------------- one sheet
 def header_row_of(ws) -> Optional[int]:
-    """The first of the top three rows with two or more filled cells."""
-    for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 3)):
-        if sum(1 for c in row if c.value not in (None, "")) >= 2:
-            return row[0].row
-    return None
+    """The header row: the widest of the top few rows.
+
+    Taking the first row with two filled cells reads a title band as the
+    header — and then the Read Me reports a row count six too high. The
+    widest row wins instead, earliest on a tie, which lands on row 1 for a
+    plain table and on the real header under a title block.
+    """
+    best, best_filled = None, 1
+    for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 8)):
+        filled = sum(1 for c in row if c.value not in (None, ""))
+        if filled > best_filled:
+            best, best_filled = row[0].row, filled
+    return best
 
 
 def is_table(ws) -> bool:

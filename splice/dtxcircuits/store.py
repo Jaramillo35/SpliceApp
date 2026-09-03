@@ -155,7 +155,13 @@ def remember_cleanup(cleanup: dict) -> dict:
     """Selections as plain JSON — the note is kept so the store explains itself."""
     return {key: {"family": s.family, "harness": s.harness, "kind": s.kind,
                   "ident": s.ident, "verdict": s.verdict,
-                  "condition": s.condition, "note": s.note}
+                  "condition": s.condition, "note": s.note,
+                  # the instruction travels with the tick: a row ticked in an
+                  # earlier run is still exported as a work item, and without
+                  # these it would export with an empty Action column
+                  "priority": s.priority, "fix_in": s.fix_in,
+                  "action": s.action, "def_id": s.def_id,
+                  "builds": s.builds, "evidence": s.evidence}
             for key, s in cleanup.items()}
 
 
@@ -171,5 +177,8 @@ def restore_cleanup(stored: dict) -> dict:
             key=key, family=raw.get("family", ""), harness=raw.get("harness", ""),
             kind=raw.get("kind", ""), ident=raw.get("ident", ""),
             verdict=raw.get("verdict", ""), condition=raw.get("condition", ""),
-            note=raw.get("note", ""))
+            note=raw.get("note", ""), priority=raw.get("priority", ""),
+            fix_in=raw.get("fix_in", ""), action=raw.get("action", ""),
+            def_id=raw.get("def_id", ""), builds=raw.get("builds", ""),
+            evidence=raw.get("evidence", ""))
     return out

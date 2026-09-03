@@ -139,7 +139,8 @@ def build(wb: Workbench) -> None:
             dtx_program=meta.program if meta else "",
             dtx_phase=meta.phase if meta else "",
             repairs=dict(state["fixes"]), repair_context=context,
-            quality=state["quality"], charts=list(state["charts"]))
+            quality=state["quality"], charts=list(state["charts"]),
+            prepared_by=c.who())
         if data is not None:
             c.deliver(data, name)
 
