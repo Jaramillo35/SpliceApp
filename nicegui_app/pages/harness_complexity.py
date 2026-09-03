@@ -4,6 +4,12 @@ Cross-reference + NEW master complexity (+ optional OLD master and DTx
 exports) → affected families → a per-family review matrix the SE edits →
 validated individual ``.xlsm`` files generated from the bundled macro
 template, one per variant when the master partitions a worksheet.
+
+Archetype B (workbench): a sticky step bar names the four stages from the
+first paint — Inputs, Families, Workbench, Generate — and a KPI strip under
+it follows the same state. ``sync()`` derives both from ``state`` after
+every refresh; nothing sets a step by hand. Every primary is gated on the
+inputs it needs, and the generated files are offered as buttons only.
 """
 
 from __future__ import annotations
@@ -11,7 +17,6 @@ from __future__ import annotations
 from nicegui import ui
 
 from nicegui_app import components as c
-from nicegui_app import theme
 
 CLASS_LABEL = {
     "confirmed": "Confirmed",
@@ -20,6 +25,23 @@ CLASS_LABEL = {
     "manual": "Manual",
     "excluded": "Excluded",
 }
+
+STEPS = ("Inputs", "Families", "Workbench", "Generate")
+
+#: what an affected family's status chip says — icon plus word, never colour
+AFFECTED_WORD = {"blocker": "unmapped", "high": "codes changed", "info": "DTx change"}
+
+
+def undecided(matrix) -> list:
+    """Combined expressions still waiting on the SE.
+
+    An equality is pre-approved by the engine; any other combined expression
+    the SE has not ticked Include on is still a decision to make. The model
+    carries no explicit "leave it out" flag, so a deliberate exclusion reads
+    as undecided here — the engine does not block on it either way.
+    """
+    return [ce for ce in matrix.combined_exprs
+            if not ce.is_equality and not ce.include]
 
 
 def _guide() -> None:
@@ -55,102 +77,172 @@ def _guide() -> None:
 
 @ui.page("/harness-complexity")
 def page() -> None:
+    from splice.common.errors import SpliceError
     from splice.harnesscx import adapters, checks, compare, export
 
     state: dict = {
         "crossref": None, "new_master": None, "old_master": None, "dtx": [],
-        "cr": None, "universe": set(), "affected": [], "worksheets": [],
-        "matrix": None, "files": [],
+        "cr": None, "_frames": [], "universe": set(), "affected": [],
+        "worksheets": [], "matrix": None, "files": [],
+        #: what the last analysis and the last generation had to say —
+        #: notes on the page, not toasts (one toast per action: the runner's)
+        "analyze_notes": [], "gen_notes": [],
     }
+    views: dict = {}
 
+    # ------------------------------------------------------------ derived
+    def refresh(*names: str) -> None:
+        """Re-render the named views, then the step bar and the KPI strip,
+        which are derived from the same state."""
+        for name in names:
+            views[name].refresh()
+        sync()
+
+    def sync() -> None:
+        """Step states and KPIs follow the state; nothing sets them by hand."""
+        m = state["matrix"]
+        if state["cr"] is None:
+            steps = {"Inputs": ("current", ""), "Families": ("waiting", ""),
+                     "Workbench": ("waiting", ""), "Generate": ("waiting", "")}
+        else:
+            fam_note = f"{len(state['worksheets'])} families"
+            if m is None:
+                steps = {
+                    "Inputs": ("done", fam_note),
+                    "Families": ("current", f"{len(state['affected'])} affected"),
+                    "Workbench": ("waiting", ""),
+                    "Generate": ("waiting", ""),
+                }
+            else:
+                n_open = len(undecided(m))
+                # the engine does not block on an undecided combined
+                # expression (export.validate_before_export), so Generate is
+                # current, not blocked, while the workbench still has notes
+                steps = {
+                    "Inputs": ("done", fam_note),
+                    "Families": ("done", fam_note),
+                    "Workbench": ("current",
+                                  f"{n_open} combined expressions to decide"
+                                  if n_open else "ready"),
+                    "Generate": (("done", f"{len(state['files'])} files")
+                                 if state["files"] else ("current", "")),
+                }
+        for name, (st, note) in steps.items():
+            c.set_step(name, st, note)
+        views["kpis"].refresh()
+
+    def missing_inputs() -> list[str]:
+        out = []
+        if not state["crossref"]:
+            out.append("the cross-reference workbook")
+        if not state["new_master"]:
+            out.append("the NEW master")
+        return out
+
+    # --------------------------------------------------------------- page
     with c.frame("Harness Complexity",
                  "Individual harness-complexity files from the master workbook — "
                  "reviewed, validated, macros preserved."):
-        _guide()
-
-        with c.card("Inputs",
-                    "The cross-reference and NEW master are required. DTx exports "
-                    "define which row-9 tokens count as sales codes; the OLD master "
-                    "adds the added/removed-code evidence per family."):
-            with ui.row().classes("w-full gap-4 flex-wrap"):
-                c.upload_zone("Cross-reference workbook (.xlsx)",
-                              lambda n, b: state.update(crossref=b), accept=".xlsx")
-                c.upload_zone("NEW Master Complexity (.xlsx/.xlsm)",
-                              lambda n, b: state.update(new_master=b),
-                              accept=".xlsx,.xlsm")
-                c.upload_zone("OLD Master Complexity (optional)",
-                              lambda n, b: state.update(old_master=b),
-                              accept=".xlsx,.xlsm")
-                c.upload_zone("DTx export(s) (.xlsx/.csv)",
-                              lambda n, b: state["dtx"].append((n, b)),
-                              accept=".xlsx,.xlsm,.csv", multiple=True)
-            ui.button("Analyze families", icon="play_arrow",
-                      on_click=lambda: analyze()).props("unelevated")
+        c.step_bar(*STEPS)
 
         @ui.refreshable
-        def render_families() -> None:
+        def kpi_view() -> None:
             if state["cr"] is None:
                 return
-            with c.card("Harness families",
-                        "Affected families first (with the evidence); any mapped "
-                        "worksheet in the NEW master can be opened."):
+            m = state["matrix"]
+            n_aff = len(state["affected"])
+            with c.kpi_strip():
+                c.kpi(len(state["worksheets"]), "Families analysed")
+                c.kpi(n_aff, "Affected families", "high" if n_aff else None)
+                if m is not None:
+                    parts = sum(1 for r in m.rows if not r.excluded)
+                    n_open = len(undecided(m))
+                    c.kpi(parts, "Part numbers", hint=m.worksheet)
+                    c.kpi(n_open, "Combined to decide", "review" if n_open else "ok")
+                    c.kpi(m.excluded_count, "Excluded rows",
+                          "review" if m.excluded_count else None)
+                if state["files"]:
+                    c.kpi(len(state["files"]), "Files generated", "ok")
+
+        views["kpis"] = kpi_view
+        kpi_view()
+
+        _guide()
+
+        # ---------------------------------------------------- 1 · Inputs
+        with c.section("Inputs",
+                       "The cross-reference and NEW master are required. DTx exports "
+                       "define which row-9 tokens count as sales codes; the OLD master "
+                       "adds the added/removed-code evidence per family.",
+                       step="Inputs"):
+            with ui.row().classes("w-full gap-4 flex-wrap"):
+                c.upload_row("Cross-reference workbook (.xlsx)",
+                             lambda n, b: state.update(crossref=b), accept=".xlsx")
+                c.upload_row("NEW Master Complexity (.xlsx/.xlsm)",
+                             lambda n, b: state.update(new_master=b),
+                             accept=".xlsx,.xlsm")
+                c.upload_row("OLD Master Complexity (optional)",
+                             lambda n, b: state.update(old_master=b),
+                             accept=".xlsx,.xlsm")
+                c.upload_row("DTx export(s) (.xlsx/.csv)",
+                             lambda n, b: state["dtx"].append((n, b)),
+                             accept=".xlsx,.xlsm,.csv", multiple=True)
+            c.action("Analyze families", lambda: analyze(), needs=missing_inputs)
+
+        # -------------------------------------------------- 2 · Families
+        @ui.refreshable
+        def families_view() -> None:
+            if state["cr"] is None:
+                return
+            with c.section("Harness families",
+                           "Affected families first (with the evidence); any mapped "
+                           "worksheet in the NEW master can be opened.",
+                           step="Families"):
+                for kind, text in state["analyze_notes"]:
+                    c.note(kind, text)
                 if not state["universe"]:
-                    c.chip("high", "No DTx sales-code data — row-9 tokens cannot be "
+                    c.note("high", "No DTx sales-code data — row-9 tokens cannot be "
                                    "identified as sales codes. Load a DTx export.")
                 aff = state["affected"]
                 if aff:
                     ui.label("Affected by this change").classes("text-sm font-semibold")
                     with ui.row().classes("gap-2 flex-wrap"):
                         for a in aff:
-                            kind = "blocker" if not a.resolved else \
-                                ("high" if a.by_complexity else "info")
-                            label = a.worksheet or a.family
-                            if a.reasons:
-                                label += "  ·  " + "; ".join(a.reasons)
-                            if a.worksheet:
-                                ui.button(label,
-                                          on_click=lambda w=a.worksheet: open_ws(w)) \
-                                    .props("outline dense no-caps") \
-                                    .style(f"color:{theme.STATUS[kind]};"
-                                           f"border-color:{theme.STATUS[kind]}55")
-                            else:
-                                c.chip(kind, label)
+                            _affected(a)
                 with ui.row().classes("items-end gap-3 flex-wrap"):
                     ws_sel = ui.select(state["worksheets"], label="Open a family",
                                        with_input=True).classes("w-72").props("dense")
-                    ui.button("Open", icon="folder_open",
-                              on_click=lambda: open_ws(ws_sel.value)) \
-                        .props("outline dense")
-            render_workbench()
+                    ws_sel.on_value_change(lambda _e: c.recheck())
+                    c.action("Open", lambda: open_ws(ws_sel.value),
+                             needs=lambda: [] if ws_sel.value else ["a harness family"],
+                             icon="folder_open", secondary=True)
 
-        async def open_ws(worksheet: str | None) -> None:
-            if not worksheet:
-                ui.notify("Pick a harness family first", type="warning")
+        def _affected(a) -> None:
+            """One affected family: a button when its worksheet is known,
+            a chip when the DTx family could not be mapped. The status is
+            the chip's icon and word; the colour only repeats it."""
+            kind = "blocker" if not a.resolved else \
+                ("high" if a.by_complexity else "info")
+            reasons = "; ".join(a.reasons)
+            if not a.worksheet:
+                c.chip(kind, a.family + (f"  ·  {reasons}" if reasons else ""))
                 return
-            cr = state["cr"]
+            with ui.button(a.worksheet, on_click=lambda w=a.worksheet: open_ws(w)) \
+                    .props("outline dense no-caps"):
+                with ui.row().classes("items-center gap-2 no-wrap pl-2"):
+                    c.chip(kind, AFFECTED_WORD[kind])
+                    if reasons:
+                        ui.label(reasons).classes("sx-caption normal-case")
 
-            def work():
-                fam_codes = adapters.family_dtx_sales_codes(
-                    state.get("_frames", []), cr, worksheet)
-                return adapters.extract_family_matrix(
-                    state["new_master"], worksheet, state["universe"],
-                    cr.worksheet_to_canonical.get(worksheet, worksheet),
-                    family_dtx_codes=fam_codes)
-
-            matrix = await c.run_engine(
-                work, running=f"Building the {worksheet} matrix…",
-                done=f"{worksheet} ready")
-            if matrix is not None:
-                state["matrix"], state["files"] = matrix, []
-                render_families.refresh()
-
-        def render_workbench() -> None:
+        # ------------------------------------------------- 3 · Workbench
+        @ui.refreshable
+        def workbench_view() -> None:
             m = state["matrix"]
             if m is None:
                 return
             meta = " · ".join(x for x in (
                 f"{m.year} {m.vehicle}".strip(), m.phase, m.harness_name) if x)
-            with c.card(f"Workbench — {m.worksheet}", meta):
+            with c.section(f"Workbench — {m.worksheet}", meta, step="Workbench"):
                 with ui.row().classes("gap-2 flex-wrap"):
                     n_parts = sum(1 for r in m.rows if not r.excluded)
                     c.chip("info", f"{n_parts} part number(s)")
@@ -167,7 +259,6 @@ def page() -> None:
                 _render_checks(m)
                 _render_matrix(m)
                 _render_combined(m)
-                _render_generate(m)
 
         def _render_checks(m) -> None:
             cov = checks.coverage_rows(m)
@@ -188,7 +279,7 @@ def page() -> None:
                     ui.label("Circuits with these codes cannot be expressed in the "
                              "individual file — the upstream cause of Circuit Health "
                              "option-window findings. Fix the master or accept "
-                             "knowingly.").classes("text-xs sx-muted")
+                             "knowingly.").classes("sx-caption")
                 for a, b in lookalikes:
                     c.chip("high", f"Truncated-PN lookalikes: {a} vs {b} — "
                                    "one is almost certainly a cut-off cell")
@@ -204,23 +295,16 @@ def page() -> None:
 
             with ui.expansion(f"Sales-code coverage ({len(cov)} codes)") \
                     .classes("w-full").props("dense"):
-                ui.table(rows=[{
-                    "code": r["code"],
-                    "dtx": "✓" if r["in_dtx"] else "",
-                    "cx": "✓" if r["in_complexity"] else "✗",
-                    "feature": r["feature"],
-                    "origin": r["origin"],
-                } for r in cov], columns=[
-                    {"name": "code", "label": "Sales code", "field": "code",
-                     "align": "left", "sortable": True},
-                    {"name": "dtx", "label": "In DTx", "field": "dtx", "align": "center"},
-                    {"name": "cx", "label": "In complexity", "field": "cx",
-                     "align": "center"},
-                    {"name": "feature", "label": "Feature", "field": "feature",
-                     "align": "left"},
-                    {"name": "origin", "label": "Row-9 cell", "field": "origin",
-                     "align": "left"},
-                ], pagination=15).classes("w-full").props("dense flat")
+                c.frame_table(
+                    [{"code": r["code"],
+                      "dtx": "yes" if r["in_dtx"] else "no",
+                      "cx": "yes" if r["in_complexity"] else "no",
+                      "feature": r["feature"],
+                      "origin": r["origin"]} for r in cov],
+                    labels={"code": "Sales code", "dtx": "In DTx",
+                            "cx": "In complexity", "feature": "Feature",
+                            "origin": "Row-9 cell"},
+                    mono=("code", "origin"), status_field="cx", pagination=15)
 
         def _render_matrix(m) -> None:
             from splice.harnesscx.models import ProposalClass
@@ -228,8 +312,8 @@ def page() -> None:
             ui.label("Applicability matrix").classes("text-sm font-semibold mt-2")
             ui.label("Edit a part number or an X/G mark directly — every proposed "
                      "value shows how it was derived. Tick the boxes (or the "
-                     "header box for all) to remove several rows at once.") \
-                .classes("text-xs sx-muted")
+                     "header box for all) to exclude several rows at once.") \
+                .classes("sx-caption")
 
             code_cols = [sc.code for sc in m.sales_codes]
             rows = []
@@ -259,6 +343,7 @@ def page() -> None:
             col_defs += [{"field": code, "editable": True, "width": 64,
                           "cellStyle": {"textAlign": "center"}} for code in code_cols]
 
+            # the app's one editable grid: it stays an aggrid
             grid = ui.aggrid({
                 "columnDefs": col_defs, "rowData": rows,
                 "rowSelection": "multiple",
@@ -289,6 +374,9 @@ def page() -> None:
                         r.symbols.pop(code, None)
                         r.symbol_class.pop(code, None)
                 state["files"] = []
+                # an edit makes any generated file stale: the Generate step
+                # and its download buttons follow, the grid keeps its place
+                refresh("generate")
 
             grid.on("cellValueChanged", on_edit)
 
@@ -306,7 +394,7 @@ def page() -> None:
                         current_reason="added by the SE", current_source="workbench"))
                     add_in.set_value("")
                     state["files"] = []
-                    render_families.refresh()
+                    refresh("workbench", "generate")
 
                 async def exclude_selected() -> None:
                     selected = await grid.get_selected_rows()
@@ -319,14 +407,20 @@ def page() -> None:
                             m.rows[i].current_reason = "excluded by the SE"
                             n += 1
                     state["files"] = []
-                    ui.notify(f"Removed {n} part number(s) — they will not appear "
-                              "in the generated file" if n else "Tick rows first",
-                              type="positive" if n else "warning")
-                    render_families.refresh()
+                    if not n:
+                        hint.set_visibility(True)
+                        return
+                    ui.notify(f"Excluded {n} part number(s) — they will not appear "
+                              "in the generated file", type="positive")
+                    refresh("workbench", "generate")
 
-                ui.button("Add PN", icon="add", on_click=add_pn).props("outline dense")
-                ui.button("Remove selected", icon="delete_sweep",
-                          on_click=exclude_selected).props("outline dense color=negative")
+                ui.button("Add PN", icon="add", on_click=add_pn).props("outline dense no-caps")
+                # excluding only marks rows in memory — not destructive, so
+                # not a negative button
+                ui.button("Exclude selected rows", icon="playlist_remove",
+                          on_click=exclude_selected).props("outline dense no-caps")
+            hint = ui.label("Tick rows first").classes("sx-caption")
+            hint.set_visibility(False)
 
         def _render_combined(m) -> None:
             if not m.combined_exprs:
@@ -338,16 +432,18 @@ def page() -> None:
                      "logic. Tick Include to add one; a comma-separated definition "
                      "('CG3, CG4') becomes one column per code with identical "
                      "content. Equalities ('XH3=XH4') are pre-approved.") \
-                .classes("text-xs sx-muted")
+                .classes("sx-caption")
             for ce in m.combined_exprs:
                 with ui.row().classes("items-center gap-3 flex-wrap w-full"):
                     def toggle(v, ce=ce):
                         ce.include = bool(v.value)
                         state["files"] = []
+                        refresh("generate")
 
                     def set_code(v, ce=ce):
                         ce.manual_code = v.value or ""
                         state["files"] = []
+                        refresh("generate")
 
                     ui.checkbox("Include", value=ce.include, on_change=toggle)
                     ui.label(ce.original_expr).classes("text-sm sx-mono")
@@ -357,55 +453,58 @@ def page() -> None:
                     ui.input("Sales code(s) to write as", value=ce.manual_code,
                              on_change=set_code).classes("w-56").props("dense")
                     if ce.feature:
-                        ui.label(ce.feature).classes("text-xs sx-muted")
+                        ui.label(ce.feature).classes("sx-caption")
 
-        def _render_generate(m) -> None:
-            ui.separator().classes("my-2")
-            with ui.row().classes("items-end gap-3 flex-wrap"):
-                id_in = ui.input("Harness ID (manual)", value=m.harness_id) \
-                    .classes("w-48").props("dense")
+        # -------------------------------------------------- 4 · Generate
+        @ui.refreshable
+        def generate_view() -> None:
+            m = state["matrix"]
+            with c.section("Generate",
+                           "The individual file(s) for the open worksheet, from the "
+                           "bundled macro template — one per variant when the master "
+                           "partitions the worksheet.", step="Generate"):
+                if m is None:
+                    c.empty("Open a harness family above; its .xlsm file(s) are "
+                            "generated here.", icon="table_view")
+                    c.action("Generate .xlsm", lambda: None,
+                             needs=lambda: ["an open worksheet"])
+                    return
+                with ui.row().classes("items-end gap-3 flex-wrap"):
+                    id_in = ui.input("Harness ID (manual)", value=m.harness_id) \
+                        .classes("w-48").props("dense")
+                    id_in.on_value_change(lambda _e: c.recheck())
 
-                async def generate() -> None:
-                    def work():
-                        return export.generate_files(m, id_in.value or "")
+                    def needs() -> list[str]:
+                        if state["matrix"] is None:
+                            return ["an open worksheet"]
+                        return [] if (id_in.value or "").strip() else ["a Harness ID"]
 
-                    out = await c.run_engine(
-                        work, running="Generating the individual file(s)…",
-                        done="Generation finished")
-                    if out is None:
-                        return
-                    files, problems = out
-                    if problems:
-                        ui.notify(" · ".join(problems), type="negative",
-                                  multi_line=True, close_button=True)
-                        return
-                    warns = export.unresolved_warnings(m)
-                    if warns:
-                        ui.notify("Generated with notes: " + " · ".join(warns),
-                                  type="warning", multi_line=True, close_button=True)
-                    state["files"] = files
-                    for data, fname in files:
-                        ui.download(data, fname)
-                    render_families.refresh()
+                    c.action("Generate .xlsm", lambda: generate(id_in), needs=needs)
+                    if m.partition_sides:
+                        ui.label(f"→ {len(m.partition_sides)} files "
+                                 f"({' / '.join(m.partition_sides)})") \
+                            .classes("sx-caption")
+                for kind, text in state["gen_notes"]:
+                    c.note(kind, text)
+                if state["files"]:
+                    items = [(fname, lambda d=data: d) for data, fname in state["files"]]
+                    with ui.row().classes("gap-2 flex-wrap items-center"):
+                        for name, getter in items:
+                            c.download(name, getter)
+                        if len(items) > 1:
+                            c.downloads(items, label=f"{len(items)} files")
 
-                ui.button("Generate .xlsm", icon="play_arrow", on_click=generate) \
-                    .props("unelevated")
-                if m.partition_sides:
-                    ui.label(f"→ {len(m.partition_sides)} files "
-                             f"({' / '.join(m.partition_sides)})") \
-                        .classes("text-xs sx-muted")
-            if state["files"]:
-                with ui.row().classes("gap-2 flex-wrap"):
-                    for data, fname in state["files"]:
-                        c.download_button(fname, lambda d=data: d)
+        views.update(families=families_view, workbench=workbench_view,
+                     generate=generate_view)
+        families_view()
+        workbench_view()
+        generate_view()
+        sync()
 
-        render_families()
-
+        # ------------------------------------------------------- actions
         async def analyze() -> None:
             if not (state["crossref"] and state["new_master"]):
-                ui.notify("Load the cross-reference and the NEW master first",
-                          type="warning")
-                return
+                return   # the action is gated; this is only a guard
 
             def work():
                 cr = adapters.load_crossref(state["crossref"])
@@ -425,10 +524,56 @@ def page() -> None:
             if out is None:
                 return
             cr, frames, universe, sheets, affected = out
+            notes = []
+            if not sheets:
+                notes.append(("high", "No master worksheet matches the cross-reference "
+                                      "— check the 'Complexity File' column."))
             state.update(cr=cr, _frames=frames, universe=universe,
                          worksheets=sheets, affected=affected,
-                         matrix=None, files=[])
-            if not sheets:
-                ui.notify("No master worksheet matches the cross-reference — "
-                          "check the 'Complexity File' column.", type="warning")
-            render_families.refresh()
+                         matrix=None, files=[], analyze_notes=notes, gen_notes=[])
+            refresh("families", "workbench", "generate")
+
+        async def open_ws(worksheet: str | None) -> None:
+            if not worksheet:
+                return   # the action is gated; this is only a guard
+            cr = state["cr"]
+
+            def work():
+                fam_codes = adapters.family_dtx_sales_codes(
+                    state.get("_frames", []), cr, worksheet)
+                return adapters.extract_family_matrix(
+                    state["new_master"], worksheet, state["universe"],
+                    cr.worksheet_to_canonical.get(worksheet, worksheet),
+                    family_dtx_codes=fam_codes)
+
+            matrix = await c.run_engine(
+                work, running=f"Building the {worksheet} matrix…",
+                done=f"{worksheet} ready")
+            if matrix is not None:
+                state.update(matrix=matrix, files=[], gen_notes=[])
+                refresh("workbench", "generate")
+
+        async def generate(id_in) -> None:
+            m = state["matrix"]
+            if m is None:
+                return   # the action is gated; this is only a guard
+            harness_id = id_in.value or ""
+
+            def work():
+                files, problems = export.generate_files(m, harness_id)
+                if problems:
+                    # the runner's toast is the one toast: a blocked export
+                    # is its error, not a "finished" followed by a failure
+                    raise SpliceError(" · ".join(problems))
+                return files
+
+            files = await c.run_engine(
+                work, running="Generating the individual file(s)…",
+                done="Generation finished")
+            if files is None:
+                return
+            state["files"] = files
+            # what the export wants confirmed stays on the page, under the
+            # button, where it can be read after the toast is gone
+            state["gen_notes"] = [("review", w) for w in export.unresolved_warnings(m)]
+            refresh("generate")

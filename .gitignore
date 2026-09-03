@@ -51,3 +51,7 @@ data/logs/
 graphify-out/
 # built executables are published as GitHub Releases, not committed
 assets/downloads/teams-transcript-recorder.zip
+
+# runtime state written by the UI
+data/activity.jsonl
+data/vbom/
