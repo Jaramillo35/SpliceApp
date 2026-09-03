@@ -104,6 +104,14 @@ class ChartRow:
     builds: List[str] = field(default_factory=list)
     #: a wire running to a generated splice rather than to a device
     is_splice: bool = False
+    #: For a splice leg: the expression under which THIS leg exists — the
+    #: end's own condition and the configuration's, together. A circuit can
+    #: be spliced on one part number and a plain wire on another, so a
+    #: single expression per circuit cannot describe its legs.
+    leg_expression: str = ""
+    #: which configuration of the circuit this row belongs to, where the
+    #: complexity supports more than one
+    configuration: str = ""
     #: The far end of the WIRE, which never leaves this harness. A wire has
     #: two ends; the chart is written one end per row, so without these the
     #: far end has to be found by eye.
@@ -381,6 +389,10 @@ def build_charts(entries: Iterable, rows: Sequence,
         # property of the wire, so every end of it is carried identically
         resolved: Dict[str, tuple] = {}
 
+        # the DTx condition stated at each individual end, which is what
+        # decides that end's presence on a given part number
+        conditions_by_end: Dict[tuple, str] = {}
+
         seen = set()
         for row in family_rows:
             key = (row.circuit, row.cnum, row.pin)
@@ -409,6 +421,8 @@ def build_charts(entries: Iterable, rows: Sequence,
                 resolved[row.circuit] = (
                     condition or "", builds, restated,
                     _classify(builds, chart.part_numbers))
+            conditions_by_end[(row.circuit, row.cnum, row.pin)] = \
+                conventions.effective_condition(row.sales_code) or ""
             expression, builds, restated, classification = resolved[row.circuit]
             chart.rows.append(ChartRow(
                 circuit=row.circuit, cnum=row.cnum, cavity=row.pin,
@@ -417,7 +431,7 @@ def build_charts(entries: Iterable, rows: Sequence,
                 expression=expression, harness_expression=restated,
                 classification=classification, builds=list(builds)))
 
-        _add_splices(chart, splice_min_ends)
+        _add_splices(chart, splice_min_ends, complexity, conditions_by_end)
         chart.rows.sort(key=lambda r: (r.circuit, r.cnum, _cavity_key(r.cavity)))
         charts.append(chart)
 
@@ -436,17 +450,25 @@ def _classify(builds: Sequence[str], part_numbers: Sequence[str]) -> str:
     return ALL_BUILDS if len(builds) == len(part_numbers) else VARIANT
 
 
-def _add_splices(chart: Chart, minimum: int) -> None:
-    """Give every circuit with three or more ends a splice to meet at.
+def _add_splices(chart: Chart, minimum: int, complexity=None,
+                 conditions_by_end: Optional[Dict[tuple, str]] = None) -> None:
+    """Wire each circuit the way this harness's own options require.
 
-    Two ends is a wire. Three is a branch, and a branch has to join somewhere
-    physically — so the chart says where, rather than leaving the SE to infer
-    it. The splice is named the way Splice Generation already names them,
-    ``S<circuit>`` plus a letter, and each branch lands on its own cavity.
+    A circuit does not have one topology. M34 in Door_Driver_2 reaches an LCF
+    device, a LEQ/LEM device and an inline: the part number carrying LCF has
+    all three ends and needs a splice, the one without has two and is a plain
+    wire. So the ends are grouped by which part numbers actually carry them
+    and each group is planned separately, by the same planner Splice
+    Generation uses — the two surfaces cannot disagree about what a splice is.
 
-    Cavities run A, B, C … and continue AA, AB … past 26. The SE asked for
-    A-Z; real nets go far beyond it (one circuit in 2028RU X2_A has 269 ends),
-    and silently truncating at Z would drop wires.
+    Every leg carries its own expression: its end's condition together with
+    its configuration's. An end that connects somewhere different in another
+    configuration gets a second row, because one row cannot say two things;
+    an end that connects to the same place in every configuration keeps one
+    row and the expressions are merged by the planner.
+
+    Without a complexity file there are no part numbers to group by, so the
+    simple rule stands: three or more ends share one splice.
     """
     if minimum <= 0:
         return
@@ -454,26 +476,132 @@ def _add_splices(chart: Chart, minimum: int) -> None:
     for row in chart.rows:
         by_circuit.setdefault(row.circuit, []).append(row)
 
+    builds = list(getattr(complexity, "builds", []) or [])
+    conditions_by_end = conditions_by_end or {}
+
     for circuit, ends in sorted(by_circuit.items()):
-        if len(ends) < minimum:
+        if not builds:
+            if len(ends) >= minimum:
+                _simple_splice(chart, circuit, ends)
             continue
-        name = f"S{circuit}{_int_to_alpha_suffix(0)}"
-        chart.splices[circuit] = name
-        for index, end in enumerate(ends):
-            # one wire per branch, device end to splice end; it carries
-            # exactly what its branch carries
-            branch = ChartRow(
-                circuit=circuit, cnum=name,
-                cavity=_int_to_alpha_suffix(index),
-                device=f"SPLICE {name}",
-                expression=end.expression,
-                harness_expression=end.harness_expression,
-                classification=end.classification,
-                builds=list(end.builds), is_splice=True)
-            # the two ends of one wire, each pointing at the other
+        connections = _plan_circuit(circuit, ends, builds, conditions_by_end)
+        if connections is None:
+            if len(ends) >= minimum:
+                _simple_splice(chart, circuit, ends)
+            continue
+        _wire_from_plan(chart, circuit, ends, connections, minimum)
+
+
+def _simple_splice(chart: Chart, circuit: str, ends: List[ChartRow]) -> None:
+    """One splice for every end — what the chart does with no complexity."""
+    name = f"S{circuit}{_int_to_alpha_suffix(0)}"
+    chart.splices[circuit] = name
+    for index, end in enumerate(list(ends)):
+        branch = _branch_row(end, circuit, name, _int_to_alpha_suffix(index),
+                             end.harness_expression or end.expression, "")
+        _join(end, chart.family, branch)
+        _join(branch, chart.family, end)
+        chart.rows.append(branch)
+
+
+def _leg_text(expression: str) -> str:
+    """The engine writes TRUE for an unconditional leg; the chart leaves it
+    blank, as it does for every other unconditional condition."""
+    text = (expression or "").strip()
+    return "" if text.upper() == "TRUE" else text
+
+
+def _branch_row(end: ChartRow, circuit: str, name: str, cavity: str,
+                expression: str, configuration: str) -> ChartRow:
+    return ChartRow(
+        circuit=circuit, cnum=name, cavity=cavity, device=f"SPLICE {name}",
+        expression=end.expression, harness_expression=end.harness_expression,
+        classification=end.classification, builds=list(end.builds),
+        is_splice=True, leg_expression=_leg_text(expression),
+        configuration=configuration)
+
+
+def _plan_circuit(circuit: str, ends: List[ChartRow], builds,
+                  conditions_by_end: Dict[tuple, str]):
+    """Ask Splice Generation how this circuit is wired on this harness."""
+    try:
+        import pandas as pd
+
+        from splice.splice_gen import plan_connections
+        option_rows = [{
+            "CNUM": end.cnum, "Pin": end.cavity, "Circuit": circuit,
+            "Sales Code": conditions_by_end.get((circuit, end.cnum, end.cavity), ""),
+        } for end in ends]
+        code_map = {build.part_number: set(build.codes) for build in builds}
+        _configurations, connections = plan_connections(pd.DataFrame(option_rows), code_map)
+        return [row for row in connections if row.get("Circuit Name") == circuit]
+    except Exception as exc:  # noqa: BLE001 — a chart must still be drawn
+        logger.info("Could not plan %s: %s", circuit, exc)
+        return None
+
+
+def _wire_from_plan(chart: Chart, circuit: str, ends: List[ChartRow],
+                    connections: List[dict], minimum: int) -> None:
+    by_key = {(end.cnum, end.cavity): end for end in ends}
+    used: set = set()
+    splice_cavity = 0
+
+    for row in connections:
+        name = str(row.get("Splice Name", ""))
+        expression = str(row.get("Sales Code", ""))
+        configuration = str(row.get("Configuration", ""))
+        left = (str(row.get("From CNUM", "")), str(row.get("From Pin", "")))
+        right = (str(row.get("To CNUM", "")), str(row.get("To Pin", "")))
+
+        if name and name in (left[0], right[0]):
+            chart.splices.setdefault(circuit, name)
+            device_key = right if left[0] == name else left
+            end = _end_for(chart, circuit, by_key, used, device_key,
+                           expression, configuration)
+            if end is None:
+                continue
+            branch = _branch_row(end, circuit, name,
+                                 _int_to_alpha_suffix(splice_cavity),
+                                 expression, configuration)
+            splice_cavity += 1
             _join(end, chart.family, branch)
             _join(branch, chart.family, end)
             chart.rows.append(branch)
+            continue
+
+        # a direct connection: two device ends, one wire
+        first = _end_for(chart, circuit, by_key, used, left, expression, configuration)
+        second = _end_for(chart, circuit, by_key, used, right, expression, configuration)
+        if first is not None and second is not None:
+            _join(first, chart.family, second)
+            _join(second, chart.family, first)
+
+
+def _end_for(chart: Chart, circuit: str, by_key: Dict[tuple, ChartRow],
+             used: set, key: tuple, expression: str, configuration: str):
+    """The chart row for one end of a planned wire.
+
+    An end already wired by another configuration gets a duplicate row: it
+    connects somewhere different there, and one row cannot carry two far
+    ends. Where the planner merged two configurations into one connection
+    there is only ever one row to make.
+    """
+    base = by_key.get(key)
+    if base is None:
+        return None
+    if key not in used:
+        used.add(key)
+        base.leg_expression = _leg_text(expression)
+        base.configuration = configuration
+        return base
+    duplicate = ChartRow(
+        circuit=base.circuit, cnum=base.cnum, cavity=base.cavity,
+        device=base.device, connector_pn=base.connector_pn,
+        expression=base.expression, harness_expression=base.harness_expression,
+        classification=base.classification, builds=list(base.builds),
+        leg_expression=_leg_text(expression), configuration=configuration)
+    chart.rows.append(duplicate)
+    return duplicate
 
 
 def _join(row: ChartRow, family: str, other: ChartRow) -> None:
@@ -695,6 +823,9 @@ FLAT_COLUMNS = [
     "Other End Device",
     # the inline's other half, in the next harness — a joint, not a wire
     "Mates With Harness", "Mates With CNUM", "Mates With Cavity",
+    # what has to be true for THIS wire to exist, and which of the circuit's
+    # configurations it belongs to
+    "Leg Sales Code", "Configuration",
     "Builds Carrying",
 ]
 
@@ -778,7 +909,9 @@ def write_flat_sheet(wb: Workbook, charts: Sequence[Chart],
             line[16] = row.mate_family
             line[17] = row.mate_cnum
             line[18] = row.mate_cavity
-            line[19] = len(row.builds)
+            line[19] = row.leg_expression
+            line[20] = row.configuration
+            line[21] = len(row.builds)
             carried = set(row.builds)
             for column, part in own:
                 if part in carried:
@@ -794,7 +927,7 @@ def write_flat_sheet(wb: Workbook, charts: Sequence[Chart],
                     ws.cell(line_no, column).fill = _NEVER_FILL
 
     widths = [18, 18, 9, 12, 9, 12, 8, 15, 22, 24, 24, 14, 18, 15, 9, 22,
-              18, 15, 9, 10]
+              18, 15, 9, 24, 12, 10]
     for offset, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(offset)].width = width
     for offset in range(len(FLAT_COLUMNS) + 1, len(header) + 1):

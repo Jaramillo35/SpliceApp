@@ -112,6 +112,19 @@ after an update.
   on the demo data.
 
 ### Added
+- **Splices now follow the harness's own options.** A circuit does not have
+  one topology: M34 in Door_Driver_2 reaches an LCF device, a LEQ/LEM device
+  and an inline, so the part number carrying LCF needs a splice while the one
+  without is a plain wire. The Circuit Chart groups a circuit's ends by which
+  part numbers carry them and plans each group with the same engine Splice
+  Generation uses, so the two surfaces cannot disagree.
+- **Every splice leg carries its own expression** — its end's condition and
+  its configuration's, together: `LCF&(LEM/LEQ)` for the LEQ/LEM device's leg,
+  `-LCF&(LEM/LEQ)` for the wire that replaces the splice where LCF is absent.
+  New chart columns: Leg Sales Code and Configuration.
+- An end wired differently in another configuration gets a row for each,
+  because one row cannot carry two far ends. Where two configurations reach
+  the same ends they are merged into one row and their expressions OR-ed.
 - **Admin page** (`/admin`): what version is running, what changed, whether each
   service answers, how much data there is, backups with one-click export and
   restore, the last few hundred log lines, and the feedback inbox.

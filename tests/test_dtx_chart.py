@@ -410,16 +410,24 @@ class TestSplices:
         assert cavities == ["A", "B", "C", "D"]
 
     def test_the_splice_wires_carry_what_their_branch_carries(self):
+        """Every splice leg pairs with a device end and carries its builds.
+
+        The counts are no longer equal: a part number that does not carry the
+        conditioned end has two ends, not three, so that configuration is a
+        plain wire and its ends appear again for it.
+        """
         rows = self._rows(3)
         rows[0] = CircuitRow(harness_family="IP", circuit="CKT_BRANCH",
                              sales_code="AAA", cnum="C0", pin="1")
         c = _by_family(chart.build_charts(_entries(rows, families=("IP",)),
                                           rows))["IP"]
-        device_ends = [r for r in c.rows if not r.is_splice]
         splice_ends = [r for r in c.rows if r.is_splice]
-        assert len(splice_ends) == len(device_ends)
-        assert {tuple(r.builds) for r in splice_ends} == \
-               {tuple(r.builds) for r in device_ends}
+        by_key = {(r.cnum, r.cavity): r for r in c.rows if not r.is_splice}
+        assert splice_ends, "the AAA part number carries all three ends"
+        for leg in splice_ends:
+            partner = by_key.get((leg.other_cnum, leg.other_cavity))
+            assert partner is not None, f"{leg.cnum}/{leg.cavity} has no device end"
+            assert tuple(leg.builds) == tuple(partner.builds)
 
     def test_cavities_continue_past_Z_rather_than_truncating(self):
         """A real ground net in 2028RU X2_A has 269 ends. Stopping at Z would
@@ -448,6 +456,119 @@ class TestSplices:
         _harns, ends = read_circuit_summary(data, "spliced.xlsx")
         assert len(ends) == 8, "four device ends and four splice ends"
         assert sum(1 for e in ends if e.connector == "SCKT_BRANCHA") == 4
+
+
+class TestPerConfigurationWiring:
+    """A circuit's topology follows the harness's options, not its end count.
+
+    The case this was built for, from Door_Driver_2: M34 reaches an LCF
+    device, a LEQ/LEM device and an inline. The part number carrying LCF has
+    all three ends and needs a splice; the one without has two and is a plain
+    wire. One circuit, two topologies, and each leg says which.
+    """
+
+    def _door(self):
+        from splice.inline.model import Build, Harness
+        return Harness(name="Door_Driver_2", def_id="11500", builds=[
+            Build("68000001AA", codes=frozenset({"LCF", "LEQ", "LEM"})),
+            Build("68000002AA", codes=frozenset({"LEQ", "LEM"}))],
+            complexity_codes={"LCF", "LEQ", "LEM"})
+
+    def _rows(self):
+        return [
+            CircuitRow(harness_family="Door_Driver_2", circuit="M34",
+                       sales_code="LCF", cnum="D2681A", pin="2"),
+            CircuitRow(harness_family="Door_Driver_2", circuit="M34",
+                       sales_code="LEQ/LEM", cnum="D2261A", pin="2"),
+            CircuitRow(harness_family="Door_Driver_2", circuit="M34",
+                       sales_code="", cnum="Y611A", pin="1"),
+        ]
+
+    def _chart(self, rows=None, door=None):
+        from splice.dtxcircuits import analyze_harness
+        rows = rows if rows is not None else self._rows()
+        door = door or self._door()
+        entry = report.Entry(label="Door_Driver_2", family="Door_Driver_2",
+                             filename="dd.xlsm", complexity=door,
+                             analysis=analyze_harness(rows, door,
+                                                      harness_name="Door_Driver_2"))
+        return chart.build_charts([entry], rows)[0]
+
+    def test_the_splice_exists_only_where_all_three_ends_do(self):
+        c = self._chart()
+        legs = [r for r in c.rows if r.is_splice]
+        assert len(legs) == 3
+        assert all(r.leg_expression.startswith("LCF") for r in legs)
+
+    def test_each_leg_has_its_own_calculated_expression(self):
+        """Not the circuit's condition — the leg's. The LEQ/LEM device's leg
+        exists where LEQ or LEM AND LCF; the LCF device's leg needs only LCF."""
+        c = self._chart()
+        legs = {r.other_cnum: r.leg_expression for r in c.rows if r.is_splice}
+        assert legs["D2261A"] == "LCF&(LEM/LEQ)"
+        assert legs["D2681A"] == "LCF"
+        assert legs["Y611A"] == "LCF"
+
+    def test_the_part_number_without_the_option_is_a_plain_wire(self):
+        c = self._chart()
+        direct = [r for r in c.rows
+                  if not r.is_splice and r.configuration == "CFG002"]
+        assert {r.cnum for r in direct} == {"D2261A", "Y611A"}
+        assert all(r.leg_expression == "-LCF&(LEM/LEQ)" for r in direct)
+        pair = {(r.cnum, r.other_cnum) for r in direct}
+        assert pair == {("D2261A", "Y611A"), ("Y611A", "D2261A")}
+
+    def test_an_end_wired_differently_per_option_gets_a_row_for_each(self):
+        """D2261A goes to the splice on one part number and straight to the
+        inline on the other. One row cannot carry two far ends."""
+        c = self._chart()
+        d2261 = [r for r in c.rows if r.cnum == "D2261A"]
+        assert len(d2261) == 2
+        assert {r.other_cnum for r in d2261} == {"SM34A", "Y611A"}
+        assert {r.configuration for r in d2261} == {"CFG001", "CFG002"}
+
+    def test_an_end_wired_the_same_everywhere_keeps_one_row(self):
+        """Both part numbers carry all three ends, so there is one splice and
+        no configuration to tell apart — and so no duplicate rows."""
+        door = self._door()
+        from splice.inline.model import Build
+        door.builds[1] = Build("68000002AA", codes=frozenset({"LCF", "LEQ", "LEM"}))
+        c = self._chart(door=door)
+        for cnum in ("D2261A", "D2681A", "Y611A"):
+            assert len([r for r in c.rows if r.cnum == cnum]) == 1, cnum
+        legs = [r for r in c.rows if r.is_splice]
+        assert len(legs) == 3, "one splice, three legs, not two configurations"
+
+    def test_a_merged_leg_states_both_options_in_one_row(self):
+        """When two configurations reach the same ends the planner merges
+        them, so the expression covers both rather than repeating the row."""
+        c = self._chart()
+        legs = [r for r in c.rows if r.is_splice and r.other_cnum == "D2681A"]
+        assert len(legs) == 1
+        # LCF alone: the leg exists on every part number that has the device
+        assert legs[0].leg_expression == "LCF"
+
+    def test_without_a_complexity_file_it_falls_back_to_one_splice(self):
+        from splice.dtxcircuits import analyze_harness
+        rows = self._rows()
+        entry = report.Entry(label="Door_Driver_2", family="Door_Driver_2",
+                             filename="dd.xlsm", complexity=None,
+                             analysis=analyze_harness(rows, None,
+                                                      harness_name="Door_Driver_2"))
+        built = chart.build_charts([entry], rows)[0]
+        assert built.splices == {"M34": "SM34A"}
+        assert len([r for r in built.rows if r.is_splice]) == 3
+
+    def test_the_export_carries_the_leg_expression(self):
+        c = self._chart()
+        wb = load_workbook(io.BytesIO(chart.build_chart_workbook([c])))
+        ws = wb[chart.FLAT_SHEET]
+        headers = [cell.value for cell in ws[2]]
+        assert "Leg Sales Code" in headers and "Configuration" in headers
+        leg = headers.index("Leg Sales Code")
+        values = {row[leg] for row in ws.iter_rows(min_row=3, values_only=True)}
+        assert "LCF&(LEM/LEQ)" in values
+        assert "-LCF&(LEM/LEQ)" in values
 
 
 class TestOtherEnd:

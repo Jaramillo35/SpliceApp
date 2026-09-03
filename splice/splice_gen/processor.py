@@ -563,15 +563,25 @@ def _extract_codes_from_expression(expression: str) -> set[str]:
     return parse_or_false(expression).symbols
 
 
-def _candidate_codes_for_configuration(endpoints: list[Endpoint], fallback_codes: set[str]) -> set[str]:
-    endpoint_codes: set[str] = set()
-    for endpoint in endpoints:
-        endpoint_codes.update(_extract_codes_from_expression(endpoint.sales_code))
+def _candidate_codes_for_configuration(endpoints: list[Endpoint],
+                                       circuit_codes: set[str]) -> set[str]:
+    """Every sales code the circuit uses anywhere in this harness.
 
-    scoped_codes = {code for code in endpoint_codes if code and code not in conventions.UNIVERSAL_ALONE}
-    if scoped_codes:
-        return scoped_codes
-    return {code for code in fallback_codes if code and code not in conventions.UNIVERSAL_ALONE}
+    It used to be only the codes named on the endpoints *this* configuration
+    happens to contain, which made the discriminating code unreachable
+    whenever a configuration was defined by a code being ABSENT. M34 in
+    Door_Driver_2 is the case: the configuration without LCF holds only the
+    LEQ/LEM device and the inline, so LCF was not a candidate and the
+    generator emitted "LEM&LEQ" — an expression that also matches the LCF
+    part number. Validation rule 6 caught it and nothing acted on it.
+
+    The circuit's own codes are the right scope: they are the options that
+    decide which of its ends exist on which part number.
+    """
+    codes = set(circuit_codes)
+    for endpoint in endpoints:
+        codes.update(_extract_codes_from_expression(endpoint.sales_code))
+    return {code for code in codes if code and code not in conventions.UNIVERSAL_ALONE}
 
 
 def _to_sales_expr_from_sympy(expr: Any) -> str:
@@ -993,6 +1003,80 @@ def _choose_anchor_endpoint_with_preference(
     return _choose_anchor_endpoint(endpoints)
 
 
+def _leg_expression(endpoint_expression: str, configuration_expression: str) -> str:
+    """What must hold for one leg of a connection to exist.
+
+    Two things at once: the end's own condition, and the configuration the
+    connection belongs to. A leg used to carry only the first, so the splice
+    leg to D2261A on M34 read "LEQ/LEM" — true on a part number that has no
+    splice at all, because that part number lacks LCF and the circuit runs
+    straight through. The honest expression is "(LEQ/LEM)&LCF".
+
+    The result is minimised, so a leg whose own condition already implies its
+    configuration keeps the short form rather than repeating itself.
+    """
+    parts = [text.strip() for text in (endpoint_expression, configuration_expression)
+             if text and text.strip() and text.strip() != "TRUE"]
+    if not parts:
+        return "TRUE"
+    if len(parts) == 1:
+        combined = parts[0]
+    else:
+        combined = "&".join(f"({text})" for text in parts)
+    try:
+        return boolmin.minimize(combined)
+    except Exception:  # noqa: BLE001 - never fail a run over a display form
+        return combined
+
+
+def _merge_duplicate_connections(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """One row per physical connection, however many configurations reach it.
+
+    Two configurations can arrive at the same ends — the same splice to the
+    same device and cavity. That is one wire in the harness, not two, so the
+    rows are merged and their expressions OR-ed: the connection exists under
+    either configuration. Merging also lets the minimiser collapse the pair,
+    so a leg present in every configuration comes back as the circuit's own
+    condition instead of a list of alternatives.
+    """
+    merged: dict[tuple, dict[str, str]] = {}
+    order: list[tuple] = []
+    for row in rows:
+        key = (row.get("Circuit Name", ""), row.get("Connection Type", ""),
+               row.get("Splice Name", ""), row.get("From CNUM", ""),
+               row.get("From Pin", ""), row.get("To CNUM", ""), row.get("To Pin", ""))
+        if key not in merged:
+            merged[key] = dict(row)
+            order.append(key)
+            continue
+        kept = merged[key]
+        kept["Sales Code"] = _or_expressions(kept.get("Sales Code", ""),
+                                             row.get("Sales Code", ""))
+        kept["Configuration"] = ", ".join(
+            dict.fromkeys(str(kept.get("Configuration", "")).split(", ")
+                          + [str(row.get("Configuration", ""))]))
+        kept["Target Harness PNs"] = ", ".join(sorted(dict.fromkeys(
+            [p.strip() for p in str(kept.get("Target Harness PNs", "")).split(",") if p.strip()]
+            + [p.strip() for p in str(row.get("Target Harness PNs", "")).split(",") if p.strip()])))
+    return [merged[key] for key in order]
+
+
+def _or_expressions(left: str, right: str) -> str:
+    """Either condition. TRUE absorbs; the result is minimised."""
+    parts = [text.strip() for text in (left, right) if text and text.strip()]
+    if not parts:
+        return "TRUE"
+    if any(text == "TRUE" for text in parts):
+        return "TRUE"
+    if len(set(parts)) == 1:
+        return parts[0]
+    combined = "/".join(f"({text})" for text in dict.fromkeys(parts))
+    try:
+        return boolmin.minimize(combined)
+    except Exception:  # noqa: BLE001
+        return combined
+
+
 def generate_direct_connections(
     configuration: Configuration,
     circuit_allocator: CircuitNameAllocator,
@@ -1015,7 +1099,9 @@ def generate_direct_connections(
             from_pin=source.pin,
             to_cnum=anchor.cnum,
             to_pin=anchor.pin,
-            sales_code=configuration.generated_sales_code,
+            sales_code=_leg_expression(
+                _or_expressions(source.sales_code, anchor.sales_code),
+                configuration.generated_sales_code),
             target_harness_pns=configuration.target_harness_pns,
             can_mode=False,
         )
@@ -1064,7 +1150,8 @@ def generate_splices(
                 from_pin=endpoint.pin,
                 to_cnum=splice_name,
                 to_pin="",
-                sales_code=endpoint.sales_code or "TRUE",
+                sales_code=_leg_expression(endpoint.sales_code,
+                                           configuration.generated_sales_code),
                 target_harness_pns=configuration.target_harness_pns,
                 can_mode=False,
             )
@@ -1081,7 +1168,8 @@ def generate_splices(
             from_pin="",
             to_cnum=anchor.cnum,
             to_pin=anchor.pin,
-            sales_code=configuration.generated_sales_code,
+            sales_code=_leg_expression(anchor.sales_code,
+                                       configuration.generated_sales_code),
             target_harness_pns=configuration.target_harness_pns,
             can_mode=False,
         )
@@ -1607,6 +1695,73 @@ def export_excel(
     return output.getvalue()
 
 
+def plan_connections(
+    option_df: pd.DataFrame,
+    harness_code_map: dict[str, set[str]],
+    can_mode: bool = False,
+) -> tuple[list[Configuration], list[dict[str, str]]]:
+    """Work out how each circuit is wired, per option the complexity supports.
+
+    This is the part of the analysis the Circuit Chart also needs, so it lives
+    on its own rather than inside the workbook run.
+
+    For every circuit, each part number of the harness is asked which of that
+    circuit's ends it actually carries — an end is present where its own sales
+    code holds for that part number's codes. Part numbers that end up with the
+    same set of ends form one configuration, and the expression selecting
+    exactly those part numbers is built from the codes the circuit uses in
+    this harness. Two ends is a wire; three or more meet at a splice.
+
+    M34 in Door_Driver_2 is the shape this exists for: an LCF device, a
+    LEQ/LEM device and an inline. The part number with LCF carries all three
+    and needs a splice; the one without carries two and is a plain wire. One
+    circuit, two topologies, and each leg's expression says which.
+    """
+    _device_eval_df, presence_matrix = build_harness_presence_matrix(
+        harness_code_map, option_df)
+    presence_matrix = {pn: circuits for pn, circuits in presence_matrix.items() if circuits}
+    if not presence_matrix:
+        return [], []
+
+    circuit_codes: dict[str, set[str]] = {}
+    for _, row in option_df.iterrows():
+        circuit_codes.setdefault(row["Circuit"], set()).update(
+            _extract_codes_from_expression(row["Sales Code"]))
+
+    configurations = group_configurations(presence_matrix)
+    for cfg in configurations:
+        cfg.generated_sales_code = generate_sales_code_expression(
+            cfg.target_harness_pns,
+            harness_code_map,
+            candidate_codes=_candidate_codes_for_configuration(
+                cfg.endpoints, circuit_codes.get(cfg.circuit_name, set())),
+        )
+        cfg.generated_sales_code_display = _simplify_sales_code_for_display(
+            cfg.generated_sales_code)
+
+    splice_allocators: dict[str, NameAllocator] = {}
+    circuit_allocator = CircuitNameAllocator()
+    connection_rows: list[dict[str, str]] = []
+    for cfg in configurations:
+        if len(cfg.endpoints) == 2:
+            cfg.topology_type = "Direct"
+            connection_rows.extend(generate_direct_connections(cfg, circuit_allocator))
+        elif len(cfg.endpoints) >= 3:
+            cfg.topology_type = "Splice"
+            if can_mode:
+                connection_rows.extend(generate_can_splice_connections(
+                    cfg, splice_allocators, circuit_allocator))
+            else:
+                connection_rows.extend(generate_splices(
+                    cfg, splice_allocators, circuit_allocator))
+
+    connection_rows = _harmonize_shared_splice_trunk_rows(
+        connection_rows, harness_code_map, circuit_codes)
+    # Two configurations can arrive at the same ends; that is one wire.
+    connection_rows = _merge_duplicate_connections(connection_rows)
+    return configurations, connection_rows
+
+
 def _run_analysis_core(
     input_excel_path: str | Path,
     harness_code_map: dict[str, set[str]],
@@ -1615,83 +1770,14 @@ def _run_analysis_core(
     can_mode: bool = False,
 ) -> dict[str, Any]:
 
-    device_eval_df, presence_matrix = build_harness_presence_matrix(harness_code_map, option_df)
-
-    # Process all circuits
-    configurations: list[Configuration] = []
-    connection_rows: list[dict[str, str]] = []
-    splice_allocators: dict[str, NameAllocator] = {}
-    circuit_allocator = CircuitNameAllocator()
-
-    # Build circuit codes for all circuits
+    device_eval_df, _presence = build_harness_presence_matrix(harness_code_map, option_df)
+    configurations, connection_rows = plan_connections(
+        option_df, harness_code_map, can_mode=can_mode)
     circuit_codes: dict[str, set[str]] = {}
     for _, row in option_df.iterrows():
-        circuit_codes.setdefault(row["Circuit"], set()).update(_extract_codes_from_expression(row["Sales Code"]))
+        circuit_codes.setdefault(row["Circuit"], set()).update(
+            _extract_codes_from_expression(row["Sales Code"]))
 
-    # Every circuit goes through the same path. There used to be a branch here
-    # that built four fixed topologies for a circuit named "D454" — six
-    # hardcoded connector names, five hardcoded sales codes and a literal
-    # table of connections — gated on nothing but that name appearing in the
-    # file, so any programme reusing it silently received them.
-    # Remove empty harness entries
-    presence_matrix = {pn: circuits for pn, circuits in presence_matrix.items() if circuits}
-    
-    if presence_matrix:
-        generic_configs = group_configurations(presence_matrix)
-        
-        for cfg in generic_configs:
-            cfg_candidate_codes = _candidate_codes_for_configuration(
-                cfg.endpoints,
-                circuit_codes.get(cfg.circuit_name, set()),
-            )
-            cfg.generated_sales_code = generate_sales_code_expression(
-                cfg.target_harness_pns,
-                harness_code_map,
-                candidate_codes=cfg_candidate_codes,
-            )
-            cfg.generated_sales_code_display = _simplify_sales_code_for_display(cfg.generated_sales_code)
-
-        for cfg in generic_configs:
-            if len(cfg.endpoints) == 2:
-                cfg.topology_type = "Direct"
-                connection_rows.extend(generate_direct_connections(cfg, circuit_allocator))
-            elif len(cfg.endpoints) >= 3:
-                cfg.topology_type = "Splice"
-                if can_mode:
-                    connection_rows.extend(generate_can_splice_connections(cfg, splice_allocators, circuit_allocator))
-                else:
-                    connection_rows.extend(generate_splices(cfg, splice_allocators, circuit_allocator))
-
-        configurations.extend(generic_configs)
-
-    # If no circuits were processed, use full generic fallback
-    if not configurations:
-        configurations = group_configurations(presence_matrix)
-
-        for cfg in configurations:
-            cfg_candidate_codes = _candidate_codes_for_configuration(
-                cfg.endpoints,
-                circuit_codes.get(cfg.circuit_name, set()),
-            )
-            cfg.generated_sales_code = generate_sales_code_expression(
-                cfg.target_harness_pns,
-                harness_code_map,
-                candidate_codes=cfg_candidate_codes,
-            )
-            cfg.generated_sales_code_display = _simplify_sales_code_for_display(cfg.generated_sales_code)
-
-        for cfg in configurations:
-            if len(cfg.endpoints) == 2:
-                cfg.topology_type = "Direct"
-                connection_rows.extend(generate_direct_connections(cfg, circuit_allocator))
-            elif len(cfg.endpoints) >= 3:
-                cfg.topology_type = "Splice"
-                if can_mode:
-                    connection_rows.extend(generate_can_splice_connections(cfg, splice_allocators, circuit_allocator))
-                else:
-                    connection_rows.extend(generate_splices(cfg, splice_allocators, circuit_allocator))
-
-    connection_rows = _harmonize_shared_splice_trunk_rows(connection_rows, harness_code_map, circuit_codes)
     generated_connections_df = pd.DataFrame(connection_rows)
 
     # Validate CAN mode if enabled

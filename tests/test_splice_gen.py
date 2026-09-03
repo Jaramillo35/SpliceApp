@@ -251,26 +251,28 @@ class TestRunAnalysis:
         row = cfg[cfg["Circuit Name"] == "CKT_MIXED"].iloc[0]
         assert row["Target Harness PNs"] == "99000002AA"
 
-    def test_rule_6_reports_the_scoped_candidate_limitation(self, analysis):
-        """A separate, pre-existing defect — characterised, not fixed.
+    def test_every_generated_expression_targets_exactly_what_it_claims(self, analysis):
+        """Validation rule 6, which used to fail 3 of 8 on this fixture.
 
-        A configuration may only use the sales codes named on its own
-        endpoints. Where the part numbers it must separate differ by a code
-        outside that set, no exact expression is reachable and a wider one is
-        emitted: CKT_WIDE claims 99000001AA but 'AAA&-CCC' also matches
-        99000002AA, which needs 'AAA&-BBB' to exclude. The engine notices —
-        this rule is how — but only in a sheet.
-
-        Present before this batch and unchanged by it. Widening the candidate
-        set is a design decision with output consequences, so it is reported
-        rather than quietly taken.
+        A configuration could only use the codes named on its own endpoints,
+        so where two part numbers differed by a code outside that set no exact
+        expression was reachable and a wider one was emitted — 'AAA&-CCC' for
+        a configuration that also matched 99000002AA. Candidates are now the
+        codes the circuit uses anywhere in the harness, which is what decides
+        its ends in the first place.
         """
         report = analysis["validation_report_df"]
         rule6 = report[report["Rule"].str.startswith("6.")].iloc[0]
-        assert rule6["Status"] == "FAIL"
-        assert "Matched 5 of 8" in rule6["Details"], (
-            "if this changed, the limitation moved — re-read it before "
-            "updating the number")
+        assert rule6["Status"] == "PASS", rule6["Details"]
+
+    def test_it_holds_for_every_configuration_independently(self, analysis):
+        cfg = analysis["configurations_df"]
+        code_map = fx.harness_code_map()
+        for row in cfg.to_dict("records"):
+            expression = row["Generated Sales Code"]
+            claimed = {p.strip() for p in str(row["Target Harness PNs"]).split(",") if p.strip()}
+            matched = set(evaluate_expression_against_all_pns(expression, code_map))
+            assert matched == claimed, f"{row['Configuration ID']} {expression!r}"
 
     def test_an_in_memory_option_frame_gives_the_same_answer(self, workbook, analysis):
         other = run_analysis_from_option_df(workbook, fx.option_frame())
