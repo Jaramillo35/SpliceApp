@@ -39,6 +39,9 @@ SERVICES = [
     ("Engine API", "http://splice-api:8000/health", "FastAPI"),
 ]
 
+FEEDBACK_COLUMNS = {"when": "When", "area": "Area", "who": "From",
+                    "status": "Status", "text": "Description"}
+
 
 def probe(url: str, timeout: float = 1.5) -> tuple[bool, str]:
     """Is something answering at ``url``? Never raises."""
@@ -89,15 +92,15 @@ async def page() -> None:
                        info.source)
                 if info.dirty:
                     c.chip("review", "uncommitted changes in the working tree")
-            with ui.element("div").classes("grid grid-cols-2 md:grid-cols-4 gap-3 mt-2"):
-                _fact("Commit", info.sha or "—", mono=True)
-                _fact("Branch", info.branch or "—", mono=True)
-                _fact("Built", info.built or "—", mono=True)
-                _fact("Up for", uptime_text(time.time() - STARTED))
+            with c.kpi_strip():
+                c.kpi(info.sha or "—", "Commit")
+                c.kpi(info.branch or "—", "Branch")
+                c.kpi(info.built or "—", "Built")
+                c.kpi(uptime_text(time.time() - STARTED), "Up for")
             if info.source == version.FROM_PACKAGE:
-                ui.label("No build stamp and no git checkout: this copy cannot say "
-                         "which commit it is. Rebuild with the Start or Update "
-                         "script, which records it.").classes("text-xs sx-muted mt-2")
+                c.note("review", "No build stamp and no git checkout: this copy "
+                                 "cannot say which commit it is. Rebuild with the "
+                                 "Start or Update script, which records it.")
 
         # ---------------------------------------------------------- changelog
         sections = changelog_sections()
@@ -116,49 +119,39 @@ async def page() -> None:
             # is of this very server. A synchronous request from inside its
             # own loop can never be answered, so it timed out every time and
             # reported the page you were looking at as down.
-            results = [(name, kind, await run.io_bound(probe, url))
-                       for name, url, kind in SERVICES]
-            with ui.element("div").classes("grid grid-cols-1 md:grid-cols-3 gap-3"):
-                for name, kind, (ok, detail) in results:
-                    with ui.element("div").classes("rounded px-3 py-2") \
-                            .style(f"background:{theme.SURFACE_2};border:1px solid "
-                                   f"{theme.STATUS['ok' if ok else 'blocker']}55"):
-                        with ui.row().classes("items-center gap-2"):
-                            ui.icon("check_circle" if ok else "error").style(
-                                f"color:{theme.STATUS['ok' if ok else 'blocker']}")
-                            ui.label(name).classes("font-semibold text-sm")
-                        ui.label(f"{kind} · {'answering' if ok else 'not answering'}"
-                                 f" · {detail}").classes("text-xs sx-muted sx-mono")
+            results = [(name, url, await run.io_bound(probe, url))
+                       for name, url, _kind in SERVICES]
+            with c.kpi_strip():
+                for name, url, (ok, detail) in results:
+                    c.kpi("answering" if ok else "not answering", name,
+                          kind="ok" if ok else "blocker", hint=f"{url} · {detail}")
 
         with c.card("Services", "Whether each part of the toolkit answers right now."):
             await services_view()
             ui.button("Check again", icon="refresh",
-                      on_click=services_view.refresh).props("outline dense")
+                      on_click=services_view.refresh).props("outline dense no-caps")
 
         # --------------------------------------------------------------- data
         @ui.refreshable
         def data_view() -> None:
             backups = backup.list_backups()
-            with ui.element("div").classes("grid grid-cols-2 md:grid-cols-4 gap-3"):
-                _fact("Data directory", str(DATA_DIR), mono=True)
-                _fact("Live data", backup.human_size(backup.data_size()))
-                _fact("Backups kept", str(len(backups)))
-                _fact("Last backup",
-                      backups[0].created.strftime("%Y-%m-%d %H:%M") if backups else "never",
-                      warn=not backups)
+            with c.kpi_strip():
+                c.kpi(DATA_DIR.name, "Data directory", hint=str(DATA_DIR))
+                c.kpi(backup.human_size(backup.data_size()), "Live data")
+                c.kpi(len(backups), "Backups kept")
+                c.kpi(backups[0].created.strftime("%Y-%m-%d %H:%M") if backups else "never",
+                      "Last backup", kind=None if backups else "review")
 
             if backups:
-                ui.label("BACKUPS").classes("sx-eyebrow mt-3")
+                ui.label("Backups").classes("sx-eyebrow mt-3")
                 for item in backups:
-                    with ui.row().classes("items-center gap-3 w-full py-1") \
+                    with ui.row().classes("items-center gap-3 w-full py-1 no-wrap") \
                             .style(f"border-bottom:1px solid {theme.LINE}"):
                         ui.label(item.created.strftime("%Y-%m-%d %H:%M:%S")) \
                             .classes("sx-mono text-sm")
-                        ui.label(item.size_text).classes("text-xs sx-muted")
+                        ui.label(item.size_text).classes("sx-caption")
                         ui.space()
-                        ui.button("Download", icon="download",
-                                  on_click=lambda i=item: ui.download(i.path)) \
-                            .props("flat dense no-caps")
+                        c.download(item.name, lambda p=item.path: p.read_bytes())
                         ui.button("Restore", icon="settings_backup_restore",
                                   on_click=lambda i=item: _confirm_restore(i)) \
                             .props("flat dense no-caps color=negative")
@@ -171,7 +164,7 @@ async def page() -> None:
 
         def _confirm_restore(item: backup.Backup) -> None:
             with ui.dialog() as dialog, ui.card().classes("w-[30rem] sx-card"):
-                ui.label("Restore this backup?").classes("text-base font-bold")
+                ui.label("Restore this backup?").classes("sx-section")
                 ui.label(f"{item.created:%Y-%m-%d %H:%M:%S} · {item.size_text}") \
                     .classes("sx-mono text-sm")
                 ui.label("The current data is replaced by the archive. What is "
@@ -179,7 +172,7 @@ async def page() -> None:
                          "undone — but anything entered since that backup will "
                          "not be visible until it is.").classes("text-sm sx-muted")
                 with ui.row().classes("justify-end w-full gap-2"):
-                    ui.button("Cancel", on_click=dialog.close).props("flat")
+                    ui.button("Cancel", on_click=dialog.close).props("flat no-caps")
 
                     async def go() -> None:
                         dialog.close()
@@ -191,18 +184,18 @@ async def page() -> None:
                                       type="info", multi_line=True)
                             data_view.refresh()
 
-                    ui.button("Restore", on_click=go).props("unelevated color=negative")
+                    ui.button("Restore", on_click=go).props("unelevated no-caps color=negative")
             dialog.open()
 
         with c.card("Data", "Everything the toolkit cannot rebuild lives here."):
             data_view()
-            with ui.row().classes("gap-2 mt-2"):
+            with ui.row().classes("gap-3 mt-2 items-center"):
                 ui.button("Back up now", icon="save",
-                          on_click=_make_backup).props("unelevated dense")
+                          on_click=_make_backup).props("unelevated dense no-caps")
                 ui.label(f"The newest {backup.KEEP} are kept. Backups live inside "
                          "the data directory, so they survive a rebuild — but not "
                          "a deleted volume. Download one somewhere else too.") \
-                    .classes("text-xs sx-muted self-center")
+                    .classes("sx-caption")
 
         # --------------------------------------------------------------- logs
         @ui.refreshable
@@ -210,14 +203,15 @@ async def page() -> None:
             text = tail(LOG_DIR)
             ui.code(text or "(empty)", language=None) \
                 .classes("w-full text-xs").style("max-height:24rem;overflow:auto")
+
+            def copy() -> None:
+                ui.clipboard.write(text)
+                ui.notify("Copied", type="positive")
+
             with ui.row().classes("gap-2"):
                 ui.button("Refresh", icon="refresh", on_click=log_view.refresh) \
-                    .props("outline dense")
-                ui.button("Copy for a bug report", icon="content_copy",
-                          on_click=lambda: (
-                              ui.run_javascript(
-                                  f"navigator.clipboard.writeText({text!r})"),
-                              ui.notify("Copied", type="positive"))) \
+                    .props("outline dense no-caps")
+                ui.button("Copy for a bug report", icon="content_copy", on_click=copy) \
                     .props("outline dense no-caps")
 
         with c.card("Logs", "The last few hundred lines. Copy them into a bug report "
@@ -227,15 +221,6 @@ async def page() -> None:
         # ----------------------------------------------------------- feedback
         with c.card("Feedback inbox", "Tickets filed from the Feedback button."):
             _feedback_table()
-
-
-def _fact(label: str, value: str, mono: bool = False, warn: bool = False) -> None:
-    with ui.element("div").classes("rounded px-3 py-2") \
-            .style(f"background:{theme.SURFACE_2};border:1px solid "
-                   f"{theme.STATUS['review'] if warn else theme.LINE}"):
-        ui.label(value).classes("text-sm font-semibold break-all"
-                                + (" sx-mono" if mono else ""))
-        ui.label(label).classes("text-xs sx-muted")
 
 
 def _feedback_table() -> None:
@@ -249,7 +234,7 @@ def _feedback_table() -> None:
         c.empty("No tickets yet.", icon="inbox")
         return
     rows = []
-    for t in sorted(tickets, key=lambda t: str(t.get("created_at", "")), reverse=True)[:50]:
+    for t in sorted(tickets, key=lambda t: str(t.get("created_at", "")), reverse=True):
         rows.append({
             "when": str(t.get("created_at", ""))[:16],
             "area": t.get("area") or t.get("workflow") or "",
@@ -257,12 +242,6 @@ def _feedback_table() -> None:
             "status": t.get("status", ""),
             "text": (t.get("description") or "")[:140],
         })
-    ui.table(rows=rows, columns=[
-        {"name": "when", "label": "When", "field": "when", "align": "left", "sortable": True},
-        {"name": "area", "label": "Area", "field": "area", "align": "left", "sortable": True},
-        {"name": "who", "label": "From", "field": "who", "align": "left"},
-        {"name": "status", "label": "Status", "field": "status", "align": "left"},
-        {"name": "text", "label": "Description", "field": "text", "align": "left"},
-    ], pagination=10).classes("w-full").props("dense flat")
-    ui.label(f"{len(tickets)} ticket(s) in total").classes("text-xs sx-muted")
-
+    c.frame_table(rows, columns=list(FEEDBACK_COLUMNS), labels=FEEDBACK_COLUMNS,
+                  cap=200, pagination=10, mono=("when",))
+    ui.label(f"{len(tickets)} ticket(s) in total").classes("sx-caption")

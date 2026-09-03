@@ -36,8 +36,8 @@ def page() -> None:
             path = DOWNLOADS / filename
             with c.card(title, desc):
                 if path.exists():
-                    c.download_button(filename, lambda p=path: p.read_bytes())
+                    c.download(filename, lambda p=path: p.read_bytes())
                 else:
-                    c.chip("review", f"{filename} is not in this build — "
-                                     "get it from the project's Releases page, "
-                                     "or drop it into assets/downloads")
+                    c.note("review", f"{filename} is not in this build — get it "
+                                     "from the project's Releases page, or drop "
+                                     "it into assets/downloads")

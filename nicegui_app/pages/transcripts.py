@@ -1,7 +1,9 @@
 """Meeting Transcripts — NiceGUI page over splice.transcripts.recorder.
 
 The Recorder is process-wide on purpose (recording must survive navigation);
-the page is a live remote control with a 1s status timer.
+the page is a live remote control with a 1s status timer. Because it is one
+per process, the page says so: what it shows is the state of this machine's
+recorder, not something shared between users of the toolkit.
 """
 
 from __future__ import annotations
@@ -11,10 +13,12 @@ from datetime import datetime
 from nicegui import ui
 
 from nicegui_app import components as c
-from nicegui_app import theme
 from splice.transcripts import recorder as rec
 
 _recorder = rec.Recorder()  # one per process, like the Streamlit cache_resource
+
+PER_MACHINE = ("The recorder runs on this machine only — recordings and this "
+               "status are not shared with other users of the toolkit.")
 
 
 @ui.page("/transcripts")
@@ -27,6 +31,7 @@ def page() -> None:
         consent_dialog = _consent_dialog(lambda cs: _start_named(cs, render))
 
         with c.card("Recorder"):
+            c.note("info", PER_MACHINE)
             if not rec.CAPTURE_AVAILABLE:
                 c.chip("info", "Capture runs on the Windows install — this "
                                "machine can browse transcripts below")
@@ -36,19 +41,19 @@ def page() -> None:
             with ui.row().classes("gap-2"):
                 btn_start = ui.button("Start recording", icon="fiber_manual_record",
                                       on_click=lambda: (_recorder.start(), render())) \
-                    .props("unelevated")
+                    .props("unelevated no-caps")
                 btn_named = ui.button("Record with names…", icon="badge",
                                       on_click=consent_dialog.open) \
-                    .props("outline")
+                    .props("outline dense no-caps")
                 btn_pause = ui.button("Pause", icon="pause",
                                       on_click=lambda: (_recorder.pause(), render())) \
-                    .props("outline")
+                    .props("outline dense no-caps")
                 btn_resume = ui.button("Resume", icon="play_arrow",
                                        on_click=lambda: (_recorder.resume(), render())) \
-                    .props("outline")
+                    .props("outline dense no-caps")
                 btn_finish = ui.button("Finish transcript", icon="stop",
                                        on_click=lambda: (_recorder.stop(), render())) \
-                    .props("outline")
+                    .props("outline dense no-caps")
 
             def render() -> None:
                 s = _recorder.status()
@@ -70,8 +75,7 @@ def page() -> None:
                                  f"→ {s['output'].rsplit('/', 1)[-1]}") \
                             .classes("text-sm sx-muted")
                     if state == "error":
-                        ui.label(s["error"]).classes("text-sm") \
-                            .style(f"color:{c.theme.STATUS['blocker']}")
+                        c.note("blocker", s["error"])
                 with tail_box:
                     for line in s["tail"][-8:]:
                         ui.label(line).classes("text-xs sx-mono sx-muted")
@@ -88,7 +92,7 @@ def page() -> None:
         with c.card("Saved transcripts", f"Folder: {rec.TRANSCRIPTS_DIR}"):
             with ui.row().classes("gap-2"):
                 ui.button("Open transcripts folder", icon="folder_open",
-                          on_click=lambda: _open_folder()).props("outline dense")
+                          on_click=lambda: _open_folder()).props("outline dense no-caps")
 
             @ui.refreshable
             def listing() -> None:
@@ -97,13 +101,16 @@ def page() -> None:
                     c.empty("No transcripts yet. Start a recording during a "
                             "Teams meeting with Live Captions on.")
                     return
+                if len(files) > 1:
+                    c.downloads([(p.name, lambda p=p: p.read_bytes()) for p in files],
+                                label=f"{len(files)} transcripts")
                 for path in files:
                     stat = path.stat()
-                    with ui.row().classes("items-center gap-3 w-full"):
-                        c.download_button(path.name, lambda p=path: p.read_bytes())
+                    with ui.row().classes("items-center gap-3 w-full no-wrap"):
+                        c.download(path.name, lambda p=path: p.read_bytes())
                         ui.label(f"{stat.st_size / 1024:.0f} KB · "
                                  f"{datetime.fromtimestamp(stat.st_mtime):%Y-%m-%d %H:%M}") \
-                            .classes("text-xs sx-muted")
+                            .classes("sx-caption")
 
             listing()
             ui.timer(10.0, listing.refresh)
@@ -136,7 +143,7 @@ def page() -> None:
 def _open_folder() -> None:
     try:
         rec.open_transcripts_folder()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — no file manager is a warning, not a crash
         ui.notify(f"Could not open a file manager: {exc}", type="warning")
 
 
@@ -144,7 +151,7 @@ def _start_named(consent: rec.Consent, render) -> None:
     """Start a named recording; the engine refuses an incomplete attestation."""
     try:
         _recorder.start(record_names=True, consent=consent)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — the engine's refusal is shown, whatever it is
         ui.notify(str(exc), type="negative", multi_line=True, close_button=True)
         return
     ui.notify("Recording with participant names — the attestation is written "
@@ -155,7 +162,7 @@ def _start_named(consent: rec.Consent, render) -> None:
 def _consent_dialog(on_confirm) -> ui.dialog:
     """Privacy gate for named recording: send the notice, then attest to it."""
     with ui.dialog() as dialog, ui.card().classes("w-[42rem] sx-card"):
-        ui.label("Record participant names").classes("text-base font-bold")
+        ui.label("Record participant names").classes("sx-section")
         ui.label("Names on disk are personal data. Confirm you have told the "
                  "participants and have their permission — your confirmation "
                  "is written into the transcript as the compliance record.") \
@@ -167,14 +174,15 @@ def _consent_dialog(on_confirm) -> ui.dialog:
             .classes("w-full").props("outlined autogrow dense")
         ui.label("Edit it if you said something different — what you send here "
                  "is what the transcript records as the notice given.") \
-            .classes("text-xs sx-muted")
+            .classes("sx-caption")
+
+        def copy_notice() -> None:
+            ui.clipboard.write(notice.value or "")
+            ui.notify("Message copied — paste it in the meeting chat", type="positive")
+
         with ui.row().classes("gap-2"):
-            ui.button("Copy message", icon="content_copy",
-                      on_click=lambda: (
-                          ui.clipboard.write(notice.value or ""),
-                          ui.notify("Message copied — paste it in the meeting "
-                                    "chat", type="positive"))) \
-                .props("outline dense")
+            ui.button("Copy message", icon="content_copy", on_click=copy_notice) \
+                .props("outline dense no-caps")
 
         ui.label("2 · Confirm what you did").classes("text-sm font-semibold mt-2")
         boxes = [ui.checkbox(text).classes("text-sm")
@@ -184,8 +192,8 @@ def _consent_dialog(on_confirm) -> ui.dialog:
         notes = ui.input("Notes (optional — e.g. who agreed, or who opted out)") \
             .classes("w-full").props("dense outlined")
 
-        blockers = ui.label("").classes("text-xs") \
-            .style(f"color:{theme.STATUS['blocker']}")
+        # the one inline error line: empty until the engine names what is missing
+        blockers = ui.column().classes("w-full gap-0")
 
         def confirm() -> None:
             consent = rec.Consent(
@@ -193,15 +201,16 @@ def _consent_dialog(on_confirm) -> ui.dialog:
                 notice_text=notice.value or rec.PARTICIPANT_NOTICE,
                 notes=notes.value or "")
             consent.sign(signer.value or "")
+            blockers.clear()
             if not consent.complete:
-                blockers.set_text("Cannot start: " + "; ".join(consent.missing) + ".")
+                with blockers:
+                    c.note("blocker", "Cannot start: " + "; ".join(consent.missing) + ".")
                 return
-            blockers.set_text("")
             dialog.close()
             on_confirm(consent)
 
         with ui.row().classes("justify-end w-full gap-2 mt-2"):
-            ui.button("Cancel", on_click=dialog.close).props("flat")
+            ui.button("Cancel", on_click=dialog.close).props("flat no-caps")
             ui.button("Start recording with names", icon="fiber_manual_record",
-                      on_click=confirm).props("unelevated")
+                      on_click=confirm).props("unelevated no-caps")
     return dialog
