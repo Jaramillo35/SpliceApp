@@ -1,23 +1,28 @@
-"""SECR Create / Update flows + DTCR report library — NiceGUI (wave 2).
+"""SECR Create / Update flows + DTCR report library — NiceGUI.
 
 Faithful ports of the Streamlit flows: batch creation from DEF-to-DEF
 compares (numbers issued per Model Year + Phase scope), versioned updates of
 generated SECRs, and the DTCR Matching Report library that both consume.
+
+Each tab reads top to bottom as files → change type → preview → DTCR
+report → details → generate, with the one primary gated on what it needs.
 """
 
 from __future__ import annotations
 
 from datetime import date
 
-import pandas as pd
 from nicegui import ui
 
 from nicegui_app import components as c
-from nicegui_app import theme
 from secrdb.core.common.errors import SpliceError
 from secrdb.core.dtcr import library
 from secrdb.core.secr import batch, db as secr_db, generation, identity
 from secrdb.core.secr.enrich import load_dtcr_matching_report
+
+ASSIGNMENT_LABELS = {"cnum": "CNUM", "dtcr_number": "DTCR #",
+                     "harness_family": "Harness family", "changes": "Changes",
+                     "source": "Source"}
 
 
 # --------------------------------------------------------------------------- shared
@@ -40,7 +45,7 @@ def shared_details_form() -> dict:
             widgets["pull_ahead"] = ui.select(["", "N", "Y"], value="",
                                               label="Pull Ahead").classes("w-full")
             widgets["original_issue_date"] = ui.input(
-                "Original Issue Date (MM/DD/YYYY)",
+                "Original issue date, MM/DD/YYYY",
                 value=date.today().strftime("%m/%d/%Y")).classes("w-full").props("dense")
     return widgets
 
@@ -49,15 +54,8 @@ def read_details(widgets: dict) -> dict:
     return {key: (w.value or "") for key, w in widgets.items()}
 
 
-def frame_table(df: pd.DataFrame, pagination: int = 15) -> None:
-    if df is None or df.empty:
-        ui.label("None.").classes("text-sm sx-muted")
-        return
-    view = df.astype(str)
-    ui.table(rows=view.to_dict("records"), columns=[
-        {"name": col, "label": col, "field": col, "align": "left"}
-        for col in view.columns], pagination=pagination) \
-        .classes("w-full").props("dense flat")
+def scope_label(model_year, program, phase) -> str:
+    return f"MY{model_year or '?'} · {program or '?'} · {phase or '?'}"
 
 
 class DtcrInput:
@@ -71,32 +69,33 @@ class DtcrInput:
             try:
                 filed = library.find_report_for_scope(
                     scope.program, scope.model_year, scope.phase)
-            except Exception as exc:
-                ui.label(f"Could not read the report library: {exc}") \
-                    .classes("text-xs sx-muted")
+            except Exception as exc:  # noqa: BLE001 — a missing library must not block generation
+                with self._info:
+                    c.note("high", f"Could not read the report library: {exc}")
         if filed:
             payload = library.report_bytes(int(filed["id"]))
             if payload:
                 self.payload = payload
                 with self._info:
                     c.chip("ok", f"Using {filed['filename']} from the library — "
-                                 f"MY{filed['model_year']} · {filed['program']} · "
-                                 f"{filed['phase']}, {filed['row_count']} DTCRs")
+                                 f"{scope_label(filed['model_year'], filed['program'], filed['phase'])}, "
+                                 f"{filed['row_count']} DTCRs")
                     self._preview(payload)
         else:
-            ui.label("No filed report for this scope — upload one below, or "
-                     "file one in the Dashboard tab and it will be used here "
-                     "automatically. Without a report the SECR is generated "
-                     "without enrichment.").classes("text-xs sx-muted")
-        c.upload_zone("DTCR Matching Report override (.xlsx/.xlsm)",
-                      self._on_upload, accept=".xlsx,.xlsm")
+            with self._info:
+                c.note("info", "No filed report for this scope — upload one "
+                               "below, or file one in the DTCR library tab and "
+                               "it will be used here automatically. Without a "
+                               "report the SECR is generated without enrichment.")
+        c.upload_row("DTCR Matching Report override (.xlsx/.xlsm)",
+                     self._on_upload, accept=".xlsx,.xlsm")
 
     def _on_upload(self, name: str, blob: bytes) -> None:
         self._info.clear()
         with self._info:
             try:
                 self._preview(blob)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — any parse failure is reported in place
                 c.chip("blocker", f"Could not read the report: {exc}")
                 return
             c.chip("info", f"Using uploaded {name} for this generation only")
@@ -108,7 +107,7 @@ class DtcrInput:
                             .isin(["Complete", "Draft"])]
         cnum_map = generation.build_cnum_dtcr_map(usable)
         ui.label(f"{len(mapping_df)} DTCR rows · {len(usable)} Complete/Draft "
-                 f"· {len(cnum_map)} CNUMs mapped").classes("text-xs sx-muted")
+                 f"· {len(cnum_map)} CNUMs mapped").classes("sx-caption")
 
 
 def show_result(result) -> None:
@@ -118,95 +117,112 @@ def show_result(result) -> None:
                       f"({result.change_count} changes)") \
             .classes("w-full").props("dense"):
         for warning in result.warnings or []:
-            ui.label(f"• {warning}").classes("text-xs") \
-                .style(f"color:{theme.STATUS['high']}")
+            c.note("high", str(warning))
         if result.enriched and result.dtcr_assignments:
-            frame_table(pd.DataFrame([{
-                "CNUM": a.cnum, "DTCR #": a.dtcr_number,
-                "Harness Family": a.harness_family,
-                "Changes": a.change_count, "Source": a.source,
-            } for a in result.dtcr_assignments]))
-        c.download_button(result.filename, lambda r=result: r.secr_bytes)
+            c.frame_table([{
+                "cnum": a.cnum, "dtcr_number": a.dtcr_number,
+                "harness_family": a.harness_family,
+                "changes": a.change_count, "source": a.source,
+            } for a in result.dtcr_assignments],
+                labels=ASSIGNMENT_LABELS, mono=("cnum", "dtcr_number"),
+                pagination=15)
+        c.download(result.filename, lambda r=result: r.secr_bytes)
 
 
 # --------------------------------------------------------------------------- create
 
 def create_tab() -> None:
-    state: dict = {"files": [], "created": None, "signature": None}
+    state: dict = {"files": [], "plans": [], "created": None, "signature": None,
+                   "dtcr": None}
 
-    with c.card("Create SECRs from DEF-to-DEF compares",
-                "Harness Family, Model Year, Phase and Program are read from "
-                "each DEF. Numbers are issued per Model Year + Phase scope, "
-                "starting at 1000, only when you press Generate."):
-        c.upload_zone("DEF-to-DEF compare file(s)",
-                      lambda n, b: (state["files"].append((n, b)),
-                                    preview.refresh(), dtcr_input.refresh()),
-                      accept=".xlsx,.xls,.xlsm", multiple=True)
-        change_type = ui.radio(list(identity.CHANGE_TYPES), value=list(identity.CHANGE_TYPES)[0]) \
-            .props("inline")
+    def ready_plans() -> list:
+        return [p for p in state["plans"] if p.ready]
+
+    def missing() -> list[str]:
+        if not state["files"]:
+            return ["at least one DEF-to-DEF compare"]
+        if not ready_plans():
+            return ["a compare whose DEF metadata is complete"]
+        return []
+
+    def on_file(name: str, blob: bytes) -> None:
+        state["files"].append((name, blob))
+        preview.refresh()
+        dtcr_input.refresh()
+
+    with c.section("Create SECRs from DEF-to-DEF compares",
+                   "Harness Family, Model Year, Phase and Program are read from "
+                   "each DEF. Numbers are issued per Model Year + Phase scope, "
+                   "starting at 1000, only when you press Generate."):
+        c.upload_row("DEF-to-DEF compare file(s)", on_file,
+                     accept=".xlsx,.xls,.xlsm", multiple=True)
+        change_type = ui.radio(list(identity.CHANGE_TYPES),
+                               value=list(identity.CHANGE_TYPES)[0]).props("inline")
         ui.label("Design Change issues a 'D' SECR number; Miscellaneous "
-                 "issues 'M'.").classes("text-xs sx-muted")
+                 "issues 'M'.").classes("sx-caption")
 
         @ui.refreshable
         def preview() -> None:
             if not state["files"]:
+                state["plans"] = []
                 return
             plans = batch.plan_batch(state["files"], change_type.value)
+            state["plans"] = plans
             ready = [p for p in plans if p.ready]
-            frame_table(pd.DataFrame([{
-                "File": p.name,
-                "Harness": p.metadata.harness_family or "—",
-                "Scope": (f"MY{p.metadata.model_year_2}/{p.metadata.phase}"
+            ui.label("Preview").classes("sx-section")
+            c.frame_table([{
+                "file": p.name,
+                "harness": p.metadata.harness_family or "—",
+                "scope": (f"MY{p.metadata.model_year_2}/{p.metadata.phase}"
                           if p.ready else "—"),
-                "Number": p.number or "—",
-                "Status": "Ready" if p.ready else "Blocked",
-            } for p in plans]))
+                "number": p.number or "—",
+                "status": "Ready" if p.ready else "Blocked",
+            } for p in plans], mono=("file", "number"), pagination=15)
             for p in plans:
                 if not p.ready:
-                    ui.label(f"{p.name} — {'; '.join(p.plan.problems)}") \
-                        .classes("text-xs").style(f"color:{theme.STATUS['blocker']}")
+                    c.note("blocker", f"{p.name} — {'; '.join(p.plan.problems)}")
                 for warning in p.plan.warnings:
-                    ui.label(f"{p.name}: {warning}").classes("text-xs") \
-                        .style(f"color:{theme.STATUS['high']}")
+                    c.note("high", f"{p.name}: {warning}")
             if ready:
-                ui.label(f"{len(ready)} SECR(s) will be issued when you press "
-                         "Generate — previewing reserves nothing.") \
-                    .classes("text-xs sx-muted")
+                c.note("info", f"{len(ready)} SECR(s) will be issued when you "
+                               "press Generate — previewing reserves nothing.")
 
         preview()
-        change_type.on_value_change(lambda: preview.refresh())
+        change_type.on_value_change(lambda: (preview.refresh(), dtcr_input.refresh(),
+                                             c.recheck()))
 
-        ui.separator()
-        ui.label("DTCR Matching Report").classes("text-sm font-bold")
+    with c.section("DTCR Matching Report",
+                   "The report filed for the batch's scope is used automatically; "
+                   "an upload here overrides it for this generation only."):
         dtcr_holder = ui.column().classes("w-full")
 
         @ui.refreshable
         def dtcr_input():
             dtcr_holder.clear()
             with dtcr_holder:
-                plans = batch.plan_batch(state["files"], change_type.value) \
-                    if state["files"] else []
-                ready = [p for p in plans if p.ready]
+                ready = ready_plans()
                 state["dtcr"] = DtcrInput(ready[0].metadata if ready else None)
 
         dtcr_input()
 
-        ui.separator()
-        ui.label("Details for every SECR").classes("text-sm font-bold")
+    with c.section("Details for every SECR",
+                   "Written into each generated workbook's header."):
         widgets = shared_details_form()
-        results_box = ui.column().classes("w-full gap-2")
 
         async def generate() -> None:
-            plans = batch.plan_batch(state["files"], change_type.value)
-            ready = [p for p in plans if p.ready]
+            ready = ready_plans()
+            guard.clear()
             if not ready:
-                ui.notify("Nothing is ready to generate", type="warning")
+                with guard:
+                    c.note("high", "Nothing is ready to generate — every compare "
+                                   "is blocked on its metadata.")
                 return
             signature = batch.signature_for(state["files"], change_type.value)
             if state["created"] and state["signature"] == signature:
-                ui.notify("These compares already produced SECRs — change the "
-                          "uploads first, or you would issue new numbers for "
-                          "the same work.", type="warning")
+                with guard:
+                    c.note("high", "These compares already produced SECRs — "
+                                   "change the uploads first, or you would issue "
+                                   "new numbers for the same work.")
                 return
             shared = read_details(widgets)
             mapping = getattr(state.get("dtcr"), "payload", None)
@@ -223,34 +239,39 @@ def create_tab() -> None:
             results_box.clear()
             with results_box:
                 for name, error in stored.failures:
-                    ui.label(f"{name} — {error}") \
-                        .style(f"color:{theme.STATUS['blocker']}")
+                    c.note("blocker", f"{name} — {error}")
                 if stored.results:
                     c.chip("ok", f"{len(stored.results)} SECR(s) created")
                     if len(stored.results) > 1:
-                        c.download_button(
-                            f"SECRs_{date.today():%m%d%Y}.zip",
-                            lambda: batch.zip_results(state["created"].results))
+                        c.download(f"SECRs_{date.today():%m%d%Y}.zip",
+                                   lambda: batch.zip_results(state["created"].results))
                     for result in stored.results:
                         show_result(result)
 
-        ui.button("Generate", icon="play_arrow", on_click=generate) \
-            .props("unelevated")
+        c.action("Generate", generate, needs=missing)
+        guard = ui.column().classes("w-full gap-1")
+        results_box = ui.column().classes("w-full gap-2")
 
 
 # --------------------------------------------------------------------------- update
 
 def update_tab() -> None:
-    state: dict = {"def": None, "plan": None, "record_id": None}
+    state: dict = {"def": None, "plan": None, "source": None}
 
-    with c.card("Update a generated SECR",
-                "The number stays, the version advances. Imported SECRs are "
-                "not renumbered, so they are not listed."):
+    def missing() -> list[str]:
+        if not state["def"]:
+            return ["a new DEF-to-DEF compare"]
+        if state["plan"] is None:
+            return ["a compare that passes validation"]
+        return []
+
+    with c.section("Update a generated SECR",
+                   "The number stays, the version advances. Imported SECRs are "
+                   "not renumbered, so they are not listed."):
         try:
             candidates = secr_db.list_generated_secrs()
-        except Exception as exc:
-            ui.label(f"Could not read the SECR database: {exc}") \
-                .style(f"color:{theme.STATUS['blocker']}")
+        except Exception as exc:  # noqa: BLE001 — the DB may be absent or locked; the tab says so
+            c.note("blocker", f"Could not read the SECR database: {exc}")
             return
         if not candidates:
             c.empty("No generated SECRs yet — create one in the Create tab first.")
@@ -261,74 +282,85 @@ def update_tab() -> None:
                    for r in candidates}
         pick = ui.select(options, value=next(iter(options)),
                          label="SECR to update").classes("w-full")
-        c.upload_zone("New DEF-to-DEF compare file",
-                      lambda n, b: (state.update(**{"def": (n, b)}), plan_view.refresh()),
-                      accept=".xlsx,.xls,.xlsm")
+        c.upload_row("New DEF-to-DEF compare file",
+                     lambda n, b: (state.update(**{"def": (n, b)}), plan_view.refresh()),
+                     accept=".xlsx,.xls,.xlsm")
 
-        @ui.refreshable
-        def plan_view() -> None:
-            if not state["def"]:
-                return
-            name, blob = state["def"]
-            try:
-                plan = generation.plan_secr_update(pick.value, blob, name)
-            except SpliceError as exc:
-                ui.label(str(exc)).style(f"color:{theme.STATUS['blocker']}")
-                return
-            except Exception as exc:
-                ui.label(f"Could not read the DEF compare file: {exc}") \
-                    .style(f"color:{theme.STATUS['blocker']}")
-                return
-            state["plan"] = plan
-            frame_table(pd.DataFrame([{
-                "Field": d.label, "Existing": d.existing or "—",
-                "New Input": d.new or "—",
-                "": "← changed" if d.changed else "",
-            } for d in plan.differences]))
-            for note in plan.notes:
-                ui.label(f"ℹ {note}").classes("text-xs sx-muted")
-            if plan.problems:
-                c.chip("blocker", "Metadata incomplete — the update is blocked")
-                for problem in plan.problems:
-                    ui.label(f"• {problem}") \
-                        .style(f"color:{theme.STATUS['blocker']}")
-                return
-            for warning in plan.warnings:
-                ui.label(warning).classes("text-xs") \
-                    .style(f"color:{theme.STATUS['high']}")
-            if plan.scope_changed:
-                changed = ", ".join(f"{d.label} {d.existing} → {d.new}"
-                                    for d in plan.changed)
-                c.chip("blocker", f"SECR scope changed — {changed}")
-                ui.label("A change of Harness Family, Model Year, Phase or "
-                         "Program requires a NEW SECR — take this DEF to the "
-                         "Create tab.").classes("text-sm") \
-                    .style(f"color:{theme.STATUS['high']}")
-                return
-            stored_src = secr_db.get_source_file(pick.value)
-            if not stored_src or not stored_src.get("content"):
-                c.chip("blocker", "The original workbook is not stored — "
-                                  "re-import or re-generate it with source "
-                                  "storage enabled")
-                return
-            c.chip("ok", f"Metadata validation passed — V{plan.current_version} "
-                         f"→ V{plan.next_version}")
-            ui.label(plan.filename).classes("text-xs sx-mono")
+    def _plan() -> object | None:
+        """Validate the new DEF against the chosen SECR; every stop on the
+        way says why. Returns the plan only when the update can proceed."""
+        name, blob = state["def"]
+        try:
+            plan = generation.plan_secr_update(pick.value, blob, name)
+        except SpliceError as exc:
+            c.note("blocker", str(exc))
+            return None
+        except Exception as exc:  # noqa: BLE001 — any parse failure is reported in place
+            c.note("blocker", f"Could not read the DEF compare file: {exc}")
+            return None
+        c.frame_table([{
+            "field": d.label, "existing": d.existing or "—",
+            "new": d.new or "—",
+            "changed": "← changed" if d.changed else "",
+        } for d in plan.differences],
+            labels={"new": "New input"}, pagination=15)
+        for note in plan.notes:
+            c.note("info", str(note))
+        if plan.problems:
+            c.chip("blocker", "Metadata incomplete — the update is blocked")
+            for problem in plan.problems:
+                c.note("blocker", str(problem))
+            return None
+        for warning in plan.warnings:
+            c.note("high", str(warning))
+        if plan.scope_changed:
+            changed = ", ".join(f"{d.label} {d.existing} → {d.new}"
+                                for d in plan.changed)
+            c.chip("blocker", f"SECR scope changed — {changed}")
+            c.note("high", "A change of Harness Family, Model Year, Phase or "
+                           "Program requires a NEW SECR — take this DEF to the "
+                           "Create tab.")
+            return None
+        stored_src = secr_db.get_source_file(pick.value)
+        if not stored_src or not stored_src.get("content"):
+            c.chip("blocker", "The original workbook is not stored — re-import "
+                              "or re-generate it with source storage enabled")
+            return None
+        state["source"] = stored_src
+        c.chip("ok", f"Metadata validation passed — V{plan.current_version} "
+                     f"→ V{plan.next_version}")
+        ui.label(plan.filename).classes("sx-caption sx-mono")
+        return plan
 
-            ui.label("DTCR Matching Report").classes("text-sm font-bold mt-2")
-            dtcr = DtcrInput(plan.existing_metadata)
-            ui.label("Details for this version").classes("text-sm font-bold mt-2")
+    @ui.refreshable
+    def plan_view() -> None:
+        state["plan"] = None
+        plan = None
+        if state["def"]:
+            with c.section("Update preview",
+                           "What the new DEF changes against the stored SECR."):
+                plan = _plan()
+        state["plan"] = plan
+        dtcr = None
+        if plan is not None:
+            with c.section("DTCR Matching Report",
+                           "The report filed for this SECR's scope is used "
+                           "automatically; an upload here overrides it."):
+                dtcr = DtcrInput(plan.existing_metadata)
+
+        with c.section("Details for this version",
+                       "Written into the new version's header."):
             widgets = shared_details_form()
-            widgets["reissue_date"] = ui.input("ReIssue Date (MM/DD/YYYY)") \
+            widgets["reissue_date"] = ui.input("Reissue date, MM/DD/YYYY") \
                 .classes("w-64").props("dense")
-            result_box = ui.column().classes("w-full gap-2")
 
             async def do_update() -> None:
+                name, blob = state["def"]
                 details = read_details(widgets)
 
                 def work():
                     return generation.generate_secr_update(
-                        blob, name, stored_src["content"], plan,
+                        blob, name, state["source"]["content"], plan,
                         subject=details["reason_for_change"],
                         secr_author=details["secr_author"],
                         design_release_engineer=details["design_release_engineer"],
@@ -336,7 +368,7 @@ def update_tab() -> None:
                         reissue_date=details["reissue_date"],
                         phase_implemented=details["phase_implemented"],
                         pull_ahead=details["pull_ahead"],
-                        dtcr_matching_bytes=dtcr.payload,
+                        dtcr_matching_bytes=dtcr.payload if dtcr else None,
                     )
 
                 result = await c.run_engine(
@@ -350,11 +382,12 @@ def update_tab() -> None:
                                  f"{result.change_count} change record(s) stored")
                     show_result(result)
 
-            ui.button(f"Generate V{plan.next_version}", icon="upgrade",
-                      on_click=do_update).props("unelevated")
+            label = f"Generate V{plan.next_version}" if plan else "Generate next version"
+            c.action(label, do_update, icon="upgrade", needs=missing)
+            result_box = ui.column().classes("w-full gap-2")
 
-        pick.on_value_change(lambda: plan_view.refresh())
-        plan_view()
+    pick.on_value_change(lambda: plan_view.refresh())
+    plan_view()
 
 
 # --------------------------------------------------------------------------- library
@@ -364,43 +397,47 @@ def library_panel() -> None:
                 "File one report per Program + Model Year + Phase; Create and "
                 "Update use it automatically for SECRs in that scope."):
         listing = ui.column().classes("w-full gap-1")
+        filed = ui.column().classes("w-full gap-1")
 
         def refresh() -> None:
             listing.clear()
             with listing:
                 try:
                     reports = library.list_reports()
-                except Exception as exc:
-                    ui.label(f"Library unavailable: {exc}") \
-                        .style(f"color:{theme.STATUS['blocker']}")
+                except Exception as exc:  # noqa: BLE001 — the DB may be absent or locked; the card says so
+                    c.note("blocker", f"Library unavailable: {exc}")
                     return
                 if not reports:
                     c.empty("No reports filed yet.", icon="library_books")
                     return
                 for r in reports:
                     with ui.row().classes("items-center gap-3 w-full"):
-                        ui.label(f"MY{r['model_year']} · {r['program']} · "
-                                 f"{r['phase']}").classes("text-sm font-semibold")
+                        ui.label(scope_label(r["model_year"], r["program"], r["phase"])) \
+                            .classes("text-sm font-semibold")
                         ui.label(f"{r['filename']} · {r['row_count']} DTCRs") \
-                            .classes("text-xs sx-muted")
+                            .classes("sx-caption")
                         payload = library.report_bytes(int(r["id"]))
                         if payload:
-                            c.download_button(r["filename"],
-                                              lambda p=payload: p)
+                            c.download(r["filename"], lambda p=payload: p)
 
         def on_upload(name: str, blob: bytes) -> None:
             guess = library.parse_scope_from_filename(name)
+            scope = scope_label(guess.model_year, guess.program, guess.phase)
+            filed.clear()
             try:
                 library.save_report(
                     blob, name,
                     program=guess.program, model_year=guess.model_year,
                     phase=guess.phase)
-                ui.notify(f"Filed {name} for MY{guess.model_year} · "
-                          f"{guess.program} · {guess.phase}", type="positive")
-            except Exception as exc:
-                ui.notify(f"Could not file the report: {exc}", type="negative")
+            except Exception as exc:  # noqa: BLE001 — any save failure is reported in place
+                with filed:
+                    c.note("blocker", f"Could not file {name}: {exc}")
+                return
+            ui.notify(f"Filed {name}", type="positive")
+            with filed:
+                c.note("info", f"Filed under {scope}")
             refresh()
 
-        c.upload_zone("File a DTCR Matching Report (.xlsx/.xlsm) — scope is "
-                      "read from the filename", on_upload, accept=".xlsx,.xlsm")
+        c.upload_row("File a DTCR Matching Report (.xlsx/.xlsm) — scope is "
+                     "read from the filename", on_upload, accept=".xlsx,.xlsm")
         refresh()
