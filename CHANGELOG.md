@@ -32,6 +32,22 @@ after an update.
   in the rail footer.
 - **Keyboard and screen readers.** Filter chips, list rows and suggestion
   chips are real buttons; severity always shows the word; inputs have labels.
+- **Workbooks read the same, whichever tool made them.** Every plain `.xlsx`
+  you download now has one header style, frozen headers, filters, sensible
+  column widths and a print setup, plus a **Read Me** sheet (last tab) with
+  the Versigent mark, who generated it and when, which build of the tool,
+  the programme, the input files, and a row count per sheet. The numbers in
+  the sheets are exactly what they were. Macro workbooks, the DTx change
+  report, the SECR, the DEFE template and the complexity files are left as
+  they are.
+- **Versigent mark in the rail.**
+
+### Fixed
+- **HRN Chart Builder read comma-separated matrix files as one column** and
+  built the chart from that. The delimiter is now decided by the header line.
+- **Showcase DTx exports** now carry every column the compare engine
+  requires, and the demo ships a DTCR report, so DTx Compare runs end to end
+  on the demo data.
 
 ### Added
 - **Admin page** (`/admin`): what version is running, what changed, whether each

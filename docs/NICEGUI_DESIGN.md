@@ -89,6 +89,31 @@ Every completed engine run is appended to `data/activity.jsonl` by the
 runner (tool, route, summary, who, programme); the Overview's Continue list
 reads it.
 
+## Exports
+
+Every plain `.xlsx` a page hands over goes through `splice.common.workbook.dress`
+on the way out (`components.deliver`). The engine's values are untouched — the
+golden guard and the cell-diff proofs see exactly what they saw — and the
+workbook the engineer opens has:
+
+- one header style (navy `1F3B57`, white bold, wrapped, bottom rule), a
+  freeze pane under the header, an autofilter, widths from content (8–60,
+  notes columns 70 and wrapped), landscape print fitted to one page wide
+  with the header row repeated;
+- a **Read Me** sheet, last, with the Versigent mark, the run's envelope
+  (tool and version, generated at and by whom, programme and phase, the
+  input files), a sheet guide with row counts (so an empty sheet reads as
+  "0 rows", not as a failure), and the status legend.
+
+Read Me goes last and the active sheet is never changed, because Circuit
+Health and the DTx engine read `wb.active` of the workbooks that feed them.
+
+Not dressed, ever: `.xlsm` (customer macros), workbooks carrying charts or
+drawings (an openpyxl round-trip would drop them — the DTx change report),
+customer formats by name (`SECR_*`, templates, DEFE, `Harness_Complexity_*`),
+and sheets that are forms rather than tables (merged cells, a title block).
+`download(..., dress=False)` opts a file out explicitly.
+
 ## Architecture
 
 ```

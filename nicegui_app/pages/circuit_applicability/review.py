@@ -140,7 +140,7 @@ def build(wb: Workbench) -> None:
             repairs=dict(state["fixes"]), repair_context=context,
             quality=state["quality"], charts=list(state["charts"]))
         if data is not None:
-            ui.download(data, "Circuit_Applicability_Review.xlsx")
+            c.deliver(data, "Circuit_Applicability_Review.xlsx")
 
     def _toggle_cleanup(entry, kind: str, ident: str) -> None:
         key = report_mod.item_key(entry.family, entry.analysis.harness,

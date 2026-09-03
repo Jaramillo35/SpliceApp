@@ -264,18 +264,45 @@ def write_dtx(path: Path, *, families: Sequence[str] | None = None,
     ws.append([f"Build Phase - {PHASE}"])
     ws.append(["Report Date: Jan-15-2030 08:00"])
     ws.append([])
-    ws.append(["Device Control Number", "Device Name", "CNUM", "Connector PN",
-               "Harness Family", "Pin Number", "Circuit Name",
-               "Circuit Function", "Wire Gauge", "Color", "Sales Code"])
+    # every column the compare engine requires (splice.dtx_compare.engine
+    # REQUIRED_COLUMNS); the circuit tools read only the ones they name
+    ws.append(["Device Control Number", "Device Name", "Suffix", "CNUM",
+               "Number of Cavities", "Connector PN", "Harness Family",
+               "Pin Number", "Circuit Name", "Circuit Suffix",
+               "Circuit Function", "Color", "Terminal",
+               "Connector FCA part number", "Wire Gauge", "Wire Type",
+               "Sales Code"])
     skip = set(drop_circuits)
     for family in (families or CIRCUITS):
         for c in CIRCUITS[family]:
             if c.circuit in skip:
                 continue
-            ws.append(["D" + DEF_IDS.get(family, "70999"), f"{family}_MODULE",
-                       c.cnum, "8" + DEF_IDS.get(family, "70999")[1:] + "0",
-                       family, c.pin, c.circuit, c.function, c.gauge, c.color,
-                       c.condition or None])
+            def_id = DEF_IDS.get(family, "70999")
+            ws.append(["D" + def_id, f"{family}_MODULE", "A", c.cnum, 8,
+                       "8" + def_id[1:] + "0", family, c.pin, c.circuit, "",
+                       c.function, c.color, "T-1", "FCA" + def_id, c.gauge,
+                       "TXL", c.condition or None])
+    return _save(wb, path)
+
+
+def write_dtcr_report(path: Path) -> Path:
+    """A DTCR search report: one transmittal per family.
+
+    The compare engine tags each change with the DTCR whose Device
+    Transmittal starts with the DTx row's device control number, so the
+    transmittal text leads with the DEF id the DTx rows carry.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "DTCR Report"
+    ws.append(["DTCR Search Report"])
+    ws.append([])
+    ws.append(["DTCR#", "Device Transmittal", "Reason for change", "Status",
+               "Bulletin", "Harness Family"])
+    for i, (family, def_id) in enumerate(sorted(DEF_IDS.items()), start=1):
+        ws.append([f"{50000 + i}", f"{def_id} - {family} MODULE",
+                   "Circuit added for the V1_A build phase", "Released",
+                   f"Bulletin {318900 + i}", family])
     return _save(wb, path)
 
 
@@ -601,6 +628,7 @@ def build(out: Path) -> Dict[str, List[Path]]:
         write_dtx(dx / f"DetailedDTxCircuitsReport_{TAG}_V1_OLD.xlsx",
                   drop_circuits={"QK106", "QK702"}),
         write_dtx(dx / f"DetailedDTxCircuitsReport_{TAG}_V1_NEW.xlsx"),
+        write_dtcr_report(dx / f"DTCR_Report_{TAG}.xlsx"),
     ]
 
     sg = out / "5_splice_generation"

@@ -30,6 +30,7 @@ from nicegui import context, run, ui
 from nicegui_app import theme
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
+LOGO = ASSETS / "versigent_logo_horizontal.jpg"
 
 
 # ================================================================ registry
@@ -111,7 +112,7 @@ def _bag() -> dict:
     bag = getattr(client, "sx", None)
     if bag is None:
         bag = {"actions": [], "steps": [], "header": None, "step_bar": None,
-               "title": "", "context": ""}
+               "title": "", "context": "", "inputs": []}
         client.sx = bag
     return bag
 
@@ -182,15 +183,13 @@ def frame(title: str, caption: str = "", *, context_chip: str = "", wide: bool =
         .style(f"background:{theme.SURFACE_2};border-right:1px solid {theme.LINE}")
     with drawer:
         with ui.column().classes("w-full h-full gap-0 no-wrap"):
-            with ui.row().classes("items-center gap-2 px-2 pt-1 pb-3 no-wrap"):
-                with ui.element("div").classes(
-                        "w-8 h-8 rounded-lg flex items-center justify-center shrink-0") \
-                        .style(f"background:{theme.BRAND}"):
-                    ui.icon("electrical_services").classes("text-xl") \
-                        .style(f"color:{theme.TEXT}")
-                with ui.column().classes("gap-0"):
-                    ui.label("Versigent").classes("text-base font-bold leading-none tracking-tight")
-                    ui.label("System Engineer Toolkit").classes("sx-caption leading-none")
+            with ui.link(target="/").classes("no-underline w-full"):
+                with ui.column().classes("gap-1 px-2 pt-1 pb-3 w-full"):
+                    # the horizontal mark sits on its own black ground, which
+                    # is the rail's ground — no box around it
+                    ui.image(LOGO).classes("w-40 rounded-md").props("no-spinner") \
+                        .style("max-width:160px")
+                    ui.label("System Engineer Toolkit").classes("sx-caption leading-none px-1")
             _nav_link(OVERVIEW, route == "/")
             for family in FAMILIES:
                 ui.label(family).classes("sx-eyebrow px-2 mt-3 mb-1")
@@ -427,6 +426,7 @@ def upload_row(label: str, on_file: Callable[[str, bytes], None],
             data = await e.file.read()
             on_file(e.file.name, data)
             received.append(e.file.name)
+            note_input(e.file.name)
             recheck()
             # one summary chip, not one per file — 17 complexity files must
             # not become a page of chips (field report, 2026-08-24)
@@ -590,10 +590,38 @@ def empty(message: str, icon: str = "upload_file") -> None:
             .style(f"color:{theme.TEXT_2}")
 
 
-def download(filename: str, data_getter: Callable[[], bytes]) -> ui.button:
-    """Filename as label, always a click."""
+def deliver(data: bytes, filename: str, *, dress: bool = True) -> None:
+    """Hand a file to the browser. Plain .xlsx workbooks are dressed first:
+    one header style, frozen panes, filters, widths, print setup, and a
+    Read Me sheet with the run's envelope and the Versigent mark. The
+    engine's values are untouched; .xlsm and chart-bearing files pass
+    through as they are."""
+    if dress and filename.lower().endswith(".xlsx"):
+        from splice import version
+        from splice.common import workbook
+        bag = _bag()
+        page_ = next((p for p in PAGES if p.route == current_route()), None)
+        data = workbook.dress(
+            data, filename, tool=bag.get("title", ""), version=version.current().label,
+            by=who(), context=bag.get("context", ""),
+            purpose=page_.purpose if page_ else "", inputs=bag.get("inputs", ()))
+    ui.download(data, filename)
+
+
+def note_input(name: str) -> None:
+    """Remember an input's name for the workbook envelope (upload rows do this)."""
+    bag = _bag()
+    inputs = list(bag.get("inputs", ()))
+    if name not in inputs:
+        inputs.append(name)
+    bag["inputs"] = inputs
+
+
+def download(filename: str, data_getter: Callable[[], bytes], *, dress: bool = True) -> ui.button:
+    """Filename as label, always a click. ``dress=False`` hands the engine's
+    bytes over untouched (a customer format the name does not reveal)."""
     return ui.button(filename, icon="download",
-                     on_click=lambda: ui.download(data_getter(), filename)) \
+                     on_click=lambda: deliver(data_getter(), filename, dress=dress)) \
         .props("outline dense no-caps")
 
 
@@ -609,7 +637,7 @@ def downloads(items: Sequence[tuple[str, Callable[[], bytes]]], label: str = "")
             .props("outline dense no-caps"):
         with ui.menu():
             for name, getter in items:
-                ui.menu_item(name, on_click=lambda _e, n=name, g=getter: ui.download(g(), n)) \
+                ui.menu_item(name, on_click=lambda _e, n=name, g=getter: deliver(g(), n)) \
                     .classes("sx-mono text-xs")
 
 

@@ -232,14 +232,25 @@ def parse_hrn(hrn_bytes: bytes) -> HrnData:
     return HrnData(rows=rows, assembly=assemblies[0] if assemblies else '', tokens=tokens)
 
 
+def matrix_delimiter(csv_bytes: bytes) -> str:
+    """The delimiter the header line actually uses.
+
+    Trying ';' first and falling back on an exception never fell back: a
+    comma-separated file parses "successfully" as one wide column, and the
+    chart was then built from a one-column matrix. The header line decides.
+    """
+    head = csv_bytes.lstrip(b'\xef\xbb\xbf').split(b'\n', 1)[0].decode('utf-8', 'replace')
+    counts = {sep: head.count(sep) for sep in (';', ',', '\t')}
+    best = max(counts, key=counts.get)
+    return best if counts[best] else ';'
+
+
 def read_matrix_csv(csv_bytes: bytes) -> pd.DataFrame:
-    """Harness matrix CSV (semicolon-delimited, with comma fallback)."""
-    try:
-        df = pd.read_csv(io.BytesIO(csv_bytes), sep=';', engine='python', dtype=str)
-    except Exception:
-        df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str)
-    if df.shape[1] < 1:
-        raise ValueError("Matrix CSV has no columns")
+    """Harness matrix CSV, semicolon or comma delimited (decided by the header)."""
+    df = pd.read_csv(io.BytesIO(csv_bytes), sep=matrix_delimiter(csv_bytes),
+                     engine='python', dtype=str)
+    if df.shape[1] < 2:
+        raise ValueError("Matrix CSV has no sales-code columns")
     return df.fillna('')
 
 

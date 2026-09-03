@@ -124,7 +124,7 @@ def build(wb: Workbench) -> None:
             meta.program if meta else "", meta.phase if meta else "",
             running="Building the circuit chart…", done="Chart ready")
         if data is not None:
-            ui.download(data, "Circuit_Chart.xlsx")
+            c.deliver(data, "Circuit_Chart.xlsx")
 
     wb.views["chart"] = chart_view
     chart_view()
