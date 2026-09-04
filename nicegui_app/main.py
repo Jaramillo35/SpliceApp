@@ -52,6 +52,12 @@ def run() -> None:
         # per-user storage (rail identity, preferences); the secret only
         # signs the browser cookie, nothing sensitive is stored
         storage_secret=os.getenv("SPLICE_STORAGE_SECRET", "splice-toolkit"),
+        # NiceGUI derives the socket heartbeat from this: ping every
+        # 0.8x, give up 0.4x later. The 3s default leaves a 2s budget, and
+        # an engine step that holds the GIL for a moment longer than that
+        # costs the client its connection and the page its state. 10s keeps
+        # a real disconnect quick to notice while surviving a busy worker.
+        reconnect_timeout=float(os.getenv("SPLICE_RECONNECT_TIMEOUT", "10")),
     )
 
 

@@ -6,6 +6,7 @@ from nicegui import ui
 
 from nicegui_app import components as c
 from nicegui_app import theme
+from nicegui_app.pages.circuit_applicability import actions
 from nicegui_app.pages.circuit_applicability.workbench import Workbench
 from splice.dtxcircuits import chart as chart_mod
 
@@ -16,7 +17,7 @@ def build(wb: Workbench) -> None:
     @ui.refreshable
     def chart_view() -> None:
         charts = state["charts"]
-        if not charts:
+        if not state["entries"]:
             return
         with c.section("6 · Circuit chart",
                     "Which part number carries which wire, per harness "
@@ -26,6 +27,19 @@ def build(wb: Workbench) -> None:
                     "splice. Same layout as the Circuit Summary that "
                     "Circuit Health reads, so this feeds straight back.",
                  step="Chart"):
+            # Its own action, not a tail of the analysis. Every circuit is
+            # planned against every part number here, so the cost scales with
+            # the run and an SE who only wants the cleanup notes should not
+            # wait for it.
+            c.action("Rebuild the circuit chart" if charts
+                     else "Build the circuit chart",
+                     lambda: actions.build_chart(wb),
+                     icon="table_chart", secondary=bool(charts))
+            wb.chart_progress = ui.column().classes("w-full gap-1")
+            if not charts:
+                c.note("info", f"{len(state['entries'])} family/harness "
+                               "pairing(s) are analysed and ready to chart.")
+                return
             with ui.row().classes("gap-2 flex-wrap items-center"):
                 c.chip("info", f"{len(charts)} chart(s) · "
                                f"{sum(len(x.rows) for x in charts)} circuit end(s)")

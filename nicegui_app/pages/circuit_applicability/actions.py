@@ -155,12 +155,18 @@ async def run(wb: Workbench) -> None:
     if out is not None:
         state["entries"] = out
         state["selected"] = None
+        # The chart is NOT built here. Planning every circuit against every
+        # part number is the longest step on the page — 11s on a 47-family
+        # export — and it used to run inline, on the event loop, right after
+        # this analysis returned. NiceGUI pings every 4s and gives the client
+        # up 2s later, so the browser dropped the connection mid-build and
+        # came back to a page rebuilt from nothing. It is its own action now,
+        # off the event loop, in card 6.
+        state["charts"] = []
         # Never-built circuits and connectors, and every sales-code
         # gap, go into the review by default — they are exactly what
         # the customer has to fix in the next export. Anything the SE
         # has explicitly unticked stays out.
-        state["charts"] = chart_mod.build_charts(
-            out, integrity.apply_fixes(state["rows"], state["fixes"]))
         picked = report_mod.auto_select(out, state["dismissed"])
         added = [k for k in picked if k not in state["cleanup"]]
         state["cleanup"].update({k: v for k, v in picked.items()
@@ -174,3 +180,28 @@ async def run(wb: Workbench) -> None:
         # family that is not mapped today is still a real cleanup task,
         # and dropping it here would quietly delete it from the store.
         wb.refresh("results")
+
+
+async def build_chart(wb: Workbench) -> None:
+    """Card 6 — build the circuit chart, off the event loop, with progress.
+
+    Split out of ``run`` deliberately. It is the one step whose cost scales
+    with families × circuits × part numbers, and an SE who only wants the
+    cleanup notes should not pay for it.
+    """
+    state = wb.state
+    if not state["entries"]:
+        return   # the action is gated; this is only a guard
+
+    entries = state["entries"]
+    rows = integrity.apply_fixes(state["rows"], state["fixes"])
+
+    def work(report):
+        return chart_mod.build_charts(entries, rows, progress=report)
+
+    out = await c.run_engine_progress(
+        work, wb.chart_progress,
+        running="Building the circuit chart…", done="Chart ready")
+    if out is not None:
+        state["charts"] = out
+        wb.refresh("chart")

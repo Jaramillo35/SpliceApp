@@ -135,6 +135,18 @@ async def open_analysed(user: User, files: dict) -> None:
     await wait_for(user, "4 · Review")
 
 
+async def open_charted(user: User, files: dict) -> None:
+    """Analyse, then press card 6's own Build button.
+
+    The chart used to be built inline at the end of the analysis, on the
+    event loop. It is its own action now, so a test that wants a chart has
+    to ask for one.
+    """
+    await open_analysed(user, files)
+    user.find("Build the circuit chart").click()
+    await wait_for(user, "7 chart(s)")
+
+
 class TestLoad:
     async def test_the_files_load_and_families_match_by_name(self, user: User, store_path, files):
         await open_loaded(user, files)
@@ -159,7 +171,21 @@ class TestRun:
         await open_analysed(user, files)
         await user.should_see("5 · DTx data quality")
         await user.should_see("6 · Circuit chart")
+
+    async def test_the_analysis_does_not_build_the_chart(self, user: User, store_path, files):
+        """The disconnect this split fixed: build_charts ran inline at the end
+        of the analysis, blocking the event loop for as long as it took —
+        11s on a 47-family export, against a 4s ping and a 2s timeout — so the
+        browser dropped the socket and came back to a page built from nothing.
+        Card 6 offers the work; it no longer does it unasked."""
+        await open_analysed(user, files)
+        await user.should_see("Build the circuit chart")
+        await user.should_not_see("7 chart(s)")
+
+    async def test_the_build_button_builds_the_chart(self, user: User, store_path, files):
+        await open_charted(user, files)
         await user.should_see("7 chart(s)")
+        await user.should_see("Rebuild the circuit chart")
 
     async def test_findings_are_preselected_for_the_customer(self, user: User, store_path, files):
         await open_analysed(user, files)

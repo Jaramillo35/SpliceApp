@@ -355,12 +355,19 @@ def harness_expression(condition: Optional[str], builds: Sequence[str],
 
 
 def build_charts(entries: Iterable, rows: Sequence,
-                 splice_min_ends: int = SPLICE_MIN_ENDS) -> List[Chart]:
+                 splice_min_ends: int = SPLICE_MIN_ENDS,
+                 progress: Optional[Callable[[float, str], None]] = None,
+                 ) -> List[Chart]:
     """One chart per family × harness pairing, from the resolved analysis.
 
     ``rows`` are the DTx circuit rows the analysis was run on — the repaired
     ones, so the chart shows what was actually resolved rather than what the
     export said before the SE fixed it.
+
+    ``progress`` is called once per family with ``(fraction, message)``. This
+    is the longest step in the page — planning every circuit's wiring against
+    every part number — so it reports rather than going quiet, and the caller
+    runs it off the event loop.
     """
     by_family: Dict[str, List] = {}
     for row in rows:
@@ -370,7 +377,11 @@ def build_charts(entries: Iterable, rows: Sequence,
     conditions = harness_conditions(rows)
 
     charts: List[Chart] = []
-    for entry in entries:
+    entries = list(entries)
+    for index, entry in enumerate(entries, start=1):
+        if progress is not None:
+            progress((index - 1) / max(len(entries), 1),
+                     f"Charting {entry.family} ({index} of {len(entries)})…")
         analysis = entry.analysis
         complexity = getattr(entry, "complexity", None)
         family_rows = by_family.get(entry.family, [])
@@ -435,6 +446,8 @@ def build_charts(entries: Iterable, rows: Sequence,
         chart.rows.sort(key=lambda r: (r.circuit, r.cnum, _cavity_key(r.cavity)))
         charts.append(chart)
 
+    if progress is not None:
+        progress(0.98, "Linking circuit ends across harnesses…")
     link_ends(charts)
     logger.info("Built %d circuit chart(s), %d row(s), %d splice(s)",
                 len(charts), sum(len(c.rows) for c in charts),

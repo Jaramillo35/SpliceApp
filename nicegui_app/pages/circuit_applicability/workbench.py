@@ -70,6 +70,8 @@ class Workbench:
         self.views: Dict[str, Callable] = {}
         #: the progress container under the Load button; load/run draw into it
         self.progress = None
+        #: the same, under card 6's Build button — the chart is its own action
+        self.chart_progress = None
         #: the header label that says who saved last
         self.envelope: ui.label | None = None
 
