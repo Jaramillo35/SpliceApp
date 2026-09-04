@@ -1076,3 +1076,83 @@ class TestEdges:
                                             sales_code="AAA", cnum="C9", pin="9")]
         built = chart.build_charts(_entries(rows), rows)
         assert all(r.circuit for c in built for r in c.rows)
+
+
+class TestABlankInlineInheritsTheCircuit:
+    """A blank cell on an inline is silence, not "unconditional".
+
+    Reported from a real chart: circuits labelled ``-AAA`` produced a splice
+    whose leg had no expression at all. The DTx states applicability at
+    devices and leaves the joints empty, so the inline's leg inherited
+    nothing and came out blank — which reads as "present on every part
+    number" for a leg belonging to a circuit built on five of twenty. A leg
+    cannot be present where its circuit is absent.
+    """
+
+    def _harness(self):
+        """AAA on 15 of 20 part numbers, so -AAA is the other five."""
+        from splice.inline.model import Build, Harness
+        builds = [Build(f"9900{i:04d}AA",
+                        codes=frozenset({"AAA"} if i <= 15 else set()))
+                  for i in range(1, 21)]
+        return Harness(name="IP", def_id="72000", builds=builds,
+                       complexity_codes={"AAA", "BBB"})
+
+    def _rows(self):
+        return [
+            CircuitRow(harness_family="IP", circuit="CK1",
+                       sales_code="-AAA", cnum="D1", pin="1"),
+            CircuitRow(harness_family="IP", circuit="CK1",
+                       sales_code="-AAA", cnum="D2", pin="1"),
+            CircuitRow(harness_family="IP", circuit="CK1",
+                       sales_code="-AAA", cnum="D3", pin="1"),
+            # the inline the DTx leaves blank
+            CircuitRow(harness_family="IP", circuit="CK1",
+                       sales_code="", cnum="X401A", pin="1"),
+        ]
+
+    def _chart(self):
+        from splice.dtxcircuits import analyze_harness
+        rows, harness = self._rows(), self._harness()
+        entry = report.Entry(label="IP", family="IP", filename="ip.xlsm",
+                             complexity=harness,
+                             analysis=analyze_harness(rows, harness,
+                                                      harness_name="IP"))
+        return chart.build_charts([entry], rows)[0]
+
+    def test_not_of_a_tracked_code_is_the_complement(self):
+        """AAA on 15 of 20 means -AAA is exactly the remaining five."""
+        c = self._chart()
+        carried = {pn for r in c.rows for pn in r.builds}
+        assert len(carried) == 5
+        assert carried == {f"9900{i:04d}AA" for i in range(16, 21)}
+
+    def test_no_leg_of_a_conditional_circuit_is_blank(self):
+        c = self._chart()
+        legs = [r for r in c.rows if r.is_splice]
+        assert legs, "four ends on one part number need a splice"
+        assert all(r.leg_expression for r in legs), \
+            [f"{r.cnum}/{r.cavity}" for r in legs if not r.leg_expression]
+
+    def test_the_inline_carries_the_circuits_condition(self):
+        c = self._chart()
+        inline = [r for r in c.rows if r.cnum == "X401A"][0]
+        assert "AAA" in inline.leg_expression
+        assert inline.leg_expression.startswith("-")
+        assert len(inline.builds) == 5
+
+    def test_a_blank_device_stays_unconditional(self):
+        """The rule is about joints. A device with no stated code is a device
+        with no stated code, and widening it would change applicability."""
+        from splice.dtxcircuits.chart import _leg_condition, ChartRow
+        end = ChartRow(circuit="CK1", cnum="D9", cavity="1", expression="-AAA")
+        assert _leg_condition("CK1", end, {}, "-AAA") == ""
+        joint = ChartRow(circuit="CK1", cnum="X401A", cavity="1",
+                         expression="-AAA")
+        assert _leg_condition("CK1", joint, {}, "-AAA") == "-AAA"
+
+    def test_a_stated_inline_condition_wins_over_the_circuits(self):
+        stated = {("CK1", "X401A", "1"): "BBB"}
+        from splice.dtxcircuits.chart import _leg_condition, ChartRow
+        joint = ChartRow(circuit="CK1", cnum="X401A", cavity="1")
+        assert _leg_condition("CK1", joint, stated, "-AAA") == "BBB"

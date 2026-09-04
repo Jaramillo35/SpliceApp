@@ -534,6 +534,28 @@ def _branch_row(end: ChartRow, circuit: str, name: str, cavity: str,
         configuration=configuration)
 
 
+def _leg_condition(circuit: str, end: ChartRow,
+                   conditions_by_end: Dict[tuple, str],
+                   circuit_condition: str) -> str:
+    """The condition under which THIS end of the circuit exists.
+
+    A blank cell on an inline is silence, not "unconditional". The DTx states
+    applicability at devices and leaves the joints empty — 1,924 of the 2,954
+    blank cells in a real export sit on inlines — so an inline carries
+    whatever the circuit carries.
+
+    Reading that blank as TRUE was a Boolean mistake with a visible cost: a
+    circuit conditioned ``-AAA`` produced a splice whose leg to the inline
+    had no expression at all, which says the leg is on every part number
+    while the circuit it belongs to is on five of twenty. A leg cannot be
+    present where its circuit is absent.
+    """
+    stated = conditions_by_end.get((circuit, end.cnum, end.cavity), "")
+    if stated or not is_pass_through(end.cnum):
+        return stated
+    return circuit_condition
+
+
 def _plan_circuit(circuit: str, ends: List[ChartRow], builds,
                   conditions_by_end: Dict[tuple, str]):
     """Ask Splice Generation how this circuit is wired on this harness."""
@@ -541,9 +563,13 @@ def _plan_circuit(circuit: str, ends: List[ChartRow], builds,
         import pandas as pd
 
         from splice.splice_gen import plan_connections
+        # every end of a circuit carries the same resolved condition
+        circuit_condition = next(
+            (e.expression for e in ends if e.expression), "")
         option_rows = [{
             "CNUM": end.cnum, "Pin": end.cavity, "Circuit": circuit,
-            "Sales Code": conditions_by_end.get((circuit, end.cnum, end.cavity), ""),
+            "Sales Code": _leg_condition(circuit, end, conditions_by_end,
+                                         circuit_condition),
         } for end in ends]
         code_map = {build.part_number: set(build.codes) for build in builds}
         _configurations, connections = plan_connections(pd.DataFrame(option_rows), code_map)
