@@ -186,19 +186,10 @@ class Chart:
 SPLICE_MIN_ENDS = 3
 
 
-def is_pass_through(cnum: str) -> bool:
-    """Is this end an inline connector rather than a device?
-
-    An inline is a joint between two harnesses, not a thing that gets fitted,
-    so it has no applicability of its own — it carries whatever the circuit
-    carries. In 2028RU X2_A, 1,924 of the 2,954 blank sales-code cells sit on
-    inlines while 2,264 of the 2,458 stated ones sit on devices: the DTx
-    states applicability at devices and leaves inlines blank.
-
-    Recognised by the same X/Y naming ``splice.inline.pairing`` resolves
-    mates with; the DTx has no device-type column to ask instead.
-    """
-    return mate_name(cnum) is not None
+#: Re-exported: the rule now lives with the other DTx reading conventions,
+#: because the analysis needs it too — a blank on a joint must not make a
+#: circuit read as unconditional there either.
+is_pass_through = conventions.is_pass_through
 
 
 def _union(parts: Sequence[str]) -> Optional[str]:

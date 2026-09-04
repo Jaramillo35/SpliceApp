@@ -1,6 +1,6 @@
 """DTx reading conventions that are not in the sales-code grammar.
 
-Two of them.
+Three of them.
 
 **501 is not an option code.** ``501`` is not an option code: written on its own it means the
 circuit is on every harness part number. It is the second most common token in
@@ -22,11 +22,21 @@ named ``N0`` reads ``No Connect``, and every ``No Connect`` row is named
 chart's job is to say where wires go: its 1,570 rows became 3,120 chart rows,
 they were joined into one fabricated 269-cavity splice (``SN0A``), and 3,106
 of them were given a far end — wires nobody drew.
+
+**A blank cell on an inline is silence, not "unconditional".** The DTx states
+applicability at devices and leaves the joints empty: of the 2,954 blank
+sales-code cells in 2028RU X2_A, 1,924 sit on inlines, while 2,264 of the
+2,458 stated ones sit on devices. So an empty cell means two different things
+depending on where it sits — on a device it is a statement that the circuit is
+unconditional there, and on an inline it is the absence of a statement. Reading
+a joint's silence as "always" makes a leg present where its circuit is not.
 """
 
 from __future__ import annotations
 
 from typing import Optional
+
+from splice.inline.pairing import mate_name
 
 #: Codes that mean "every harness part number" when they are the whole
 #: expression. A set because the convention may grow; the rule may not.
@@ -66,3 +76,16 @@ def effective_condition(expression: Optional[str]) -> Optional[str]:
     if not text or is_universal(text):
         return None
     return text
+
+
+def is_pass_through(cnum: Optional[str]) -> bool:
+    """Is this end an inline connector rather than a device?
+
+    An inline is a joint between two harnesses, not a thing that gets fitted,
+    so it has no applicability of its own — it carries whatever the circuit
+    carries.
+
+    Recognised by the same X/Y naming ``splice.inline.pairing`` resolves mates
+    with; the DTx has no device-type column to ask instead.
+    """
+    return mate_name(cnum or "") is not None

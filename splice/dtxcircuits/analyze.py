@@ -48,12 +48,26 @@ def union_condition(rows: Iterable[CircuitRow]) -> Optional[str]:
     ANY of those occurrences applies, so the conditions are OR-ed. A single
     unconditional occurrence makes the whole circuit unconditional — returned
     as ``None``, which no expression can express.
+
+    An *inline* with a blank cell is not such an occurrence. The DTx states
+    applicability at devices and leaves the joints empty, so a joint's silence
+    is the absence of a statement rather than a statement that the circuit is
+    unconditional. Counting it made a circuit its devices all conditioned
+    ``-AAA`` come back as unconditional on every part number, and the chart —
+    which has always resolved from device ends first — said ``-AAA`` on five
+    of twenty. One circuit, two answers, on the same sheet. See
+    ``conventions.is_pass_through``.
+
+    A circuit whose ends are *all* silent inlines has nothing stating
+    otherwise, so it stays unconditional.
     """
     parts: List[str] = []
     for row in rows:
         # a bare universal code means the same as a blank cell
         condition = conventions.effective_condition(row.sales_code)
         if not condition:
+            if conventions.is_pass_through(getattr(row, "cnum", "")):
+                continue
             return None
         parts.append(f"({condition})")
     if not parts:

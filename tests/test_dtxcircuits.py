@@ -60,6 +60,72 @@ class TestUnionCondition:
         assert union_condition(rows) == "(AAA)"
 
 
+class TestABlankInlineIsSilence:
+    """The DTx states applicability at devices and leaves the joints empty.
+
+    Counting a joint's blank cell as an unconditional occurrence made a
+    circuit whose devices all said ``-AAA`` come back unconditional on every
+    part number, while the chart — which has always resolved from device ends
+    first — said ``-AAA`` on five of twenty. The two now agree.
+    """
+
+    def test_a_blank_inline_does_not_make_the_circuit_unconditional(self):
+        rows = [CircuitRow("H", "C", "-AAA", cnum="D1"),
+                CircuitRow("H", "C", "-AAA", cnum="D2"),
+                CircuitRow("H", "C", "", cnum="X401A")]
+        assert union_condition(rows) == "(-AAA)"
+
+    def test_a_blank_device_still_wins(self):
+        """The rule is about joints. A device with no stated code is a
+        statement that the circuit is unconditional there."""
+        rows = [CircuitRow("H", "C", "-AAA", cnum="D1"),
+                CircuitRow("H", "C", "", cnum="D2")]
+        assert union_condition(rows) is None
+
+    def test_a_stated_inline_still_counts(self):
+        rows = [CircuitRow("H", "C", "AAA", cnum="D1"),
+                CircuitRow("H", "C", "BBB", cnum="X401A")]
+        assert union_condition(rows) == "(AAA)/(BBB)"
+
+    def test_a_circuit_of_only_silent_inlines_is_unconditional(self):
+        """Nothing states otherwise, so nothing is claimed."""
+        rows = [CircuitRow("H", "C", "", cnum="X401A"),
+                CircuitRow("H", "C", "", cnum="Y401A")]
+        assert union_condition(rows) is None
+
+    def test_both_inline_naming_conventions_are_recognised(self):
+        for cnum in ("X301A", "Y301A", "I350X", "I350Y"):
+            rows = [CircuitRow("H", "C", "AAA", cnum="D1"),
+                    CircuitRow("H", "C", "", cnum=cnum)]
+            assert union_condition(rows) == "(AAA)", cnum
+
+    def test_the_analysis_now_agrees_with_the_chart(self):
+        """The whole point: one circuit, one answer."""
+        from splice.dtxcircuits import chart as chart_mod
+        from splice.dtxcircuits import report
+        from splice.inline.model import Build, Harness
+
+        builds = [Build(f"9900{i:04d}AA",
+                        codes=frozenset({"AAA"} if i <= 15 else set()))
+                  for i in range(1, 21)]
+        harness = Harness(name="IP", def_id="72000", builds=builds,
+                          complexity_codes={"AAA"})
+        rows = [CircuitRow("IP", "CK1", "-AAA", cnum="D1", pin="1"),
+                CircuitRow("IP", "CK1", "-AAA", cnum="D2", pin="1"),
+                CircuitRow("IP", "CK1", "-AAA", cnum="D3", pin="1"),
+                CircuitRow("IP", "CK1", "", cnum="X401A", pin="1")]
+        analysis = analyze_harness(rows, harness, harness_name="IP")
+        item = _by_circuit(analysis)["CK1"]
+        assert item.classification == VARIANT
+        assert len(item.builds_with) == 5
+
+        chart = chart_mod.build_charts(
+            [report.Entry(label="IP", family="IP", filename="ip.xlsm",
+                          complexity=harness, analysis=analysis)], rows)[0]
+        carried = {pn for row in chart.rows for pn in row.builds}
+        assert carried == set(item.builds_with)
+
+
 class TestClassification:
     def test_unconditional_circuit_is_on_every_build(self, results):
         c = _by_circuit(results["BODY_LEFT"])["CKT_100"]
