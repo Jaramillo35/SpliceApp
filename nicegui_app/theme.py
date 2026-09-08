@@ -179,6 +179,40 @@ _CSS = f"""
      a finding rather than as whitespace */
   .sx-never > td {{ background: {wash(STATUS['blocker'])} !important; }}
 
+  /* ---- rendered markdown (the Documentation page) ----
+     Quasar resets headings and lists to nothing, so a rendered document
+     arrives as one undifferentiated wall. These are the reading styles:
+     the type scale above, applied to tags the app does not otherwise use. */
+  .sx-md {{ font-size: 14px; line-height: 1.65; color: {TEXT}; }}
+  .sx-md > *:first-child {{ margin-top: 0; }}
+  .sx-md h1, .sx-md h2, .sx-md h3, .sx-md h4 {{
+    font-weight: 600; line-height: 1.25; letter-spacing: -0.01em;
+    margin: 1.6em 0 0.6em; }}
+  .sx-md h1 {{ font-size: 22px; }}
+  .sx-md h2 {{ font-size: 18px; padding-bottom: 0.3em;
+               border-bottom: 1px solid {LINE}; }}
+  .sx-md h3 {{ font-size: 15px; }}
+  .sx-md h4 {{ font-size: 14px; color: {TEXT_2}; }}
+  .sx-md p, .sx-md ul, .sx-md ol, .sx-md blockquote {{ margin: 0.7em 0; }}
+  .sx-md ul {{ list-style: disc; padding-left: 1.4em; }}
+  .sx-md ol {{ list-style: decimal; padding-left: 1.4em; }}
+  .sx-md li {{ margin: 0.25em 0; }}
+  .sx-md a {{ color: {BRAND}; text-decoration: underline; text-underline-offset: 2px; }}
+  .sx-md code {{ font-family: {MONO}; font-size: 12.5px; background: {SURFACE_2};
+                 border: 1px solid {LINE}; border-radius: 4px; padding: 0.1em 0.35em; }}
+  .sx-md pre {{ background: {SURFACE_2}; border: 1px solid {LINE}; border-radius: 8px;
+                padding: 12px 14px; margin: 0.9em 0; overflow-x: auto; }}
+  .sx-md pre code {{ background: none; border: 0; padding: 0; }}
+  .sx-md blockquote {{ border-left: 3px solid {LINE}; padding-left: 12px; color: {TEXT_2}; }}
+  /* a wide table scrolls itself rather than stretching the reading column */
+  .sx-md table {{ display: block; width: max-content; max-width: 100%;
+                  overflow-x: auto; border-collapse: collapse; margin: 0.9em 0; }}
+  .sx-md th, .sx-md td {{ border: 1px solid {LINE}; padding: 6px 10px;
+                          font-size: 13px; text-align: left; }}
+  .sx-md th {{ background: {SURFACE_2}; font-weight: 600; }}
+  .sx-md hr {{ border: 0; border-top: 1px solid {LINE}; margin: 1.4em 0; }}
+  .sx-md img {{ max-width: 100%; }}
+
   @media (prefers-reduced-motion: reduce) {{
     .sx-reveal {{ animation: none; }}
     .q-btn {{ transition: none; }}
