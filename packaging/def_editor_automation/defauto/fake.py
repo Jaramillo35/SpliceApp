@@ -74,15 +74,23 @@ def _harness(zone: str, rng: random.Random) -> _Harness:
         harness.devices.append(
             [f"D{2000 + i}A", f"{zone} MODULE {i}", str(rng.randint(4, 24)),
              f"CN{rng.randint(1000, 9999)}"])
-    for i in range(1, rng.randint(10, 18)):
+    # Circuit names follow the DTx convention an engineer recognises — a
+    # letter block and a number, not ZK0001 — because the automation test
+    # filters for one by name and a made-up naming scheme would let a filter
+    # bug pass unnoticed.
+    names = [f"{letter}{number}"
+             for letter in "ABDMQ" for number in (0, 1, 4, 12, 34)]
+    rng.shuffle(names)
+    # every harness carries B4, so the test's default target always resolves
+    for name in ["B4", *names[:rng.randint(9, 17)]]:
         ends = rng.choice([1, 2, 2, 2, 3])
         harness.circuits.append(
-            [f"ZK{i:04d}", f"{zone} - FEED {i}", str(ends),
+            [name, f"{zone} - FEED {name}", str(ends),
              rng.choice(["", "", rng.choice(SALES_CODES)]),
              "0.35", "TXL"])
     for i in range(1, rng.randint(2, 5)):
         harness.splices.append(
-            [f"S{zone[:2]}{i:02d}", f"ZK{rng.randint(1, 9):04d}",
+            [f"S{zone[:2]}{i:02d}", rng.choice(harness.circuits)[0],
              str(rng.randint(3, 6)), "Ultrasonic"])
     for code in rng.sample(SALES_CODES, rng.randint(3, 6)):
         harness.sales_codes.append([code, pn, rng.choice(["Used", "Available"])])
@@ -233,6 +241,15 @@ class FakeBackend:
         ids.GRID_INLINE_MATCH: ids.TEXT_FILTER_INLINE,
     }
 
+    #: a named filter narrows its own column; index into that grid's headers
+    FILTERED_ON = {
+        ids.GRID_CIRCUITS: 0,                 # Circuit
+        ids.GRID_SPLICES: 0,                  # Splice
+        ids.GRID_CIRCUIT_COMPLEXITY: 0,       # Circuit
+        ids.GRID_INLINE_MATCH: 0,             # Inline
+        ids.GRID_SALES_CODES_EDIT: 1,         # Harness PN
+    }
+
     # -------------------------------------------------------------- verbs
     def exists(self, automation_id: str, scope: str = "") -> bool:
         return (automation_id in self._combos()
@@ -334,7 +351,18 @@ class FakeBackend:
         needle = self.filters.get(self.FILTERED_BY.get(automation_id, ""), "")
         if needle:
             low = needle.lower()
-            rows = [r for r in rows if any(low in str(c).lower() for c in r)]
+            # A filter box named for a column is modelled as filtering THAT
+            # column; the generic TextBox_Filter matches anywhere in the row.
+            # Which of the two DEF Editor really does is unverified — it can
+            # only be checked in front of the application — so the workflow
+            # reports exact matches alongside the row count rather than
+            # trusting either reading.
+            column = self.FILTERED_ON.get(automation_id)
+            if column is not None and column < len(found.headers):
+                rows = [r for r in rows
+                        if column < len(r) and low in str(r[column]).lower()]
+            else:
+                rows = [r for r in rows if any(low in str(c).lower() for c in r)]
 
         if automation_id == ids.GRID_CIRCUITS:
             if self.checks.get(ids.CHECK_CKT_MISSING):

@@ -39,6 +39,12 @@ COPY ui ./ui
 COPY splice ./splice
 COPY secrdb ./secrdb
 COPY assets ./assets
+# The Downloads page zips these kits on demand, and the Documentation page
+# renders these .md files. Both silently showed nothing without them: the
+# image had the pages but not what they serve.
+COPY packaging ./packaging
+COPY docs ./docs
+COPY README.md HOW-TO-RUN.md ./
 
 USER appuser
 EXPOSE 8504

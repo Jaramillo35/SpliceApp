@@ -32,6 +32,18 @@ def _wanted(path: Path) -> bool:
     return path.suffix not in EXCLUDE_SUFFIXES and path.name not in EXCLUDE_NAMES
 
 
+def available(kit: str, root: Path | None = None) -> bool:
+    """Is this kit actually in this build?
+
+    Asked before a download button is drawn. The packaged image did not ship
+    ``packaging/`` at first, so ``build`` raised inside a click handler,
+    NiceGUI swallowed it, and the button did nothing at all — the worst
+    possible failure, because it looks like the app is broken rather than
+    like something is missing.
+    """
+    return ((root or PACKAGING) / kit).is_dir()
+
+
 def files(kit: str, root: Path | None = None) -> list[Path]:
     """Everything a kit ships, relative to the kit directory."""
     base = (root or PACKAGING) / kit

@@ -24,7 +24,7 @@ import pytest
 KIT = Path(__file__).resolve().parents[1] / "packaging" / "def_editor_automation"
 sys.path.insert(0, str(KIT))
 
-from defauto import application, gridreader, ids            # noqa: E402
+from defauto import application, gridreader, ids, workflow  # noqa: E402
 from defauto.backend import AutomationError, ControlNotFound, Grid  # noqa: E402
 from defauto.fake import FakeBackend                        # noqa: E402
 
@@ -278,6 +278,90 @@ class TestTheKitStaysPortable:
         assert "selftest passed" in capsys.readouterr().out
 
 
+class TestTheAutomationTest:
+    """The one sequence the kit exists to run.
+
+    Four inputs, ten steps, stop at the first failure. These hold the
+    behaviour that makes a Windows run diagnosable: a failure has to name the
+    step that failed and say what it saw, because that is all an engineer
+    standing in front of DEF Editor will have to go on.
+    """
+
+    def test_it_reaches_the_circuit(self, session):
+        out = workflow.run(session, "2031ZR", "2031", "V1_A", "BODY_LEFT")
+        assert out.ok, out.failed and (out.failed.name, out.failed.detail)
+        assert all(step.ok for step in out.steps)
+        assert out.composite
+        assert workflow.TARGET_CIRCUIT in out.grid.column("Circuit")
+
+    def test_it_asks_for_four_values_and_finds_the_composite(self, session):
+        """The composite is not one of the four — it is worked out."""
+        out = workflow.run(session, "2031ZR", "2031", "V1_A", "BODY_LEFT")
+        assert "BODY_LEFT" in [h for h in session.composite.harnesses()]
+        assert out.composite.startswith("2031ZR")
+
+    def test_a_wrong_program_fails_on_that_step_and_lists_what_is_offered(
+            self, session):
+        out = workflow.run(session, "NOPE", "2031", "V1_A", "BODY_LEFT")
+        assert not out.ok
+        assert out.failed.name == "Select program NOPE"
+        assert "2031ZR" in out.failed.detail, out.failed.detail
+
+    def test_a_wrong_year_fails_on_the_year_step(self, session):
+        out = workflow.run(session, "2031ZR", "1999", "V1_A", "BODY_LEFT")
+        assert out.failed.name == "Select model year 1999"
+
+    def test_a_harness_in_no_composite_is_named_as_such(self, session):
+        out = workflow.run(session, "2031ZR", "2031", "V1_A", "NOT_A_HARNESS")
+        assert out.failed.name == "Find the composite holding NOT_A_HARNESS"
+        assert "composite" in out.failed.detail
+
+    def test_it_stops_at_the_first_failure(self, session):
+        """Steps after the failure must stay unrun, not be reported as passing."""
+        out = workflow.run(session, "NOPE", "2031", "V1_A", "BODY_LEFT")
+        index = out.steps.index(out.failed)
+        assert all(step.ok is True for step in out.steps[:index])
+        assert all(step.ok is None for step in out.steps[index + 1:])
+
+    def test_every_step_is_reported_as_it_happens(self, session):
+        """The GUI draws from these, so they must arrive one at a time."""
+        seen = []
+        workflow.run(session, "2031ZR", "2031", "V1_A", "BODY_LEFT",
+                     on_step=seen.append)
+        assert len(seen) == len(workflow.plan("a", "b", "c", "d"))
+        assert [s.name for s in seen] == [
+            s.name for s in workflow.plan("2031ZR", "2031", "V1_A", "BODY_LEFT")]
+
+    def test_a_harness_name_need_not_match_capitalisation(self, session):
+        out = workflow.run(session, "2031ZR", "2031", "V1_A", "body_left")
+        assert out.ok, out.failed and out.failed.detail
+
+    def test_the_plan_is_known_before_the_run(self):
+        """The window lists the steps greyed out before pressing Run."""
+        steps = workflow.plan("P", "Y", "Ph", "H")
+        assert all(step.ok is None for step in steps)
+        assert all(step.mark == "...." for step in steps)
+        assert any("H" in step.name for step in steps)
+        assert any(workflow.TARGET_CIRCUIT in step.name for step in steps)
+
+    def test_a_missing_automation_id_fails_on_step_one(self, session):
+        original = session.backend.exists
+        session.backend.exists = lambda a, s="": (
+            False if a == ids.GRID_COMPOSITE else original(a, s))
+        out = workflow.run(session, "2031ZR", "2031", "V1_A", "BODY_LEFT")
+        assert out.steps[0].ok is False
+        assert ids.GRID_COMPOSITE in out.steps[0].detail
+        assert "ids.py" in out.steps[0].detail
+
+    def test_the_filter_reports_exact_matches_separately(self, session):
+        """A sales code of ZB4 contains B4; the run must not conflate them."""
+        out = workflow.run(session, "2031ZR", "2031", "V1_A", "BODY_LEFT")
+        exact = sum(1 for value in out.grid.column("Circuit")
+                    if value == workflow.TARGET_CIRCUIT)
+        assert exact >= 1
+        assert str(len(out.grid)) in out.steps[-1].detail
+
+
 class TestItShipsFromTheApp:
     """The kit is zipped from the working tree when someone downloads it.
 
@@ -317,3 +401,53 @@ class TestItShipsFromTheApp:
         from nicegui_app.pages import downloads
 
         assert any(kit == "def_editor_automation" for kit, *_ in downloads.BUILT)
+
+
+class TestTheDownloadButtonActuallyWorks:
+    """The bug this class exists for: the button did nothing at all.
+
+    ``packaging/`` was not copied into the NiceGUI image, so ``kits.build``
+    raised inside ui.button's on_click, NiceGUI swallowed it, and the click
+    was silent — which reads as a broken app rather than a missing file.
+    """
+
+    def test_the_page_renders_a_button_when_the_kit_is_there(self):
+        from nicegui_app.pages import downloads
+        from splice.common import kits
+
+        for kit, filename, *_ in downloads.BUILT:
+            assert kits.available(kit), f"{kit} missing from the working tree"
+            assert filename.endswith(".zip")
+
+    def test_the_getter_returns_a_real_archive(self):
+        """What the click calls, called directly."""
+        import io
+        import zipfile
+        from nicegui_app.pages import downloads
+
+        data = downloads._build("def_editor_automation")
+        assert data[:2] == b"PK", "not a zip"
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            assert archive.testzip() is None
+            assert len(archive.namelist()) > 10
+
+    def test_a_missing_kit_is_reported_not_silent(self, monkeypatch, tmp_path):
+        """With the kit absent the page must say so, not draw a dead button."""
+        from splice.common import kits
+
+        monkeypatch.setattr(kits, "PACKAGING", tmp_path)
+        assert not kits.available("def_editor_automation")
+
+    def test_the_image_ships_what_the_page_serves(self):
+        """The actual fix: the Dockerfile has to COPY packaging/.
+
+        Asserted against the Dockerfile because that is where it was missing,
+        and nothing else in the test suite would have noticed.
+        """
+        from pathlib import Path
+
+        dockerfile = (Path(__file__).resolve().parents[1]
+                      / "Dockerfile.nicegui").read_text()
+        assert "COPY packaging" in dockerfile
+        assert "COPY docs" in dockerfile, \
+            "the Documentation page renders these and had none in the image"

@@ -1,21 +1,27 @@
-"""The workbench window: drive DEF Editor, or the demo, and watch it work.
+"""The automation test window: four fields, one button, ten steps.
 
-tkinter, deliberately. It ships with Python, so the exe is a few megabytes and
-building it on a locked-down work PC needs one pip install rather than a
-150 MB Qt wheel through a corporate proxy. The theming below is what makes
-that a real choice rather than a compromise: ``clam`` is the one built-in ttk
-theme whose colours are fully settable, so the window is a dark workbench
-rather than a grey 1998 dialog.
+This is a test harness, not a tool. It answers one question — can this reach a
+harness in DEF Editor through UI Automation and filter its circuits? — and the
+window is built so the answer is readable at a glance:
 
-Two rules the window obeys, both learned the hard way elsewhere:
+* four inputs, because those are the four an engineer knows;
+* every step of the run listed with its own PASS/FAIL and a sentence saying
+  what happened, so a failure names the step rather than leaving a traceback;
+* the run stops at the first failure, because step 7 tells you nothing once
+  step 3 did not happen.
 
-* **Nothing slow runs on the UI thread.** Every automation call goes to a
-  worker and comes back through ``after()``. A UIA call that takes eight
-  seconds against a busy DEF Editor would otherwise freeze the window solid,
-  and a frozen window is indistinguishable from a crashed one.
-* **Every action is logged with what it did.** The log pane is the point of a
-  test harness: when a workflow does the wrong thing you need to see which
-  control it touched, not just that the grid looked wrong.
+tkinter, deliberately: it ships with Python, so building the exe on a
+locked-down work PC is one pip install rather than a 150 MB Qt wheel through a
+corporate proxy. ``clam`` is the one built-in ttk theme whose colours are
+fully settable, which is what makes this a dark workbench rather than a grey
+1998 dialog.
+
+Nothing slow runs on the UI thread: the run goes to a worker and each step
+comes back through ``after()``. Tk is not thread-safe, so **every widget value
+a worker needs is read before the worker starts** — reading one inside the
+worker raises "main thread is not in main loop", and because failures are
+reported into the log rather than crashing, the symptom is a window that
+quietly does nothing.
 """
 
 from __future__ import annotations
@@ -28,16 +34,16 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import ttk
 
-from defauto import application, ids
+from defauto import application, workflow
 from defauto.backend import Grid
 
 # --------------------------------------------------------------- palette
-BG = "#12151c"          # window ground
-PANEL = "#191d27"       # cards and panes
-PANEL_HI = "#212736"    # hover / selected
-LINE = "#2b3242"        # hairlines
+BG = "#12151c"
+PANEL = "#191d27"
+PANEL_HI = "#212736"
+LINE = "#2b3242"
 TEXT = "#e6e9f0"
 MUTED = "#8b93a7"
 ACCENT = "#4c8dff"
@@ -45,29 +51,31 @@ OK = "#3fb950"
 WARN = "#d29922"
 BAD = "#f85149"
 
-MONO = ("Menlo", 11) if hasattr(tk, "_test") else ("Consolas", 10)
 UI = ("Segoe UI", 10)
 UI_BOLD = ("Segoe UI", 10, "bold")
 UI_TITLE = ("Segoe UI", 15, "bold")
+MONO = ("Consolas", 10)
 
 
 class Workbench(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("DEF Editor Automation — prototype")
-        self.geometry("1280x820")
-        self.minsize(1040, 680)
+        self.title("DEF Editor Automation — navigation test")
+        self.geometry("1080x780")
+        self.minsize(900, 640)
         self.configure(bg=BG)
 
         self.session: Optional[application.Session] = None
         self.grid_data: Grid = Grid()
         self.out_dir = Path.cwd() / "exports"
         self._queue: "queue.Queue[Callable[[], None]]" = queue.Queue()
+        self._step_rows: list = []
 
         self._style()
         self._build()
         self.after(50, self._drain)
-        self.log("Ready. Connect to DEF Editor, or start in Demo mode.")
+        self.log("Ready. Connect to DEF Editor, or press Demo mode to try the "
+                 "run without it.")
 
     # ------------------------------------------------------------- style
     def _style(self) -> None:
@@ -83,39 +91,33 @@ class Workbench(tk.Tk):
                         font=UI_TITLE)
         style.configure("Head.TLabel", background=PANEL, foreground=MUTED,
                         font=("Segoe UI", 9, "bold"))
+        style.configure("Ok.TLabel", background=PANEL, foreground=OK,
+                        font=("Consolas", 10, "bold"))
+        style.configure("Bad.TLabel", background=PANEL, foreground=BAD,
+                        font=("Consolas", 10, "bold"))
+        style.configure("Wait.TLabel", background=PANEL, foreground=MUTED,
+                        font=MONO)
         style.configure("TButton", background=PANEL_HI, foreground=TEXT,
                         borderwidth=0, focuscolor=PANEL_HI, padding=(12, 6))
-        style.map("TButton",
-                  background=[("active", LINE), ("disabled", PANEL)],
+        style.map("TButton", background=[("active", LINE), ("disabled", PANEL)],
                   foreground=[("disabled", MUTED)])
-        style.configure("Accent.TButton", background=ACCENT, foreground="#ffffff")
+        style.configure("Accent.TButton", background=ACCENT,
+                        foreground="#ffffff", padding=(18, 8), font=UI_BOLD)
         style.map("Accent.TButton", background=[("active", "#3d7ae0"),
                                                 ("disabled", LINE)])
-        style.configure("Nav.TButton", background=PANEL, foreground=TEXT,
-                        anchor="w", padding=(14, 9), borderwidth=0)
-        style.map("Nav.TButton", background=[("active", PANEL_HI)])
-        style.configure("NavOn.TButton", background=PANEL_HI, foreground=ACCENT,
-                        anchor="w", padding=(14, 9), borderwidth=0)
         style.configure("TEntry", fieldbackground=PANEL_HI, foreground=TEXT,
                         insertcolor=TEXT, borderwidth=0, padding=6)
         style.configure("TCombobox", fieldbackground=PANEL_HI, foreground=TEXT,
                         arrowcolor=MUTED, borderwidth=0, padding=5)
-        style.map("TCombobox", fieldbackground=[("readonly", PANEL_HI)])
-        style.configure("TCheckbutton", background=PANEL, foreground=TEXT,
-                        focuscolor=PANEL)
-        style.map("TCheckbutton", background=[("active", PANEL)])
         style.configure("Treeview", background=PANEL, fieldbackground=PANEL,
                         foreground=TEXT, borderwidth=0, rowheight=24)
         style.configure("Treeview.Heading", background=PANEL_HI,
                         foreground=MUTED, borderwidth=0, font=UI_BOLD,
                         padding=(8, 6))
-        style.map("Treeview.Heading", background=[("active", LINE)])
         style.map("Treeview", background=[("selected", ACCENT)],
                   foreground=[("selected", "#ffffff")])
         style.configure("TPanedwindow", background=BG)
         style.configure("Vertical.TScrollbar", background=PANEL_HI,
-                        troughcolor=PANEL, borderwidth=0, arrowcolor=MUTED)
-        style.configure("Horizontal.TScrollbar", background=PANEL_HI,
                         troughcolor=PANEL, borderwidth=0, arrowcolor=MUTED)
 
     # ------------------------------------------------------------- build
@@ -123,21 +125,17 @@ class Workbench(tk.Tk):
         self._build_topbar()
         body = ttk.Frame(self, style="Ground.TFrame")
         body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
-        self._build_sidebar(body)
+        self._build_form(body)
 
-        right = ttk.Frame(body, style="Ground.TFrame")
-        right.pack(side="left", fill="both", expand=True, padx=(12, 0))
-        self._build_selection(right)
-
-        panes = ttk.PanedWindow(right, orient="vertical")
+        panes = ttk.PanedWindow(body, orient="vertical")
         panes.pack(fill="both", expand=True, pady=(12, 0))
-        self._build_grid(panes)
+        self._build_steps(panes)
+        self._build_result(panes)
         self._build_log(panes)
 
     def _build_topbar(self) -> None:
         bar = ttk.Frame(self, padding=(16, 12))
         bar.pack(fill="x", padx=12, pady=12)
-
         ttk.Label(bar, text="DEF Editor Automation",
                   style="Title.TLabel").pack(side="left")
         self.status_dot = tk.Canvas(bar, width=10, height=10, bg=PANEL,
@@ -146,9 +144,6 @@ class Workbench(tk.Tk):
         self._dot(MUTED)
         self.status = ttk.Label(bar, text="Not attached", style="Muted.TLabel")
         self.status.pack(side="left")
-
-        ttk.Button(bar, text="Diagnose",
-                   command=self.on_diagnose).pack(side="right")
         ttk.Button(bar, text="Demo mode",
                    command=self.on_demo).pack(side="right", padx=6)
         ttk.Button(bar, text="Connect to DEF Editor", style="Accent.TButton",
@@ -158,110 +153,75 @@ class Workbench(tk.Tk):
         self.status_dot.delete("all")
         self.status_dot.create_oval(1, 1, 9, 9, fill=colour, outline="")
 
-    def _build_sidebar(self, parent) -> None:
-        side = ttk.Frame(parent, padding=(0, 10, 0, 10), width=210)
-        side.pack(side="left", fill="y")
-        side.pack_propagate(False)
-
-        ttk.Label(side, text="MODULES", style="Head.TLabel").pack(
-            anchor="w", padx=14, pady=(4, 8))
-        self.nav_buttons = {}
-        for label, handler in (
-                ("Harness", self.on_harness),
-                ("Devices", self.on_devices),
-                ("Circuits", self.on_circuits),
-                ("Splices", self.on_splices),
-                ("Complexity · Devices", self.on_cx_devices),
-                ("Complexity · Circuits", self.on_cx_circuits),
-                ("Complexity · Sales Codes", self.on_cx_codes),
-                ("Checks · Circuits", self.on_check_circuits),
-                ("Checks · Inlines", self.on_check_inlines)):
-            button = ttk.Button(side, text=label, style="Nav.TButton",
-                                command=handler)
-            button.pack(fill="x", padx=8, pady=1)
-            self.nav_buttons[label] = button
-
-        ttk.Label(side, text="EXPORT", style="Head.TLabel").pack(
-            anchor="w", padx=14, pady=(18, 8))
-        ttk.Button(side, text="Export this grid",
-                   command=self.on_export).pack(fill="x", padx=8, pady=2)
-        ttk.Button(side, text="Choose folder…",
-                   command=self.on_choose_folder).pack(fill="x", padx=8, pady=2)
-
-    def _build_selection(self, parent) -> None:
+    def _build_form(self, parent) -> None:
         card = ttk.Frame(parent, padding=(16, 14))
         card.pack(fill="x")
+        ttk.Label(card, text="WHAT TO OPEN", style="Head.TLabel").grid(
+            row=0, column=0, columnspan=6, sticky="w", pady=(0, 10))
 
-        ttk.Label(card, text="COMPOSITE SELECTION",
-                  style="Head.TLabel").grid(row=0, column=0, columnspan=8,
-                                            sticky="w", pady=(0, 10))
-        self.combo_line = self._combo(card, "Program", 1, 0, self.on_line)
-        self.combo_year = self._combo(card, "Model year", 1, 2, self.on_year)
-        self.combo_phase = self._combo(card, "Phase", 1, 4, None)
-        ttk.Button(card, text="Filter", style="Accent.TButton",
-                   command=self.on_filter).grid(row=2, column=6, padx=(12, 0),
-                                                sticky="w")
+        self.field_program = self._field(card, "Program", 1, 0)
+        self.field_year = self._field(card, "Model year", 1, 1)
+        self.field_phase = self._field(card, "Phase", 1, 2)
+        self.field_harness = self._field(card, "Harness", 1, 3, width=24)
+        self.field_program.bind("<<ComboboxSelected>>",
+                                lambda _e: self._offer_years())
+        self.field_year.bind("<<ComboboxSelected>>",
+                             lambda _e: self._offer_harnesses())
+        self.field_phase.bind("<<ComboboxSelected>>",
+                              lambda _e: self._offer_harnesses())
 
-        self.combo_composite = self._combo(card, "Composite", 3, 0,
-                                           self.on_composite, width=30)
-        self.combo_harness = self._combo(card, "Harness", 3, 2,
-                                         self.on_pick_harness, width=24)
-        ttk.Button(card, text="Open harness", command=self.on_open_harness) \
-            .grid(row=4, column=4, padx=(12, 0), sticky="w")
-        for column in range(8):
-            card.columnconfigure(column, weight=1 if column in (1, 3, 5) else 0)
+        self.run_button = ttk.Button(
+            card, text=f"Run test  →  filter circuit {workflow.TARGET_CIRCUIT}",
+            style="Accent.TButton", command=self.on_run)
+        self.run_button.grid(row=2, column=4, padx=(16, 0), sticky="w")
 
-    def _combo(self, parent, label: str, row: int, column: int,
-               on_change, width: int = 18) -> ttk.Combobox:
+        ttk.Label(card, text="The composite is found for you: DEF Editor needs "
+                             "one to reach a harness, so the run searches the "
+                             "composites this programme returned.",
+                  style="Muted.TLabel", wraplength=880, justify="left").grid(
+            row=3, column=0, columnspan=6, sticky="w", pady=(10, 0))
+
+    def _field(self, parent, label: str, row: int, column: int,
+               width: int = 16) -> ttk.Combobox:
         ttk.Label(parent, text=label, style="Muted.TLabel").grid(
-            row=row, column=column, sticky="w", padx=(0, 8))
-        combo = ttk.Combobox(parent, state="readonly", width=width, font=UI)
-        combo.grid(row=row + 1, column=column, sticky="w", padx=(0, 8),
-                   pady=(2, 8))
-        if on_change is not None:
-            combo.bind("<<ComboboxSelected>>", lambda _e: on_change())
-        return combo
+            row=row, column=column, sticky="w", padx=(0, 12))
+        # editable on purpose: the values are typed, and once attached the
+        # dropdown offers what DEF Editor actually has
+        box = ttk.Combobox(parent, width=width, font=UI)
+        box.grid(row=row + 1, column=column, sticky="w", padx=(0, 12))
+        return box
 
-    def _build_grid(self, panes) -> None:
+    def _build_steps(self, panes) -> None:
         frame = ttk.Frame(panes, padding=(16, 14))
-        panes.add(frame, weight=3)
+        panes.add(frame, weight=2)
+        ttk.Label(frame, text="RUN", style="Head.TLabel").pack(anchor="w")
+        self.steps_box = ttk.Frame(frame)
+        self.steps_box.pack(fill="both", expand=True, pady=(10, 0))
+        self.verdict = ttk.Label(frame, text="", style="Muted.TLabel",
+                                 wraplength=940, justify="left")
+        self.verdict.pack(anchor="w", pady=(10, 0))
 
-        header = ttk.Frame(frame)
-        header.pack(fill="x")
-        self.grid_title = ttk.Label(header, text="No module open",
-                                    style="Title.TLabel")
-        self.grid_title.pack(side="left")
-        self.grid_count = ttk.Label(header, text="", style="Muted.TLabel")
-        self.grid_count.pack(side="left", padx=12)
-
-        self.filter_var = tk.StringVar()
-        entry = ttk.Entry(header, textvariable=self.filter_var, width=26,
-                          font=UI)
-        entry.pack(side="right")
-        entry.bind("<Return>", lambda _e: self.on_refilter())
-        ttk.Label(header, text="Filter", style="Muted.TLabel").pack(
-            side="right", padx=(0, 8))
-
-        self.toggles = ttk.Frame(frame)
-        self.toggles.pack(fill="x", pady=(10, 0))
-        self.var_missing = tk.BooleanVar()
-        self.var_single = tk.BooleanVar()
-        self.var_live = tk.BooleanVar()
+    def _build_result(self, panes) -> None:
+        frame = ttk.Frame(panes, padding=(16, 12))
+        panes.add(frame, weight=2)
+        head = ttk.Frame(frame)
+        head.pack(fill="x")
+        self.result_title = ttk.Label(head, text="RESULT", style="Head.TLabel")
+        self.result_title.pack(side="left")
+        ttk.Button(head, text="Export CSV",
+                   command=self.on_export).pack(side="right")
 
         holder = ttk.Frame(frame)
         holder.pack(fill="both", expand=True, pady=(10, 0))
         self.tree = ttk.Treeview(holder, show="headings", selectmode="browse")
         vsb = ttk.Scrollbar(holder, orient="vertical", command=self.tree.yview)
-        hsb = ttk.Scrollbar(holder, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self.tree.configure(yscrollcommand=vsb.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
         holder.rowconfigure(0, weight=1)
         holder.columnconfigure(0, weight=1)
         self.tree.tag_configure("odd", background=PANEL)
         self.tree.tag_configure("even", background="#1d2230")
-        self.tree.tag_configure("bad", foreground=BAD)
 
     def _build_log(self, panes) -> None:
         frame = ttk.Frame(panes, padding=(16, 12))
@@ -271,7 +231,7 @@ class Workbench(tk.Tk):
         ttk.Label(head, text="LOG", style="Head.TLabel").pack(side="left")
         ttk.Button(head, text="Clear",
                    command=lambda: self._set_log("")).pack(side="right")
-        self.log_text = tk.Text(frame, height=8, bg="#0d1017", fg=MUTED,
+        self.log_text = tk.Text(frame, height=6, bg="#0d1017", fg=MUTED,
                                 insertbackground=TEXT, relief="flat",
                                 font=MONO, wrap="none", padx=10, pady=8)
         self.log_text.pack(fill="both", expand=True, pady=(8, 0))
@@ -282,7 +242,6 @@ class Workbench(tk.Tk):
 
     # --------------------------------------------------------- threading
     def _drain(self) -> None:
-        """Run whatever the workers handed back, on the UI thread."""
         while True:
             try:
                 self._queue.get_nowait()()
@@ -292,30 +251,24 @@ class Workbench(tk.Tk):
                 self.log(traceback.format_exc(), "bad")
         self.after(50, self._drain)
 
-    def run(self, work: Callable[[], object],
-            then: Optional[Callable[[object], None]] = None,
-            what: str = "") -> None:
+    def _post(self, call: Callable[[], None]) -> None:
+        self._queue.put(call)
+
+    def _run(self, work: Callable[[], object],
+             then: Optional[Callable[[object], None]] = None) -> None:
         """Do something slow off the UI thread and come back safely."""
         if self.session is None:
-            self.log("Not attached — press Connect or Demo mode first.", "warn")
             return
-        if what:
-            self.log(f"→ {what}")
-        # Whatever `work` needs from a widget must be read BEFORE this point.
-        # Tk is not thread-safe: `self.filter_var.get()` inside the worker
-        # raises "main thread is not in main loop", and because run() reports
-        # exceptions into the log rather than crashing, the symptom is a
-        # module that quietly shows nothing.
 
         def worker() -> None:
             try:
                 result = work()
             except Exception as exc:  # noqa: BLE001 - reported in the log pane
                 message = f"{type(exc).__name__}: {exc}"
-                self._queue.put(lambda: self.log(message, "bad"))
+                self._post(lambda: self.log(message, "bad"))
                 return
             if then is not None:
-                self._queue.put(lambda: then(result))
+                self._post(lambda: then(result))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -342,11 +295,68 @@ class Workbench(tk.Tk):
         self._dot(colour)
         self.status.configure(text=label)
         self.log(f"Attached: {label}", "ok")
-        lines = session.composite.vehicle_lines()
-        self.combo_line.configure(values=lines)
-        if lines:
-            self.combo_line.set(lines[0])
-            self.on_line()
+        try:
+            lines = session.composite.vehicle_lines()
+        except Exception as exc:  # noqa: BLE001 - shown, not raised
+            self.log(f"Could not read the program list: {exc}", "warn")
+            return
+        self.field_program.configure(values=lines)
+        if lines and not self.field_program.get():
+            self.field_program.set(lines[0])
+        self._offer_years()
+
+    def _offer_years(self) -> None:
+        """Offer the years and phases this program actually has."""
+        program = self.field_program.get().strip()
+        if not program:
+            return
+
+        def work():
+            from defauto import ids
+            if program not in self.session.composite.vehicle_lines():
+                return None
+            self.session.backend.select(ids.COMBO_VEHICLE_LINE, program)
+            return (self.session.composite.model_years(),
+                    self.session.composite.phases())
+
+        def then(result) -> None:
+            if result is None:
+                return
+            years, phases = result
+            self.field_year.configure(values=years)
+            self.field_phase.configure(values=phases)
+            if years and not self.field_year.get():
+                self.field_year.set(years[0])
+            if phases and not self.field_phase.get():
+                self.field_phase.set(phases[0])
+            self._offer_harnesses()
+
+        self._run(work, then)
+
+    def _offer_harnesses(self) -> None:
+        """Every harness in this programme, so the field is picked not guessed."""
+        program = self.field_program.get().strip()
+        year = self.field_year.get().strip()
+        phase = self.field_phase.get().strip()
+        if not all((program, year, phase)):
+            return
+
+        def work():
+            self.session.composite.choose_programme(program, year, phase)
+            if not len(self.session.composite.search()):
+                return []
+            names = set()
+            for composite in self.session.composite.composites():
+                self.session.composite.choose_composite(composite)
+                names.update(self.session.composite.harnesses())
+            return sorted(names)
+
+        def then(names) -> None:
+            self.field_harness.configure(values=names)
+            if names and not self.field_harness.get():
+                self.field_harness.set(names[0])
+
+        self._run(work, then)
 
     def on_demo(self) -> None:
         self._attached(application.demo(out_dir=self.out_dir),
@@ -357,261 +367,114 @@ class Workbench(tk.Tk):
         try:
             session = application.connect(out_dir=self.out_dir)
         except ImportError:
-            self.log("pywinauto is not installed — this is the Windows-only "
+            self.log("pywinauto is not installed — that is the Windows-only "
                      "path. pip install -r requirements.txt", "bad")
             return
         except Exception as exc:  # noqa: BLE001 - shown, not raised
             self.log(f"Could not attach: {exc}", "bad")
-            self.log("Is DEF Editor running? Try Demo mode to explore the "
-                     "workflow without it.", "warn")
+            self.log("Is DEF Editor running and signed in? Demo mode runs the "
+                     "same steps without it.", "warn")
             return
         self._attached(session, "Attached to DEF Editor", OK)
 
-    def on_diagnose(self) -> None:
+    # ---------------------------------------------------------- the test
+    def on_run(self) -> None:
         if self.session is None:
             self.log("Not attached — press Connect or Demo mode first.", "warn")
             return
-        found = self.session.diagnose()
-        for auto_id, ok in found:
-            self.log(f"  {'found  ' if ok else 'MISSING'}  {auto_id}",
-                     "ok" if ok else "bad")
-        missing = [a for a, ok in found if not ok]
-        if missing:
-            self.log(f"{len(missing)} control(s) missing — edit defauto/ids.py",
-                     "bad")
-        else:
-            self.log("All essential controls present.", "ok")
-
-    def on_choose_folder(self) -> None:
-        chosen = filedialog.askdirectory(title="Where should exports go?")
-        if chosen:
-            self.out_dir = Path(chosen)
-            if self.session is not None:
-                self.session.reports.out_dir = self.out_dir
-            self.log(f"Exports will be written to {self.out_dir}")
-
-    # -------------------------------------------------------- selection
-    def on_line(self) -> None:
-        line = self.combo_line.get()          # read on the UI thread; see run()
-        self.run(lambda: self._pick_line(line), self._fill_year,
-                 f"select program {line}")
-
-    def _pick_line(self, value: str):
-        self.session.backend.select(ids.COMBO_VEHICLE_LINE, value)
-        return self.session.composite.model_years()
-
-    def _fill_year(self, years) -> None:
-        self.combo_year.configure(values=years)
-        self.combo_year.set(years[0] if years else "")
-        if years:
-            self.on_year()
-
-    def on_year(self) -> None:
-        year = self.combo_year.get()
-        self.run(lambda: self._pick_year(year), self._fill_phase,
-                 f"select model year {year}")
-
-    def _pick_year(self, value: str):
-        self.session.backend.select(ids.COMBO_MODEL_YEAR, value)
-        return self.session.composite.phases()
-
-    def _fill_phase(self, phases) -> None:
-        self.combo_phase.configure(values=phases)
-        self.combo_phase.set(phases[0] if phases else "")
-
-    def on_filter(self) -> None:
-        phase = self.combo_phase.get()
-        self.run(lambda: self._search(phase), self._filtered,
-                 f"Filter composites for phase {phase}")
-
-    def _search(self, phase: str):
-        self.session.backend.select(ids.COMBO_PHASE, phase)
-        grid = self.session.composite.search()
-        return grid, self.session.composite.composites()
-
-    def _filtered(self, result) -> None:
-        grid, composites = result
-        self._show("Composites", grid)
-        self.combo_composite.configure(values=composites)
-        if composites:
-            self.combo_composite.set(composites[0])
-            self.on_composite()
-        else:
-            self.log("No composites came back — check the three combo boxes.",
-                     "warn")
-
-    def on_composite(self) -> None:
-        name = self.combo_composite.get()
-        self.run(lambda: self._pick_composite(name), self._fill_harness,
-                 f"select composite {name}")
-
-    def _pick_composite(self, name: str):
-        self.session.composite.choose_composite(name)
-        return self.session.composite.harnesses()
-
-    def _fill_harness(self, harnesses) -> None:
-        self.combo_harness.configure(values=harnesses)
-        if harnesses:
-            self.combo_harness.set(harnesses[0])
-
-    def on_pick_harness(self) -> None:
-        pass    # chosen on Open, so a mis-click does not navigate
-
-    def on_open_harness(self) -> None:
-        name = self.combo_harness.get()
-        if not name:
-            self.log("Pick a harness first.", "warn")
+        # read every field HERE, on the UI thread; see the module docstring
+        program = self.field_program.get().strip()
+        year = self.field_year.get().strip()
+        phase = self.field_phase.get().strip()
+        harness = self.field_harness.get().strip()
+        blank = [name for name, value in (("program", program), ("year", year),
+                                          ("phase", phase),
+                                          ("harness", harness)) if not value]
+        if blank:
+            self.log(f"Fill in: {', '.join(blank)}", "warn")
             return
-        self.run(lambda: self._open_harness(name),
-                 lambda sel: self.log(f"Open: {sel}", "ok"),
-                 f"open harness {name}")
 
-    def _open_harness(self, name: str):
-        self.session.composite.choose_harness(name)
-        self.session.harness.open()
-        return self.session.composite.selection
+        self._show_plan(workflow.plan(program, year, phase, harness))
+        self.verdict.configure(text="Running…", style="Muted.TLabel")
+        self.run_button.state(["disabled"])
+        self.tree.delete(*self.tree.get_children())
+        self.log(f"Run: {program} / {year} / {phase} / {harness} "
+                 f"→ circuit {workflow.TARGET_CIRCUIT}")
 
-    # ----------------------------------------------------------- modules
-    def _mark(self, label: str) -> None:
-        for name, button in self.nav_buttons.items():
-            button.configure(style="NavOn.TButton" if name == label
-                             else "Nav.TButton")
+        def on_step(step) -> None:
+            self._post(lambda s=step: self._update_step(s))
 
-    def _clear_toggles(self) -> None:
-        for child in self.toggles.winfo_children():
+        def then(outcome) -> None:
+            self.run_button.state(["!disabled"])
+            self._finish(outcome)
+
+        self._run(lambda: workflow.run(self.session, program, year, phase,
+                                       harness, on_step=on_step), then)
+
+    def _show_plan(self, steps) -> None:
+        for child in self.steps_box.winfo_children():
             child.destroy()
+        self._step_rows = []
+        for index, step in enumerate(steps):
+            row = ttk.Frame(self.steps_box)
+            row.pack(fill="x", pady=1)
+            mark = ttk.Label(row, text="....", style="Wait.TLabel", width=6)
+            mark.pack(side="left")
+            ttk.Label(row, text=f"{index + 1}. {step.name}").pack(side="left")
+            detail = ttk.Label(row, text="", style="Muted.TLabel")
+            detail.pack(side="left", padx=(12, 0))
+            self._step_rows.append((step.name, mark, detail))
 
-    def _module(self, label: str, work, toggles: bool = False) -> None:
-        self._mark(label)
-        self._clear_toggles()
-        if toggles:
-            for text, var, handler in (
-                    ("Only missing", self.var_missing, self.on_circuits),
-                    ("Only single-ended", self.var_single, self.on_circuits),
-                    ("Live checks", self.var_live, self.on_circuits)):
-                ttk.Checkbutton(self.toggles, text=text, variable=var,
-                                command=handler).pack(side="left", padx=(0, 16))
-        self.run(work, lambda grid: self._show(label, grid), f"open {label}")
+    def _update_step(self, step) -> None:
+        for name, mark, detail in self._step_rows:
+            if name == step.name:
+                mark.configure(text=step.mark,
+                               style="Ok.TLabel" if step.ok else "Bad.TLabel")
+                detail.configure(text=step.detail)
+                self.log(f"  {step.mark}  {step.name} — {step.detail}",
+                         "ok" if step.ok else "bad")
+                return
 
-    def on_harness(self) -> None:
-        self._module("Harness", lambda: (self.session.harness.open(),
-                                         self.session.composite.search())[1])
+    def _finish(self, outcome) -> None:
+        if outcome.ok:
+            self.verdict.configure(
+                text=f"PASSED — reached {self.field_harness.get()} in "
+                     f"{outcome.composite} and filtered "
+                     f"{workflow.TARGET_CIRCUIT}: {len(outcome.grid)} row(s).",
+                style="Ok.TLabel")
+            self.log("Test passed.", "ok")
+        else:
+            failed = outcome.failed
+            where = (f"step {outcome.steps.index(failed) + 1}, {failed.name}"
+                     if failed else "an unknown step")
+            self.verdict.configure(
+                text=(f"FAILED at {where} — {failed.detail}" if failed
+                      else "FAILED"), style="Bad.TLabel")
+            self.log(f"Test failed at {where}.", "bad")
+        self._show(outcome.grid)
 
-    def on_devices(self) -> None:
-        needle = self.filter_var.get()
-        self._module("Devices", lambda: (self.session.devices.open(),
-                                         self.session.devices.read(needle))[1])
-
-    def on_circuits(self) -> None:
-        needle = self.filter_var.get()
-        live, missing = self.var_live.get(), self.var_missing.get()
-        single = self.var_single.get()
-
-        def work():
-            self.session.circuits.open()
-            self.session.circuits.live_checks(live)
-            self.session.circuits.only_missing(missing)
-            self.session.circuits.only_single_ended(single)
-            return self.session.circuits.read(needle)
-        self._module("Circuits", work, toggles=True)
-
-    def on_splices(self) -> None:
-        needle = self.filter_var.get()
-        self._module("Splices", lambda: (self.session.splices.open(),
-                                         self.session.splices.read(needle))[1])
-
-    def on_cx_devices(self) -> None:
-        needle = self.filter_var.get()
-        self._module("Complexity · Devices",
-                     lambda: self.session.complexity.devices(needle))
-
-    def on_cx_circuits(self) -> None:
-        needle = self.filter_var.get()
-        self._module("Complexity · Circuits",
-                     lambda: self.session.complexity.circuits(needle))
-
-    def on_cx_codes(self) -> None:
-        needle = self.filter_var.get()
-
-        def work():
-            grid = self.session.complexity.sales_codes(needle)
-            compare = self.session.complexity.compare_codes()
-            self._queue.put(lambda: self.log(
-                f"available only: {compare['available_only'] or '—'} · "
-                f"used only: {compare['used_only'] or '—'}"))
-            return grid
-        self._module("Complexity · Sales Codes", work)
-
-    def on_check_circuits(self) -> None:
-        def work():
-            result = self.session.quality.circuits()
-            self._queue.put(lambda: self.log(result.summary,
-                                             "ok" if result.passed else "bad"))
-            self._queue.put(lambda: self.log(result.text))
-            return self.session.circuits.read()
-        self._module("Checks · Circuits", work)
-
-    def on_check_inlines(self) -> None:
-        self._mark("Checks · Inlines")
-        self._clear_toggles()
-        ttk.Button(self.toggles, text="Run all pairs",
-                   command=self.on_run_inline).pack(side="left")
-        ttk.Button(self.toggles, text="Sign off",
-                   command=self.on_sign_off).pack(side="left", padx=8)
-        self.run(lambda: self.session.quality.inline_pairs(),
-                 lambda grid: self._show("Checks · Inlines", grid),
-                 "open inline checks")
-
-    def on_run_inline(self) -> None:
-        def then(result) -> None:
-            self.log(result.summary, "ok" if result.passed else "bad")
-            self.log(result.text)
-            self._show("Checks · Inlines", result.rows)
-        self.run(lambda: self.session.quality.run_inline(), then,
-                 "run all inline pairs")
-
-    def on_sign_off(self) -> None:
-        self.run(lambda: self.session.quality.sign_off(),
-                 lambda r: self.log(r.text, "ok"), "sign off inline check")
-
-    def on_refilter(self) -> None:
-        label = next((n for n, b in self.nav_buttons.items()
-                      if str(b.cget("style")) == "NavOn.TButton"), None)
-        handler = {"Devices": self.on_devices, "Circuits": self.on_circuits,
-                   "Splices": self.on_splices,
-                   "Complexity · Devices": self.on_cx_devices,
-                   "Complexity · Circuits": self.on_cx_circuits,
-                   "Complexity · Sales Codes": self.on_cx_codes}.get(label or "")
-        if handler:
-            handler()
-
-    # -------------------------------------------------------------- grid
-    def _show(self, title: str, grid: Grid) -> None:
+    def _show(self, grid: Grid) -> None:
         self.grid_data = grid
-        self.grid_title.configure(text=title)
-        self.grid_count.configure(
-            text=f"{len(grid)} row(s) · {len(grid.headers)} column(s)")
+        self.result_title.configure(
+            text=f"RESULT — circuit {workflow.TARGET_CIRCUIT}: "
+                 f"{len(grid)} row(s)")
         self.tree.delete(*self.tree.get_children())
         self.tree.configure(columns=grid.headers)
         for header in grid.headers:
             self.tree.heading(header, text=header)
-            width = max(90, min(260, 11 * (len(header) + 6)))
-            self.tree.column(header, width=width, anchor="w", stretch=True)
+            self.tree.column(header, anchor="w", stretch=True,
+                             width=max(90, min(280, 11 * (len(header) + 8))))
         for index, row in enumerate(grid.rows):
-            tags = ["even" if index % 2 else "odd"]
-            if any(str(cell).strip().lower() in ("mismatch", "fail", "missing")
-                   for cell in row):
-                tags.append("bad")
-            self.tree.insert("", "end", values=row, tags=tuple(tags))
-        self.log(f"   {len(grid)} row(s)")
+            self.tree.insert("", "end", values=row,
+                             tags=("even" if index % 2 else "odd",))
 
     def on_export(self) -> None:
         if not len(self.grid_data):
-            self.log("Nothing to export — open a module first.", "warn")
+            self.log("Nothing to export — run the test first.", "warn")
             return
-        name = self.grid_title.cget("text")
         try:
-            report = self.session.reports.save(name, self.grid_data)
+            report = self.session.reports.save(
+                f"Circuits_{workflow.TARGET_CIRCUIT}", self.grid_data)
         except Exception as exc:  # noqa: BLE001 - shown, not raised
             self.log(f"Export failed: {exc}", "bad")
             return

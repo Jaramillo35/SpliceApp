@@ -45,12 +45,32 @@ ITEMS = [
 ]
 
 
+def _build(kit: str) -> bytes:
+    """Zip a kit, and say so out loud if it cannot be zipped.
+
+    A getter that raises inside ui.button's on_click leaves the click doing
+    nothing visible, which is indistinguishable from a broken app.
+    """
+    try:
+        return kits.build(kit)
+    except Exception as exc:  # noqa: BLE001 — surfaced, never swallowed
+        ui.notify(f"Could not build {kit}: {exc}", type="negative",
+                  multi_line=True, close_button=True)
+        raise
+
+
 @ui.page("/downloads")
 def page() -> None:
     with c.frame("Downloads", "Kits and extensions that ship with the toolkit."):
         for kit, filename, title, desc in BUILT:
             with c.card(title, desc):
-                c.download(filename, lambda k=kit: kits.build(k))
+                if kits.available(kit):
+                    c.download(filename, lambda k=kit: _build(k), dress=False)
+                else:
+                    c.note("blocker",
+                           f"packaging/{kit} is not in this build, so there is "
+                           "nothing to zip. The Docker image has to COPY "
+                           "packaging/ — rebuild with the current Dockerfile.")
         for filename, title, desc in ITEMS:
             path = DOWNLOADS / filename
             with c.card(title, desc):

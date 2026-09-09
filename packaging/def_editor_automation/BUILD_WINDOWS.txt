@@ -1,17 +1,23 @@
-DEF Editor Automation - Windows build steps
-===========================================
+DEF Editor Automation - navigation test
+=======================================
 
 What it is
 ----------
-A prototype for automating DEF EDITOR through Windows UI Automation. It opens
-a workbench window that attaches to a running DEF Editor, walks the normal
-sequence (program > model year > phase > composite > harness), reads any
-module's grid, runs the quality checks, and exports what it read as CSV.
+A prototype that answers one question: can DEF EDITOR be driven through
+Windows UI Automation?
 
-It is built so it can be developed and proven WITHOUT DEF Editor. Every
-workflow runs against a scripted stand-in, so the automation logic is
-exercised before it ever meets the real application - press "Demo mode" in
-the window, or run the selftest below.
+You give it four values - program, model year, phase, harness - and it does
+one sequence:
+
+   open that harness  ->  open its Circuits page  ->  filter for circuit B4
+
+Ten steps, each reported PASS or FAIL with a sentence saying what happened,
+stopping at the first failure. That is the whole app. It is a test harness,
+not a tool.
+
+You are not asked for the composite. DEF Editor needs one to reach a harness,
+so the run searches the composites the filter returned and tells you which one
+it found the harness in.
 
 No customer, user, machine or business data is present anywhere in this kit.
 The programme the demo serves is invented.
@@ -19,10 +25,12 @@ The programme the demo serves is invented.
 
 Try it first (any machine, no DEF Editor, no install)
 -----------------------------------------------------
-   python main.py --selftest      runs a whole workflow and prints the result
-   python main.py --demo          opens the window attached to the demo
+   python main.py --selftest      run the whole test and print the result
+   python main.py --demo          open the window attached to the demo
 
-Only "Connect to DEF Editor" needs Windows and pywinauto.
+Only "Connect to DEF Editor" needs Windows and pywinauto. Everything else -
+the demo, the selftest, the tests - runs anywhere, which is how the sequence
+was proven before it ever met the real application.
 
 
 Build the exe (one time, on a Windows 10/11 PC with Python 3.11+)
@@ -47,62 +55,61 @@ Build the exe (one time, on a Windows 10/11 PC with Python 3.11+)
 Use
 ---
 1. Start DEF Editor and sign in as usual.
-2. Run the exe, then press "Connect to DEF Editor".
-3. Press "Diagnose" FIRST. It reports which of the AutomationIds this kit
-   depends on are present in the window it attached to. If any are missing,
-   DEF Editor has changed and the fix is one file - see below.
-4. Pick program / model year / phase, press Filter, pick a composite and a
-   harness, then "Open harness".
-5. Choose a module on the left. The grid is read live; the Filter box and the
-   checkboxes are the application's own, so what you see is what an engineer
-   at the screen would see.
-6. "Export this grid" writes a timestamped CSV into the exports folder
-   ("Choose folder..." changes where).
+2. Run the exe, press "Connect to DEF Editor".
+3. The four dropdowns fill from what DEF Editor actually offers. Pick or type
+   program, model year, phase and harness.
+4. Press "Run test". Watch the ten steps.
+
+If it fails, the step that failed says why. Step 1 is the important one: it
+lists any AutomationId this kit expects and the window does not have.
+
+
+Changing what it filters for
+----------------------------
+B4 is one constant, at the top of defauto\workflow.py:
+
+      TARGET_CIRCUIT = "B4"
+
+or pass it on the command line:  python main.py --selftest --circuit A0
 
 
 When DEF Editor changes
 -----------------------
-Every AutomationId lives in defauto\ids.py and nowhere else. If Diagnose
-reports something missing, find the new id (Inspect.exe, or Accessibility
-Insights for Windows), change it in that one file, and everything above it
-keeps working. That is the whole reason the ids are not scattered through the
-code.
+Every AutomationId lives in defauto\ids.py and nowhere else. If step 1 reports
+something missing, find the new id (Inspect.exe, or Accessibility Insights for
+Windows), change it in that one file, and everything above it keeps working.
 
 
 How it is laid out
 ------------------
    main.py                entry point (window / --demo / --selftest)
+   defauto\workflow.py    THE TEST - the ten steps, and nothing else
+   defauto\gui.py         the window: four fields, one button, ten steps
    defauto\ids.py         every AutomationId - the contract with DEF Editor
    defauto\backend.py     the seam: UiaBackend (pywinauto) and the protocol
    defauto\fake.py        the scripted DEF Editor used by Demo and the tests
+
    defauto\navigation.py  menu navigation, and nothing else
-   defauto\composite.py   steps 1-2: programme, composite, harness
-   defauto\harness.py     step 3: the harness page
-   defauto\devices.py     \
-   defauto\circuits.py     |
-   defauto\splices.py      |- one module per DEF Editor page
-   defauto\complexity.py   |
-   defauto\qualitychecks.py/
+   defauto\composite.py   program / model year / phase / composite / harness
+   defauto\harness.py     the harness page
+   defauto\circuits.py    the Circuits page
    defauto\gridreader.py  reading a DataGridView, and exporting one
    defauto\reports.py     writing files
-   defauto\gui.py         the workbench window
 
-The layers are kept apart on purpose - navigation, grid reading, validation
-and reporting each know one job - so a change in how DEF Editor is navigated
-cannot break how a grid is exported.
+   defauto\devices.py       \
+   defauto\splices.py        |  present and tested, but NOT used by this
+   defauto\complexity.py     |  test. They cover the other DEF Editor pages
+   defauto\qualitychecks.py /   from the original specification.
 
 
 Notes and limits
 ----------------
 - Attaching needs DEF Editor already running and signed in. This kit never
   handles credentials and never automates a login.
-- The inline sign-off refuses to press the button while any pair is still
-  failing. Passing bypass=True sets the application's OWN bypass checkbox, so
-  a bypassed sign-off looks in DEF Editor exactly like one a person made -
-  there is no path here that signs off invisibly.
-- Screen coordinates are never used. Everything is found by AutomationId,
-  except the three inline action buttons, which have none and are found by
-  their visible text.
-- Run it against a harness you are willing to have read. It only reads and
-  runs the application's own checks, but it is a prototype and it is driving
-  a real tool.
+- It only reads. Nothing in this sequence edits, saves or signs anything off.
+- Screen coordinates are never used - everything is found by AutomationId.
+- One thing this kit cannot know without standing in front of DEF Editor:
+  whether the circuit filter box matches the Circuit column or anywhere in
+  the row (a sales code of ZB4 contains B4). Step 10 reports the row count
+  AND how many rows have Circuit exactly equal to the target, so the run
+  tells you which it turned out to be.
