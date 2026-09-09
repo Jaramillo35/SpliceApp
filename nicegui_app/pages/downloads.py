@@ -7,8 +7,24 @@ from pathlib import Path
 from nicegui import ui
 
 from nicegui_app import components as c
+from splice.common import kits
 
 DOWNLOADS = Path(__file__).resolve().parents[2] / "assets" / "downloads"
+
+#: Kits built from ``packaging/`` at download time rather than committed. The
+#: zip is made from the working tree, so it cannot drift from the source the
+#: tests run against — see ``splice.common.kits``.
+BUILT = [
+    ("def_editor_automation", "def-editor-automation.zip",
+     "DEF Editor automation prototype (Windows .exe)",
+     "Automates DEF EDITOR through Windows UI Automation: walks program → "
+     "model year → phase → composite → harness, reads any module's grid, runs "
+     "the quality checks, exports CSV. Ships as source with a PyInstaller "
+     "spec — unzip on a Windows PC, pip install -r requirements.txt, "
+     "pyinstaller def_editor_automation.spec. Includes a Demo mode and a "
+     "--selftest that run the whole workflow with no DEF Editor, so the kit "
+     "can be tried anywhere before it is built."),
+]
 
 ITEMS = [
     ("teams-transcript-recorder.zip",
@@ -32,6 +48,9 @@ ITEMS = [
 @ui.page("/downloads")
 def page() -> None:
     with c.frame("Downloads", "Kits and extensions that ship with the toolkit."):
+        for kit, filename, title, desc in BUILT:
+            with c.card(title, desc):
+                c.download(filename, lambda k=kit: kits.build(k))
         for filename, title, desc in ITEMS:
             path = DOWNLOADS / filename
             with c.card(title, desc):

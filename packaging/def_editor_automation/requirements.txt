@@ -1,0 +1,9 @@
+# DEF Editor Automation — build and run dependencies.
+#
+# The GUI uses tkinter, which ships with Python itself, so there is no GUI
+# package to install. pywinauto and its UIA stack are Windows-only: the kit
+# imports them lazily, so everything except "Connect to DEF Editor" — the
+# demo, the selftest, the tests — runs on any operating system without them.
+pywinauto>=0.6.8
+comtypes
+pyinstaller
