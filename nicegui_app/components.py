@@ -100,6 +100,9 @@ PAGES: tuple[Page, ...] = (
          "Anonymized Teams caption recording — Speaker 1..N, LLM-ready minutes."),
     Page("Downloads", "download", "/downloads", "Utilities",
          "Kits and extensions that ship with the toolkit."),
+    Page("Documentation", "menu_book", "/docs", "Utilities",
+         "Every Markdown file that ships with the build, rendered — plus any "
+         "you drop in."),
 )
 OVERVIEW = Page("Overview", "space_dashboard", "/", "",
                 "Continue where you left off; what needs attention.")

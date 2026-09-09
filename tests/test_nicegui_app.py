@@ -14,7 +14,7 @@ EXPECTED_ROUTES = {
     "/", "/splice-generation", "/dtx-compare", "/harness-complexity",
     "/hrn-chart", "/vbom",
     "/circuit-applicability", "/circuit-health", "/secr", "/ask", "/transcripts", "/downloads",
-    "/admin", "/version",
+    "/docs", "/admin", "/version",
 }
 
 
@@ -67,3 +67,54 @@ class TestWorkbenchHelpers:
         r = self._result()
         segments = ch.progress_segments(r, {"dispositions": {}})
         assert abs(sum(s[1] for s in segments) - 1.0) < 1e-6
+
+
+class TestDocumentation:
+    """The Markdown viewer: what it lists, what it opens on, what it renders."""
+
+    def test_index_finds_the_shipped_docs(self):
+        from nicegui_app.pages import docs
+        rels = {d.rel for d in docs.repo_docs()}
+        assert "README.md" in rels
+        assert "docs/ARCHITECTURE.md" in rels
+        assert all(r.endswith(".md") for r in rels)
+
+    def test_index_prunes_tooling_and_hidden_trees(self):
+        from nicegui_app.pages import docs
+        rels = {d.rel for d in docs.repo_docs()}
+        # .git/.github/.claude are instructions for tools, not for the reader;
+        # a checkout with a .venv must not list the dependencies' READMEs
+        assert not any(r.startswith(".") for r in rels)
+        assert not any(part in docs.SKIP
+                       for r in rels for part in r.split("/")[:-1])
+
+    def test_documents_are_grouped_by_their_folder(self):
+        from nicegui_app.pages import docs
+        by_rel = {d.rel: d for d in docs.repo_docs()}
+        assert by_rel["README.md"].group == docs.ROOT_GROUP
+        assert by_rel["docs/ARCHITECTURE.md"].group == "docs"
+        assert by_rel["docs/ARCHITECTURE.md"].title == "ARCHITECTURE"
+
+    def test_root_documents_are_listed_first(self):
+        from nicegui_app.pages import docs
+        groups = [d.group for d in docs.repo_docs()]
+        root_count = groups.count(docs.ROOT_GROUP)
+        # the root block is contiguous and at the top, so the rail's first
+        # heading is the README's, not "deploy"
+        assert groups[:root_count] == [docs.ROOT_GROUP] * root_count
+        assert docs.ROOT_GROUP not in groups[root_count:]
+
+    def test_it_opens_on_the_readme_not_the_changelog(self):
+        from nicegui_app.pages import docs
+        found = docs.repo_docs()
+        assert docs.opening_doc(found).rel == "README.md"
+        assert docs.opening_doc([]) is None
+
+    async def test_page_lists_and_renders(self, user):
+        await user.open("/docs")
+        await user.should_see("Documentation")
+        # the index is grouped by folder and lists every shipped document
+        await user.should_see("Project root")
+        await user.should_see("ARCHITECTURE")
+        # and the reader opens on the README rather than an empty panel
+        await user.should_see("README")
