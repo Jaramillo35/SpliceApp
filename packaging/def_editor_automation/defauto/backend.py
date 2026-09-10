@@ -42,6 +42,37 @@ class NotConnected(AutomationError):
 
 
 @dataclass
+class WindowInfo:
+    """One top-level window, as the picker shows it."""
+
+    handle: int
+    pid: int
+    title: str
+    process: str = ""
+
+    @property
+    def likely(self) -> bool:
+        """Does this look like DEF Editor? Flagged in the list, never chosen."""
+        text = f"{self.title} {self.process}".lower()
+        return "def" in text and ("editor" in text or "master form" in text)
+
+    def __str__(self) -> str:
+        tag = "  ← looks like DEF Editor" if self.likely else ""
+        proc = f"  [{self.process}]" if self.process else ""
+        return f"{self.title}{proc}  (pid {self.pid}){tag}"
+
+
+def _process_name(pid: int) -> str:
+    """The executable behind a pid, when psutil is there; blank otherwise."""
+    try:
+        import psutil  # noqa: PLC0415 - optional
+
+        return psutil.Process(pid).name()
+    except Exception:  # noqa: BLE001 - optional information
+        return ""
+
+
+@dataclass
 class Grid:
     """A DataGridView read out as text.
 
@@ -162,21 +193,40 @@ class UiaBackend:
         return self
 
     @staticmethod
-    def running_processes() -> List[dict]:
-        """Candidate DEF Editor processes, for the GUI's connect dialog."""
+    def list_windows() -> List["WindowInfo"]:
+        """Every top-level window on the desktop, so the user can point at
+        DEF Editor rather than the kit guessing its title.
+
+        The title this kit was written against is ``DEF EDITOR - Master
+        Form``; a different release, a different language pack or a document
+        name appended to the title all defeat a guess. A list defeats none of
+        them. Likely candidates are flagged, never chosen.
+        """
         from pywinauto import Desktop  # noqa: PLC0415 - Windows only
 
-        from defauto import ids
-
-        out = []
+        out: List[WindowInfo] = []
         for window in Desktop(backend="uia").windows():
             try:
                 title = window.window_text()
+                if not title.strip():
+                    continue
+                out.append(WindowInfo(
+                    handle=int(window.handle), pid=int(window.process_id()),
+                    title=title, process=_process_name(window.process_id())))
             except Exception:  # noqa: BLE001 - a window may vanish mid-scan
                 continue
-            if ids.MAIN_WINDOW_TITLE.split(" - ")[0].lower() in title.lower():
-                out.append({"pid": window.process_id(), "title": title})
+        out.sort(key=lambda w: (not w.likely, w.title.lower()))
         return out
+
+    def connect_handle(self, handle: int) -> "UiaBackend":
+        """Attach to the window the user picked from ``list_windows``."""
+        from pywinauto import Application  # noqa: PLC0415 - Windows only
+
+        self._app = Application(backend="uia").connect(handle=handle,
+                                                        timeout=self.timeout)
+        self._window = self._app.window(handle=handle)
+        self._window.wait("visible", timeout=self.timeout)
+        return self
 
     def attached(self) -> bool:
         return self._window is not None

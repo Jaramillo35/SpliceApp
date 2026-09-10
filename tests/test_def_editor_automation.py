@@ -451,3 +451,37 @@ class TestTheDownloadButtonActuallyWorks:
         assert "COPY packaging" in dockerfile
         assert "COPY docs" in dockerfile, \
             "the Documentation page renders these and had none in the image"
+
+
+
+class TestTheWindowPicker:
+    """DEF Editor was not being found by title. The kit now lists every
+    window and lets the user point at it; candidates are flagged, never
+    chosen for them."""
+
+    def test_a_window_that_looks_like_def_editor_is_flagged(self):
+        from defauto.backend import WindowInfo
+        assert WindowInfo(1, 1, "DEF EDITOR - Master Form").likely
+        assert WindowInfo(1, 1, "DEF Editor - Composite X").likely
+        assert WindowInfo(1, 1, "anything", "DEFEditor.exe").likely
+        assert not WindowInfo(1, 1, "Inbox - Outlook", "OUTLOOK.EXE").likely
+        assert not WindowInfo(1, 1, "Definitions.docx - Word").likely
+
+    def test_the_demo_desktop_lists_likely_windows_first(self):
+        found = FakeBackend.list_windows()
+        assert len(found) >= 3
+        assert found[0].likely and not found[-1].likely
+        assert all(str(w) for w in found)
+        assert "looks like DEF Editor" in str(found[0])
+
+    def test_listing_real_windows_is_the_windows_only_path(self):
+        with pytest.raises(ImportError):
+            application.windows()
+        with pytest.raises(ImportError):
+            application.connect_window(1)
+
+    def test_the_gui_still_imports_with_the_picker(self):
+        import importlib
+        gui = importlib.import_module("defauto.gui")
+        assert hasattr(gui.Workbench, "_pick_window")
+        assert hasattr(gui.Workbench, "on_demo_direct")

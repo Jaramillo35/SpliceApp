@@ -134,6 +134,20 @@ class FakeBackend:
     def attached(self) -> bool:
         return True
 
+    @staticmethod
+    def list_windows() -> list:
+        """What the picker shows in Demo mode: a desktop with DEF Editor on
+        it among other things, so the flagging can be seen working."""
+        from defauto.backend import WindowInfo
+
+        out = [WindowInfo(1001, 4321, "DEF EDITOR - Master Form", "DEFEditor.exe"),
+               WindowInfo(1002, 4322, "Inbox - Outlook", "OUTLOOK.EXE"),
+               WindowInfo(1003, 4323, "Master Complexity.xlsx - Excel", "EXCEL.EXE"),
+               WindowInfo(1004, 4324, "DEF Editor - Composite 2031ZR_V1_A_COMP1",
+                          "DEFEditor.exe")]
+        out.sort(key=lambda w: (not w.likely, w.title.lower()))
+        return out
+
     def _key(self) -> str:
         return f"{self.vehicle_line}|{self.model_year}|{self.phase}"
 

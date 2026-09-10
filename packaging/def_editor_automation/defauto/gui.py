@@ -359,23 +359,99 @@ class Workbench(tk.Tk):
         self._run(work, then)
 
     def on_demo(self) -> None:
+        from defauto.fake import FakeBackend
+
+        def attach(_handle, out_dir):
+            return application.demo(out_dir=out_dir)
+
+        self.log("Demo mode: the picker over an invented desktop.", "warn")
+        self._pick_window(FakeBackend.list_windows(), attach)
+
+    def on_demo_direct(self) -> None:
+        """Attach to the demo without the picker — what --demo and the
+        headless drive use."""
         self._attached(application.demo(out_dir=self.out_dir),
                        "Demo mode — scripted DEF Editor, no application", WARN)
 
     def on_connect(self) -> None:
-        self.log("Connecting to DEF Editor…")
+        """Show every window on the desktop and let the user point at DEF
+        Editor. The kit stops guessing the title: a different release, a
+        language pack or a document name in the title bar all defeat a guess,
+        and none of them defeat a list."""
+        self.log("Listing the desktop's windows…")
         try:
-            session = application.connect(out_dir=self.out_dir)
+            found = application.windows()
         except ImportError:
             self.log("pywinauto is not installed — that is the Windows-only "
                      "path. pip install -r requirements.txt", "bad")
+            self.log("Demo mode shows the same picker over an invented desktop.",
+                     "warn")
             return
         except Exception as exc:  # noqa: BLE001 - shown, not raised
-            self.log(f"Could not attach: {exc}", "bad")
-            self.log("Is DEF Editor running and signed in? Demo mode runs the "
-                     "same steps without it.", "warn")
+            self.log(f"Could not list windows: {exc}", "bad")
             return
-        self._attached(session, "Attached to DEF Editor", OK)
+        self._pick_window(found, application.connect_window)
+
+    def _pick_window(self, found, attach) -> None:
+        """The picker itself; ``attach(handle)`` makes the session."""
+        if not found:
+            self.log("No windows with a title were found on this desktop.", "warn")
+            return
+        likely = [w for w in found if w.likely]
+        self.log(f"{len(found)} window(s); {len(likely)} look like DEF Editor.",
+                 "ok" if likely else "warn")
+
+        top = tk.Toplevel(self)
+        top.title("Which window is DEF Editor?")
+        top.configure(bg=BG)
+        top.geometry("760x420")
+        top.transient(self)
+        frame = ttk.Frame(top, padding=(16, 14))
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Every window on this desktop. The ones that look "
+                              "like DEF Editor are listed first and marked; pick "
+                              "the one to attach to.",
+                  style="Muted.TLabel", wraplength=700, justify="left").pack(anchor="w")
+
+        box = tk.Listbox(frame, bg="#0d1017", fg=TEXT, selectbackground=ACCENT,
+                         selectforeground="#ffffff", relief="flat", font=MONO,
+                         activestyle="none", highlightthickness=0)
+        box.pack(fill="both", expand=True, pady=(10, 8))
+        for w in found:
+            box.insert("end", str(w))
+            if w.likely:
+                box.itemconfig("end", foreground=OK)
+        if likely:
+            box.selection_set(0)
+            box.see(0)
+
+        def refresh_list() -> None:
+            top.destroy()
+            self.on_connect()
+
+        def choose(_e=None) -> None:
+            picked = box.curselection()
+            if not picked:
+                self.log("Pick a window first.", "warn")
+                return
+            w = found[picked[0]]
+            top.destroy()
+            self.log(f"Attaching to {w.title!r} (pid {w.pid})…")
+            try:
+                session = attach(w.handle, out_dir=self.out_dir)
+            except Exception as exc:  # noqa: BLE001 - shown, not raised
+                self.log(f"Could not attach: {exc}", "bad")
+                return
+            self._attached(session, f"Attached: {w.title}", OK)
+
+        box.bind("<Double-Button-1>", choose)
+        row = ttk.Frame(frame)
+        row.pack(fill="x")
+        ttk.Button(row, text="Attach to selected", style="Accent.TButton",
+                   command=choose).pack(side="left")
+        ttk.Button(row, text="Refresh", command=refresh_list).pack(side="left", padx=8)
+        ttk.Button(row, text="Cancel", command=top.destroy).pack(side="right")
+        top.grab_set()
 
     # ---------------------------------------------------------- the test
     def on_run(self) -> None:

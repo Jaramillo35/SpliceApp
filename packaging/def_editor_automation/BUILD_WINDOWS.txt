@@ -55,7 +55,11 @@ Build the exe (one time, on a Windows 10/11 PC with Python 3.11+)
 Use
 ---
 1. Start DEF Editor and sign in as usual.
-2. Run the exe, press "Connect to DEF Editor".
+2. Run the exe, press "Connect to DEF Editor". A picker lists EVERY window on
+   the desktop; the ones that look like DEF Editor are first and marked.
+   Double-click the right one (or select it and press "Attach to selected").
+   The kit never guesses the window title - if the marked one is wrong, pick
+   another; "Refresh" re-reads the desktop.
 3. The four dropdowns fill from what DEF Editor actually offers. Pick or type
    program, model year, phase and harness.
 4. Press "Run test". Watch the ten steps.

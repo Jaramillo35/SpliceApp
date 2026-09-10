@@ -7,3 +7,5 @@
 pywinauto>=0.6.8
 comtypes
 pyinstaller
+# shows the executable name beside each window in the picker (optional)
+psutil

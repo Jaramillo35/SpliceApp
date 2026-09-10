@@ -58,10 +58,25 @@ class Session:
 
 def connect(process: Optional[int] = None, title: Optional[str] = None,
             out_dir: Path | str = "exports") -> Session:
-    """Attach to a running DEF Editor. Windows only."""
+    """Attach to a running DEF Editor by title or pid. Windows only."""
     from defauto.backend import UiaBackend
 
     return Session(UiaBackend().connect(process=process, title=title), out_dir)
+
+
+def windows() -> List:
+    """The desktop's top-level windows, for the picker. Windows only; empty
+    (with the reason logged by the caller) anywhere else."""
+    from defauto.backend import UiaBackend
+
+    return UiaBackend.list_windows()
+
+
+def connect_window(handle: int, out_dir: Path | str = "exports") -> Session:
+    """Attach to the window the user picked. Windows only."""
+    from defauto.backend import UiaBackend
+
+    return Session(UiaBackend().connect_handle(handle), out_dir)
 
 
 def demo(seed: int = 31, out_dir: Path | str = "exports") -> Session:

@@ -67,7 +67,7 @@ def main(argv=None) -> int:
 
     window = Workbench()
     if args.demo:
-        window.after(200, window.on_demo)
+        window.after(200, window.on_demo_direct)
     window.mainloop()
     return 0
 
