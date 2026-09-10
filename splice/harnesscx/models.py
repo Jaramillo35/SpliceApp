@@ -33,6 +33,10 @@ class SalesCodeColumn:
     from_combined: bool = False  # split out of a separable OR-list (e.g. CJK/LEQ)
     source_col: str = ""         # master column letter
     klass: ProposalClass = ProposalClass.CONFIRMED
+    #: a market column (YAA, YAC) from left of the band: present in the
+    #: master, written to the individual file only when the SE ticks it
+    market: bool = False
+    include: bool = True
 
 
 @dataclass
@@ -114,6 +118,9 @@ class FamilyMatrix:
     worksheet: str
     canonical_family: str
     sales_codes: list[SalesCodeColumn] = field(default_factory=list)
+    #: the market codes (YAA, YAC) the master carries for this family — offered,
+    #: off by default; ``include`` on each is the SE's decision
+    market_codes: list[SalesCodeColumn] = field(default_factory=list)
     rows: list[MatrixRow] = field(default_factory=list)
     combined_exprs: list[CombinedExpr] = field(default_factory=list)  # unseparable — SE reviews
     dtx_codes: list[str] = field(default_factory=list)  # sales codes the DTx uses for THIS family
@@ -130,9 +137,15 @@ class FamilyMatrix:
     band: object = None
 
     @property
+    def included_market_codes(self) -> list[SalesCodeColumn]:
+        return [sc for sc in self.market_codes if sc.include]
+
+    @property
     def complexity_codes(self) -> set[str]:
-        """Sales codes present as columns in the complexity file for this family."""
-        return {sc.code for sc in self.sales_codes}
+        """Sales codes that will be columns of the individual file — the band's,
+        plus any market code the SE has ticked."""
+        return ({sc.code for sc in self.sales_codes}
+                | {sc.code for sc in self.included_market_codes})
 
     @property
     def excluded_count(self) -> int:

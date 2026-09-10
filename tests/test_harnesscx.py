@@ -36,11 +36,15 @@ def _master_bytes(include_aht: bool = True) -> bytes:
     ws.cell(3, 1, "Harness: IP Harness")
 
     headers = {3: "Made from", 4: "P1", 5: "Current"}
-    # the row-6 header band: a package column outside it, then the anchors
+    # the row-6 header band: a package column outside it, the market column
+    # (offered, not added), then the anchors
     ws.cell(9, 6, "PC3 AWD")            # three-character tokens, not codes
     ws.cell(6, 6, "CPOS Packages")
-    ws.cell(6, 7, "Optional Features")
-    col = 7
+    ws.cell(6, 7, "Markets")
+    ws.cell(9, 7, "YAA")
+    ws.cell(7, 7, "US")
+    ws.cell(6, 8, "Optional Features")
+    col = 8
     code_cols: dict[str, int] = {}
     if include_aht:
         headers[col] = "AHT"
@@ -64,6 +68,7 @@ def _master_bytes(include_aht: bool = True) -> bytes:
     ws.cell(10, 1, "A")
     ws.cell(10, 4, "111")
     ws.cell(10, 5, "PN300")
+    ws.cell(10, 7, "X")                          # PN300 is a US-market part
     if include_aht:
         ws.cell(10, code_cols["AHT"], "X")
     # row 11: carryover -> most recent valid P/N from the phase column
@@ -241,6 +246,40 @@ class TestChecks:
         for ce in matrix.combined_exprs:
             ce.include = False
         assert "PN30" in checks.unmarked_parts(matrix)
+
+
+class TestMarketCodesAreOffered:
+    def test_a_market_code_is_read_but_not_a_column_until_ticked(self, matrix):
+        yaa = next(sc for sc in matrix.market_codes if sc.code == "YAA")
+        assert yaa.market and not yaa.include
+        assert yaa.feature == "US"
+        assert "YAA" not in matrix.complexity_codes
+        assert "YAA" not in {sc.code for sc in matrix.sales_codes}
+        # its marks were read all the same, so ticking it costs nothing
+        assert next(r for r in matrix.rows if r.variant_id == "A").symbols["YAA"] == "X"
+
+    def test_ticking_it_writes_the_column_with_its_marks(self, matrix):
+        yaa = next(sc for sc in matrix.market_codes if sc.code == "YAA")
+        files, problems = export.generate_files(matrix, "H1")
+        assert problems == []
+        ws = load_workbook(io.BytesIO(files[0][0]), keep_vba=True)["Complexity"]
+        headers = [ws.cell(1, c).value for c in range(2, 12) if ws.cell(1, c).value]
+        assert "YAA" not in headers
+        yaa.include = True
+        assert "YAA" in matrix.complexity_codes
+        files, _ = export.generate_files(matrix, "H1")
+        ws = load_workbook(io.BytesIO(files[0][0]), keep_vba=True)["Complexity"]
+        headers = {ws.cell(1, c).value: c for c in range(2, 12) if ws.cell(1, c).value}
+        assert "YAA" in headers
+        pns = [ws.cell(r, 1).value for r in range(2, 6)]
+        assert ws.cell(2 + pns.index("PN300"), headers["YAA"]).value == "X"
+        assert ws.cell(2 + pns.index("PN200"), headers["YAA"]).value in (None, "")
+
+    def test_a_market_code_is_never_a_compare_delta(self):
+        """Compare works on the band; a market column is not a code change."""
+        old = adapters.extract_family_sales_codes(_master_bytes(include_aht=False))
+        new = adapters.extract_family_sales_codes(_master_bytes())
+        assert "YAA" not in old["IP"] and "YAA" not in new["IP"]
 
 
 class TestExport:

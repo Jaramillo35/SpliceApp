@@ -18,17 +18,24 @@ from splice.harnesscx import band
 
 def _sheet(wb, title, *, anchor_row=6, left="Optional Features",
            right="RELEASE/EBOM STRING", row9=None, row8=None, row7=None,
-           before=None):
-    """A family sheet: package/market columns, the band, then bookkeeping."""
+           before=None, markets=None):
+    """A family sheet: package columns, the market columns, the band, then
+    bookkeeping. ``markets`` puts a Markets header with those codes directly
+    before the left anchor, the way every real sheet has it."""
     ws = wb.create_sheet(title)
     ws.cell(9, 3, "Made from")
     ws.cell(9, 5, "Current")
     ws.cell(anchor_row, 5, "Current Part Numbers")
     col = 6
-    for text in (before or ["PC1", "PC3 AWD", "YAA"]):     # look like codes, are not
+    for text in (before or ["PC1", "PC3 AWD"]):           # look like codes, are not
         ws.cell(9, col, text)
         col += 1
     ws.cell(anchor_row, 6, "CPOS Packages")
+    if markets:
+        ws.cell(anchor_row, col, "Markets")
+        for text in markets:
+            ws.cell(9, col, text)
+            col += 1
     start = col
     ws.cell(anchor_row, start, left)
     for offset, text in enumerate(row9 or []):
@@ -125,11 +132,41 @@ class TestLocatingTheBand:
         assert (result.start_col, result.end_col) == (start, end)
         assert result.codes == ["ERC", "SDE", "XHZ"]
 
-    def test_package_and_market_columns_are_not_codes(self):
-        """PC3, AWD and YAA are three characters and sit left of the band."""
+    def test_package_columns_are_not_codes(self):
+        """PC3 and AWD are three characters and sit left of the band."""
         wb = Workbook()
-        _sheet(wb, "DASH", row9=["ERC"], before=["PC1", "PC3 AWD", "YAA", "YAC"])
+        _sheet(wb, "DASH", row9=["ERC"], before=["PC1", "PC3 AWD", "PC5"])
         assert band.read_master(_bytes(wb))["DASH"].codes == ["ERC"]
+
+    def test_market_codes_are_read_separately_and_offered_not_added(self):
+        """YAA and YAC sit under 'Markets', directly before 'Optional
+        Features', on every real sheet. They are not in the band — the
+        engineer decides, per family, whether one becomes a column."""
+        wb = Workbook()
+        _sheet(wb, "DASH", row9=["ERC"], markets=["YAA", "YAC"])
+        result = band.read_master(_bytes(wb))["DASH"]
+        assert result.codes == ["ERC"]
+        assert result.market_codes == ["YAA", "YAC"]
+        assert result.left_anchor == "Optional Features"
+        assert [c.as_dict()["column_name"] for c in result.markets] == ["H", "I"]
+
+    def test_without_a_markets_header_nothing_is_offered(self):
+        wb = Workbook()
+        _sheet(wb, "DASH", row9=["ERC"])
+        result = band.read_master(_bytes(wb))["DASH"]
+        assert result.codes == ["ERC"]
+        assert result.markets == []
+
+    def test_markets_do_not_disturb_the_row_8_fallback(self):
+        """Putting the markets inside the band made row 9 non-empty on the
+        jumper sheet and silently lost its row-8 codes. They are separate."""
+        wb = Workbook()
+        _sheet(wb, "GBT JMPR", row9=[None, None], row8=["EH3", "AB7"],
+               markets=["YAA", "YAC"])
+        result = band.read_master(_bytes(wb))["GBT JMPR"]
+        assert result.row_used == 8
+        assert result.codes == ["EH3", "AB7"]
+        assert result.market_codes == ["YAA", "YAC"]
 
     def test_release_columns_are_not_codes(self):
         wb = Workbook()
@@ -223,7 +260,7 @@ class TestLocatingTheBand:
         _sheet(wb, "DASH", row9=["AHT"], row7=["TRAILER TOW"])
         cell = band.read_master(_bytes(wb))["DASH"].cells[0]
         assert cell.feature == "TRAILER TOW"
-        assert cell.column_name == "I"
+        assert cell.column_name == "H"
 
 
 class TestRowNineIsTheRuleAndRowEightIsSaid:

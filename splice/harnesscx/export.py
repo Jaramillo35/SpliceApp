@@ -136,6 +136,11 @@ def build_individual_complexity(
         (sc.code, (lambda row, code=sc.code: row.symbols.get(code, "")))
         for sc in matrix.sales_codes
     ]
+    # market codes the SE ticked — same per-row marks as any other column
+    out_cols += [
+        (sc.code, (lambda row, code=sc.code: row.symbols.get(code, "")))
+        for sc in matrix.included_market_codes
+    ]
     for ce in matrix.combined_exprs:
         if ce.include:
             # An equality ('XH3=XH4') or a comma-separated definition writes one

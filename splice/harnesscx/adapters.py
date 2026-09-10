@@ -261,6 +261,21 @@ def _build_matrix(ws, worksheet: str, universe: set[str], canonical_family: str,
             combined_exprs.append(ce)
             combined_cols.append((ce, c))
 
+    # The market columns (YAA, YAC) left of the band: read with their marks so
+    # they CAN be written, offered off by default so they are not written
+    # unasked. First occurrence of a code wins, as above.
+    market_codes: list[SalesCodeColumn] = []
+    for cell in band.markets:
+        for token in cell.sales_codes:
+            if token in code_to_col:
+                continue
+            code_to_col[token] = cell.column
+            market_codes.append(SalesCodeColumn(
+                code=token, feature=cell.feature, original_expr=cell.raw_expression,
+                from_combined=len(cell.sales_codes) > 1,
+                source_col=cell.column_name, klass=ProposalClass.CONFIRMED,
+                market=True, include=False))
+
     # Variant partitioning: marker columns on row 9 (LEFT/RIGHT, DRIVER/PASSENGER,
     # CUP vs CM5/CVM). Each part row is X/G-marked under exactly one -> its side.
     part_cols = partition_columns(ws, SALES_CODE_ROW)
@@ -272,7 +287,8 @@ def _build_matrix(ws, worksheet: str, universe: set[str], canonical_family: str,
         if not current_text:
             continue  # a variant row must have a Current value
         variant_id = _cell_text(ws.cell(r, 1))
-        row = _build_row(ws, r, variant_id, seq, current_col, sales_codes, code_to_col,
+        row = _build_row(ws, r, variant_id, seq, current_col,
+                         sales_codes + market_codes, code_to_col,
                          combined_cols, worksheet)
         if part_cols:
             row.partition_side = row_side(ws, r, part_cols)
@@ -290,11 +306,13 @@ def _build_matrix(ws, worksheet: str, universe: set[str], canonical_family: str,
             x.partition_side = ""
 
     meta = _extract_header_meta(ws)
-    logger.info("Family matrix '%s': %d rows, %d sales codes, %d combined, sides=%s.",
-                worksheet, len(rows), len(sales_codes), len(combined_exprs), partition_sides)
+    logger.info("Family matrix '%s': %d rows, %d sales codes, %d market, %d combined, "
+                "sides=%s.", worksheet, len(rows), len(sales_codes), len(market_codes),
+                len(combined_exprs), partition_sides)
     return FamilyMatrix(
         worksheet=worksheet, canonical_family=canonical_family or worksheet,
-        sales_codes=sales_codes, rows=rows, combined_exprs=combined_exprs,
+        sales_codes=sales_codes, market_codes=market_codes, rows=rows,
+        combined_exprs=combined_exprs,
         dtx_codes=sorted(family_dtx_codes or set()), partition_sides=partition_sides,
         year=meta.get("year", ""), vehicle=meta.get("vehicle", ""),
         phase=meta.get("phase", ""), harness_name=meta.get("harness", "") or worksheet,

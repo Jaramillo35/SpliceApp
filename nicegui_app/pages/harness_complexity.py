@@ -63,8 +63,10 @@ def _guide() -> None:
             "**The rules it applies.**\n"
             "- Sales codes are read from row 9 **between the `Optional Features` and "
             "`RELEASE/EBOM STRING` anchors** of each family sheet's row-6 header. "
-            "Package (`PC3`, `PC5 AWD`), market (`YAA`) and release columns sit "
-            "outside that band and are never codes; `+` is AND, `/` is OR, `-` is "
+            "Package (`PC3`, `PC5 AWD`) and release columns sit outside that band "
+            "and are never codes. The market codes under `Markets` (`YAA`, `YAC`) "
+            "are read too and **offered** — tick one to write it as a column; "
+            "nothing is added unasked. `+` is AND, `/` is OR, `-` is "
             "NOT, `=` is a package equivalence, `()` groups. *Row 9 as read* under "
             "an open family shows every cell the way the detection saw it.\n"
             "- The Current P/N comes from the `Current` column; `C/O` resolves to the most "
@@ -267,7 +269,31 @@ def page() -> None:
                 _render_band(m)
                 _render_checks(m)
                 _render_matrix(m)
+                _render_markets(m)
                 _render_combined(m)
+
+        def _render_markets(m) -> None:
+            """The market codes the master carries for this family, as opt-in
+            columns. Off by default: a market column written unasked is a
+            column nobody decided on."""
+            if not m.market_codes:
+                return
+            ui.label("Market codes — add as sales-code columns?").classes(
+                "text-sm font-semibold mt-2")
+            ui.label("Read from the 'Markets' columns left of the band. Tick one "
+                     "to write it into the individual file with its row marks; "
+                     "the file is regenerated from your choice.").classes("sx-caption")
+            with ui.row().classes("items-center gap-4 flex-wrap w-full"):
+                for sc in m.market_codes:
+                    def toggle(v, sc=sc):
+                        sc.include = bool(v.value)
+                        state["files"] = []
+                        refresh("generate")
+                    marked = sum(1 for r in m.rows
+                                 if not r.excluded and sc.code in r.symbols)
+                    ui.checkbox(f"{sc.code}  ·  {marked} part(s) marked"
+                                + (f"  ·  {sc.feature}" if sc.feature else ""),
+                                value=sc.include, on_change=toggle)
 
         def _render_band(m) -> None:
             """Row 9 exactly as the detection read it — the answer to "why is

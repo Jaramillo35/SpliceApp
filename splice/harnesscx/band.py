@@ -9,12 +9,16 @@ of those anchors:
     Optional Features  ...........................  RELEASE/EBOM STRING
     ^ first code column                            ^ first non-code column
 
-Everything left of the first anchor is package (``PC3``, ``PC5 AWD``) and
-market (``YAA``, ``YAC``) columns; everything from the second onward is
-release and analyst bookkeeping. Both look like sales codes to a regex —
-``PC3``, ``AWD``, ``YAA`` are all three characters — and that is why the
-workbench used to need a DTx export to say which row-9 tokens were real. The
-band makes the DTx unnecessary: the master already says where the codes are.
+Left of the band are package columns (``PC3``, ``PC5 AWD``) and, directly
+before ``Optional Features`` under a ``Markets`` header, the market columns
+(``YAA``, ``YAC``). Neither is in the band. Packages are never sales codes;
+markets are read separately and offered — the engineer decides, per family,
+whether a market code becomes a column of the individual file, and nothing is
+added unasked. Everything from the right anchor onward is release and analyst
+bookkeeping. Packages look like sales codes to a regex — ``PC3`` and ``AWD``
+are three characters — and that is why the workbench used to need a DTx export
+to say which row-9 tokens were real. The band makes the DTx unnecessary: the
+master already says where the codes are.
 
 What made this fragile before it was written down, in the reference master:
 
@@ -67,6 +71,9 @@ FEATURE_ROW = 7
 ANCHOR_ROWS = range(1, 13)
 
 LEFT_ANCHOR = "optional features"
+#: the market columns sit under this header, directly before the left
+#: anchor; read separately and offered, never added to the band
+MARKETS_ANCHOR = "markets"
 RIGHT_ANCHOR = "release/ebom string"
 #: any header mentioning this closes the band — the specified anchor and the
 #: EBOM bookkeeping columns that always precede or replace it
@@ -147,10 +154,24 @@ class Band:
     anchor_row: int
     start_col: int                    # the left anchor's column, inclusive
     end_col: int                      # the right anchor's column, exclusive
+    left_anchor: str = ""             # the header text that opened the band
     right_anchor: str = ""            # the header text that closed the band
     row_used: int = SALES_CODE_ROW
     cells: List[SalesCodeCell] = field(default_factory=list)
+    #: The market columns (YAA, YAC) under the ``Markets`` header before the
+    #: band. Not codes of the band; offered to the engineer as optional
+    #: columns of the individual file.
+    markets: List[SalesCodeCell] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+
+    @property
+    def market_codes(self) -> List[str]:
+        out: List[str] = []
+        for cell in self.markets:
+            for code in cell.sales_codes:
+                if code not in out:
+                    out.append(code)
+        return out
 
     @property
     def codes(self) -> List[str]:
@@ -180,10 +201,13 @@ def _row(ws, index: int) -> List[object]:
         return []
 
 
-def find_anchors(ws) -> Optional[Tuple[int, int, int, str]]:
-    """``(row, left column, right column, right text)`` of the band, or None.
+def find_anchors(ws) -> Optional[Tuple[int, int, int, Optional[int], str, str]]:
+    """``(row, left column, right column, markets column, left text, right
+    text)``, or None.
 
-    The left anchor is ``Optional Features``. The right boundary is the first
+    The left anchor is ``Optional Features``. The ``Markets`` header that
+    precedes it on the same row, when there is one, is returned beside it so
+    the market columns can be read separately. The right boundary is the first
     header after it — on the same row or the one above — that mentions EBOM:
     ``RELEASE/EBOM STRING`` as specified, or the ``Requested Field for EBOM``
     / ``EBOM Analyst`` bookkeeping that always sits there, on the sheets whose
@@ -192,16 +216,20 @@ def find_anchors(ws) -> Optional[Tuple[int, int, int, str]]:
     """
     for r in ANCHOR_ROWS:
         values = _row(ws, r)
-        left = next((c for c, v in enumerate(values, start=1)
-                     if LEFT_ANCHOR in normalize(v)), None)
-        if left is None:
+        optional = next((c for c, v in enumerate(values, start=1)
+                         if LEFT_ANCHOR in normalize(v)), None)
+        if optional is None:
             continue
+        markets = next((c for c in range(optional - 1, 0, -1)
+                        if MARKETS_ANCHOR in normalize(values[c - 1])), None)
+        left_text = str(values[optional - 1]).strip()
         above = _row(ws, r - 1) if r > 1 else []
-        for c in range(left + 1, max(len(values), len(above)) + 1):
+        for c in range(optional + 1, max(len(values), len(above)) + 1):
             for row in (values, above):
                 text = normalize(row[c - 1]) if c - 1 < len(row) else ""
                 if RIGHT_FAMILY in text:
-                    return r, left, c, str(row[c - 1]).strip()
+                    return (r, optional, c, markets, left_text,
+                            str(row[c - 1]).strip())
         return None
     return None
 
@@ -215,10 +243,14 @@ def read_band(ws, worksheet: str = "") -> Optional[Band]:
     anchors = find_anchors(ws)
     if anchors is None:
         return None
-    anchor_row, start, end, right_text = anchors
+    anchor_row, start, end, markets_col, left_text, right_text = anchors
     band = Band(worksheet=worksheet or getattr(ws, "title", ""),
                 anchor_row=anchor_row, start_col=start, end_col=end,
-                right_anchor=right_text)
+                left_anchor=left_text, right_anchor=right_text)
+    features = _row(ws, FEATURE_ROW)
+    if markets_col is not None:
+        band.markets = _cells(_row(ws, SALES_CODE_ROW), features,
+                              markets_col, start, SALES_CODE_ROW)
     # The specified anchor is usually one column RIGHT of the header that
     # closes the band ('Requested Field for EBOM' precedes it on 29 of 32
     # sheets). Only its absence from the whole row is worth a note.
@@ -228,7 +260,6 @@ def read_band(ws, worksheet: str = "") -> Optional[Band]:
             f"No 'RELEASE/EBOM STRING' header on row {anchor_row}; the band was "
             f"closed at column {get_column_letter(end)} by {right_text!r}.")
 
-    features = _row(ws, FEATURE_ROW)
     cells = _cells(_row(ws, SALES_CODE_ROW), features, start, end, SALES_CODE_ROW)
     if not cells:
         # Row 9 is the rule. When it is empty across the whole band the codes
