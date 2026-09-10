@@ -135,6 +135,41 @@ class FakeBackend:
         return True
 
     @staticmethod
+    def structure_roots() -> list:
+        """An invented DEF Editor tree with the ids the kit expects, so the
+        recorder can be exercised — and so a snapshot of the real thing can
+        be read against what the kit assumed."""
+        from defauto.observe import Element
+
+        class E(Element):
+            def __init__(self, ct, aid="", name="", cls="", kids=(), rect=(0, 0, 10, 10)):
+                self.control_type, self.automation_id, self.name = ct, aid, name
+                self.class_name, self._kids, self.rect = cls, list(kids), list(rect)
+                self.enabled = self.visible = True
+
+            def children(self):
+                return list(self._kids)
+
+        grid_rows = [E("DataItem", name=f"row {i}",
+                       kids=[E("Text", name="B4"), E("Text", name="BODY_LEFT - FEED B4")])
+                     for i in range(5)]
+        return [E("Window", ids.ROOT_FORM, ids.MAIN_WINDOW_TITLE, "WindowsForms10.Window", [
+            E("MenuBar", name="menu", kids=[E("MenuItem", name=m) for m in ids.MENUS]),
+            E("Pane", "Panel_Display", kids=[
+                E("ComboBox", ids.COMBO_VEHICLE_LINE, "2031ZR", kids=[
+                    E("List", kids=[E("ListItem", name="2031ZR"), E("ListItem", name="2032QX")])]),
+                E("ComboBox", ids.COMBO_MODEL_YEAR, "2031"),
+                E("ComboBox", ids.COMBO_PHASE, "V1_A"),
+                E("Button", ids.BUTTON_FILTER, "Filter"),
+                E("DataGrid", ids.GRID_COMPOSITE, "composites", kids=[
+                    E("Header", kids=[E("HeaderItem", name="Composite"),
+                                      E("HeaderItem", name="Harnesses")]),
+                    *grid_rows]),
+                E("Edit", ids.TEXT_FILTER, "typed text here"),
+            ]),
+        ])]
+
+    @staticmethod
     def list_windows() -> list:
         """What the picker shows in Demo mode: a desktop with DEF Editor on
         it among other things, so the flagging can be seen working."""

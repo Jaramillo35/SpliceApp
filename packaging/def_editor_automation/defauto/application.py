@@ -55,6 +55,41 @@ class Session:
     def healthy(self) -> bool:
         return all(found for _, found in self.diagnose())
 
+    # --------------------------------------------------------- recording
+    def recorder(self, out_dir: Path | str = "structure", redact: bool = True):
+        """A structure recorder over this session's windows.
+
+        Real session: every window of DEF Editor's process, fingerprinted by
+        titles and the focused control. Demo session: an invented tree, so
+        the recorder can be tried anywhere.
+        """
+        from defauto.observe import Recorder, signature
+
+        backend = self.backend
+        if hasattr(backend, "structure_roots") and hasattr(backend, "_root"):
+            roots_of = backend.structure_roots
+            fingerprint = lambda: signature(backend.structure_roots())  # noqa: E731
+
+            def titles_of(roots):
+                out = []
+                for w in roots:
+                    try:
+                        out.append(w.window_text())
+                    except Exception:  # noqa: BLE001
+                        out.append("")
+                return out
+        else:
+            roots_of = type(backend).structure_roots
+
+            def fingerprint():
+                # the invented tree never changes; the demo's fingerprint
+                # changes with each page so the auto mode can be seen working
+                return f"demo:{getattr(backend, 'page', '')}"
+
+            def titles_of(roots):
+                return [getattr(r, "name", "") for r in roots]
+        return Recorder(roots_of, fingerprint, out_dir, redact, titles_of)
+
 
 def connect(process: Optional[int] = None, title: Optional[str] = None,
             out_dir: Path | str = "exports") -> Session:

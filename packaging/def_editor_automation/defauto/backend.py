@@ -245,8 +245,13 @@ class UiaBackend:
                 parent.wait("exists", timeout=self.timeout)
             except Exception as exc:  # noqa: BLE001 - reported, not raised raw
                 raise ControlNotFound(scope) from exc
+        from defauto import ids
+
+        kwargs = {"auto_id": automation_id}
+        if automation_id in ids.CONTROL_TYPES:
+            kwargs["control_type"] = ids.CONTROL_TYPES[automation_id]
         try:
-            control = parent.child_window(auto_id=automation_id)
+            control = parent.child_window(**kwargs)
             control.wait("exists", timeout=self.timeout)
             return control
         except Exception as exc:  # noqa: BLE001
@@ -284,7 +289,38 @@ class UiaBackend:
             self._find(automation_id, scope).toggle()
 
     def options(self, automation_id: str, scope: str = "") -> List[str]:
-        return list(self._find(automation_id, scope).texts()[1:])
+        """The items a combo box or list offers.
+
+        ``texts()`` on a UIA wrapper returns the texts of whatever it
+        descended into, which for a mismatched element was 'Phase' and
+        'Close'. Items are read as items: the ListItem descendants of the
+        control, expanding a collapsed combo box to get them.
+        """
+        control = self._find(automation_id, scope)
+        try:
+            if hasattr(control, "expand"):
+                control.expand()
+        except Exception:  # noqa: BLE001 - a list has nothing to expand
+            pass
+        try:
+            items = [i.window_text() for i in control.descendants(control_type="ListItem")]
+        except Exception:  # noqa: BLE001
+            items = []
+        try:
+            if hasattr(control, "collapse"):
+                control.collapse()
+        except Exception:  # noqa: BLE001
+            pass
+        if items:
+            return [t for t in items if t]
+        return [t for t in control.texts()[1:] if t]
+
+    def structure_roots(self) -> List:
+        """The wrappers the recorder walks: every window of the process."""
+        from defauto.observe import process_windows
+
+        pid = int(self._root().process_id())
+        return process_windows(pid) or [self._root()]
 
     def selected(self, automation_id: str, scope: str = "") -> Optional[str]:
         value = self._find(automation_id, scope).selected_text()

@@ -127,6 +127,8 @@ class Workbench(tk.Tk):
         body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
         self._build_form(body)
 
+        self._build_recorder(body)
+
         panes = ttk.PanedWindow(body, orient="vertical")
         panes.pack(fill="both", expand=True, pady=(12, 0))
         self._build_steps(panes)
@@ -195,6 +197,90 @@ class Workbench(tk.Tk):
                          justify="left", font=("Segoe UI", 8))
         hint.grid(row=row + 2, column=column, sticky="nw", padx=(0, 12), pady=(2, 0))
         return entry, hint
+
+    def _build_recorder(self, parent) -> None:
+        """Record the structure of DEF Editor's windows while the user
+        navigates by hand — the tree the automation was written without."""
+        card = ttk.Frame(parent, padding=(16, 12))
+        card.pack(fill="x", pady=(12, 0))
+        ttk.Label(card, text="RECORD STRUCTURE", style="Head.TLabel").grid(
+            row=0, column=0, columnspan=5, sticky="w", pady=(0, 8))
+        ttk.Label(card, text="Label", style="Muted.TLabel").grid(row=1, column=0, sticky="w")
+        self.rec_label = ttk.Entry(card, width=28, font=UI)
+        self.rec_label.insert(0, "composite page")
+        self.rec_label.grid(row=2, column=0, sticky="w", padx=(0, 12))
+        ttk.Button(card, text="Snapshot now", command=self.on_snapshot) \
+            .grid(row=2, column=1, sticky="w", padx=(0, 8))
+        self.rec_auto = tk.BooleanVar(value=False)
+        ttk.Checkbutton(card, text="Auto: snapshot whenever the window changes",
+                        variable=self.rec_auto, command=self.on_auto_toggle) \
+            .grid(row=2, column=2, sticky="w", padx=(0, 8))
+        self.rec_redact = tk.BooleanVar(value=True)
+        ttk.Checkbutton(card, text="Redact values (keep on)",
+                        variable=self.rec_redact).grid(row=2, column=3, sticky="w")
+        self.rec_status = ttk.Label(card, text="Attach first. Snapshots go to the "
+                                               "'structure' folder next to the exe; "
+                                               "push that folder to share it.",
+                                    style="Muted.TLabel", wraplength=900, justify="left")
+        self.rec_status.grid(row=3, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        self._recorder = None
+        self._auto_job = None
+
+    def _get_recorder(self):
+        if self.session is None:
+            self.log("Not attached — press Connect or Demo mode first.", "warn")
+            return None
+        redact = bool(self.rec_redact.get())
+        if self._recorder is None or self._recorder.redact != redact:
+            self._recorder = self.session.recorder(self.out_dir.parent / "structure",
+                                                   redact=redact)
+        return self._recorder
+
+    def on_snapshot(self) -> None:
+        rec = self._get_recorder()
+        if rec is None:
+            return
+        label = self.rec_label.get().strip() or "snapshot"
+        try:
+            path = rec.snapshot(label)
+        except Exception as exc:  # noqa: BLE001 - shown, not raised
+            self.log(f"Snapshot failed: {exc}", "bad")
+            return
+        self.log(f"Saved structure → {path.name}"
+                 + ("" if rec.redact else "  (UNREDACTED)"), "ok")
+        self.rec_status.configure(text=f"{len(rec.taken)} snapshot(s) in {rec.out_dir}")
+
+    def on_auto_toggle(self) -> None:
+        if self.rec_auto.get():
+            if self._get_recorder() is None:
+                self.rec_auto.set(False)
+                return
+            self.log("Auto-snapshot on: navigate DEF Editor; each change is recorded.",
+                     "ok")
+            self._auto_tick()
+        else:
+            if self._auto_job is not None:
+                self.after_cancel(self._auto_job)
+                self._auto_job = None
+            self.log("Auto-snapshot off.")
+
+    def _auto_tick(self) -> None:
+        if not self.rec_auto.get():
+            return
+        rec = self._recorder
+        label = self.rec_label.get().strip() or "auto"
+
+        def work():
+            return rec.tick(label)
+
+        def then(path) -> None:
+            if path is not None:
+                self.log(f"Change seen → {path.name}", "ok")
+                self.rec_status.configure(
+                    text=f"{len(rec.taken)} snapshot(s) in {rec.out_dir}")
+
+        self._run(work, then)
+        self._auto_job = self.after(2000, self._auto_tick)
 
     def _build_steps(self, panes) -> None:
         frame = ttk.Frame(panes, padding=(16, 14))

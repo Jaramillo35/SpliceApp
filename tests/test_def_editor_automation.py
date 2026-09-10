@@ -542,3 +542,112 @@ class TestTypedTextIsMatchedToWhatIsOffered:
             assert w.hint_program.cget("text").startswith("offered:")
         finally:
             w.destroy()
+
+
+
+class TestTheStructureRecorder:
+    """Records the tree of DEF Editor's windows so it can be read where the
+    application is not — without recording what the windows contain."""
+
+    def _tree(self, redact=True):
+        from defauto import observe
+        roots = FakeBackend.structure_roots()
+        return observe.walk(roots[0], redact=redact)
+
+    def test_structure_is_recorded(self):
+        tree = self._tree()
+        assert tree.control_type == "Window" and tree.automation_id == ids.ROOT_FORM
+        types = set()
+        def gather(n):
+            types.add(n.control_type); [gather(c) for c in n.children]
+        gather(tree)
+        assert {"MenuBar", "MenuItem", "ComboBox", "Button", "DataGrid", "Edit"} <= types
+        combo = next(c for c in tree.children[1].children
+                     if c.automation_id == ids.COMBO_VEHICLE_LINE)
+        assert combo.control_type == "ComboBox"
+
+    def test_interface_names_are_kept_and_data_is_not(self):
+        import json
+        from dataclasses import asdict
+        text = json.dumps(asdict(self._tree()))
+        # interface: menu items, the Filter button, headers
+        for kept in ("Harness", "Circuits", "Filter", "Composite", "Harnesses"):
+            assert kept in text
+        # data: grid cell values, the edit's text, the combo's current value
+        for secret in ("B4", "BODY_LEFT - FEED", "typed text here", "2031ZR"):
+            assert secret not in text, secret
+        assert '"name_shape": "2 upper/digit"' in text        # B4, as a shape
+
+    def test_grids_record_headers_and_row_count_not_rows(self):
+        tree = self._tree()
+        grid = next(c for c in tree.children[1].children
+                    if c.automation_id == ids.GRID_COMPOSITE)
+        assert grid.headers == ["Composite", "Harnesses"]
+        assert grid.row_count == 5
+        rows = [c for c in grid.children if c.control_type == "DataItem"]
+        assert len(rows) == 2 and "5 rows" in grid.truncated
+
+    def test_unredacted_keeps_values_for_a_test_instance(self):
+        import json
+        from dataclasses import asdict
+        assert "typed text here" in json.dumps(asdict(self._tree(redact=False)))
+
+    @pytest.mark.parametrize("text, shape", [
+        ("B4", "2 upper/digit"), ("AHT", "3 upper/digit"), ("12345", "5 digits"),
+        ("Body Left", "9 letters"), ("", "empty"), ("a\nb", "3 mixed, 2 lines"),
+    ])
+    def test_shape_of(self, text, shape):
+        from defauto.observe import shape_of
+        assert shape_of(text) == shape
+
+    def test_the_walk_is_capped(self):
+        from defauto import observe
+
+        class Deep(observe.Element):
+            def __init__(self, depth):
+                self.control_type, self.automation_id, self.class_name = "Pane", "", ""
+                self.name, self.rect, self.enabled, self.visible = "", [], True, True
+                self._d = depth
+            def children(self):
+                return [Deep(self._d + 1), Deep(self._d + 1)]
+
+        tree = observe.walk(Deep(0), max_depth=3, max_nodes=50)
+        def count(n): return 1 + sum(count(c) for c in n.children)
+        assert count(tree) <= 50
+
+    def test_snapshots_are_saved_with_an_index(self, tmp_path, session):
+        rec = session.recorder(tmp_path)
+        first = rec.snapshot("composite page")
+        assert first.exists() and first.suffix == ".json"
+        index = (tmp_path / "index.md").read_text()
+        assert "composite page" in index and first.name in index
+        assert "UNREDACTED" not in index
+
+    def test_auto_mode_records_only_when_the_ui_changes(self, tmp_path, session):
+        rec = session.recorder(tmp_path)
+        rec.snapshot("start")
+        assert rec.tick() is None                     # nothing changed
+        session.navigation.circuits()                 # the demo's page changed
+        assert rec.tick() is not None
+        assert rec.tick() is None
+        assert len(rec.taken) == 2
+
+    def test_every_essential_id_has_a_control_type(self):
+        for auto_id in ids.ESSENTIAL:
+            assert auto_id in ids.CONTROL_TYPES, auto_id
+
+    def test_the_gui_records_in_demo_mode(self, tmp_path):
+        import importlib
+        gui = importlib.import_module("defauto.gui")
+        w = gui.Workbench()
+        try:
+            w.out_dir = tmp_path / "exports"
+            w.on_demo_direct()
+            w.on_snapshot()
+            for _ in range(20):
+                w.update()
+            saved = list((tmp_path / "structure").glob("*.json"))
+            assert len(saved) == 1
+            assert "Saved structure" in w.log_text.get("1.0", "end")
+        finally:
+            w.destroy()

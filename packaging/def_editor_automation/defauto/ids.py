@@ -198,3 +198,19 @@ ESSENTIAL = (
     GRID_COMPOSITE,
     LIST_HARNESS,
 )
+
+
+#: The control type of each id the kit looks up. A lookup by AutomationId
+#: alone can land on a sibling that happens to share it (DevExpress reuses
+#: ids between a label and its editor); with the type it cannot. This is
+#: the kit's assumption — the structure snapshots are what confirm it.
+CONTROL_TYPES = {
+    COMBO_VEHICLE_LINE: "ComboBox", COMBO_MODEL_YEAR: "ComboBox",
+    COMBO_PHASE: "ComboBox", COMBO_DELPHI_CONNECTOR: "ComboBox",
+    BUTTON_FILTER: "Button",
+    LIST_HARNESS: "List", LIST_COMPOSITE: "List", LIST_CIRCUIT_FAMILY: "List",
+    RICH_RESULTS: "Edit",
+    **{g: "DataGrid" for g in GRIDS},
+    **{f: "Edit" for f in FILTERS},
+    **{c: "CheckBox" for c in CHECKBOXES},
+}

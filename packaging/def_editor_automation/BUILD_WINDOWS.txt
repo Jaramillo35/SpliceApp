@@ -72,6 +72,26 @@ If it fails, the step that failed says why. Step 1 is the important one: it
 lists any AutomationId this kit expects and the window does not have.
 
 
+Recording the structure (do this first when something fails)
+-----------------------------------------------------------
+The automation was written from a description of DEF Editor's controls, not
+from its UI Automation tree. When a step reads the wrong thing - the Vehicle
+field offering "Phase" and "Close" - the tree is what shows why.
+
+1. Attach to DEF Editor.
+2. In RECORD STRUCTURE, type a label ("composite page"), press "Snapshot now".
+3. Tick "Auto: snapshot whenever the window changes", then navigate DEF
+   Editor by hand exactly as you want it automated - each change is saved.
+4. Untick Auto. The "structure" folder next to the exe holds one JSON per
+   snapshot and an index.md. Push that folder to the repository.
+
+What is recorded: every element's control type, AutomationId, class name,
+position, enabled/visible, and the tree. Names are kept only for interface
+controls (buttons, menus, tabs, headers, windows). For anything that carries
+data - grid cells, edits, list items, labels - only the SHAPE of the text is
+kept ("3 upper/digit"), never the text. Grids record their headers and row
+count and descend into two rows for shape. Leave "Redact values" on.
+
 Changing what it filters for
 ----------------------------
 B4 is one constant, at the top of defauto\workflow.py:
