@@ -177,7 +177,7 @@ _CSS = f"""
 
   /* a circuit chart row no build carries is an empty row — it has to read as
      a finding rather than as whitespace */
-  .sx-row-off { opacity: .55; }
+  .sx-row-off > td {{ opacity: .55; }}
 .sx-never > td {{ background: {wash(STATUS['blocker'])} !important; }}
 
   /* ---- rendered markdown (the Documentation page) ----
