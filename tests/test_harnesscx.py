@@ -92,6 +92,11 @@ def _master_bytes(include_aht: bool = True) -> bytes:
     # row 15: a bare DELETE, which used to pass as a confirmed part number
     ws.cell(15, 1, "E")
     ws.cell(15, 5, "DELETE")
+    # row 16: a real part whose NOTE starts with 'Delete:' — prose about a
+    # change, not a deletion; must stay
+    ws.cell(16, 1, "F")
+    ws.cell(16, 5, "PN500")
+    ws.cell(16, 6, "Delete: RCA no spksr like RCG")
 
     # partitioned family sheet: LEFT/RIGHT marker columns on row 9
     ws2 = wb.create_sheet("SEAT 2ND ROW")
@@ -188,6 +193,8 @@ class TestMatrixExtraction:
         # DELETE P/N row excluded, and so is a bare DELETE
         assert by_variant["C"].excluded
         assert by_variant["E"].excluded and by_variant["E"].current_pn == ""
+        # a note beginning 'Delete:' is prose beside a live part
+        assert not by_variant["F"].excluded and by_variant["F"].current_pn == "PN500"
         # the symbol-less PN400 row is excluded by default, reason stated
         orphan = next(r for r in matrix.rows if r.previous_pn == "" and
                       r.variant_id == "" and "PN400" in r.current_reason + r.current_pn)
@@ -332,7 +339,7 @@ class TestOnlySymbolRowsAreConsideredByDefault:
         ws = load_workbook(io.BytesIO(files[0][0]), keep_vba=True)["Complexity"]
         pns = [ws.cell(r, 1).value for r in range(2, 8) if ws.cell(r, 1).value]
         assert "PN400" not in pns
-        assert pns == ["PN300", "PN200", "PN30"]
+        assert pns == ["PN300", "PN200", "PN30", "PN500"]
 
     def test_re_including_it_puts_it_in_the_file_with_its_marks(self, matrix):
         orphan = next(r for r in matrix.rows if r.current_pn == "PN400")
@@ -364,8 +371,8 @@ class TestExport:
         # equality auto-included as one column per side; combined expr left out
         assert "XH3" in headers and "XH4" in headers
         assert "RS3+(CM5/CVM)" not in headers
-        pns = [ws.cell(r, 1).value for r in range(2, 6) if ws.cell(r, 1).value]
-        assert pns == ["PN300", "PN200", "PN30"]     # DELETE row omitted
+        pns = [ws.cell(r, 1).value for r in range(2, 7) if ws.cell(r, 1).value]
+        assert pns == ["PN300", "PN200", "PN30", "PN500"]   # DELETE rows omitted
         # the equality columns carry D's mark in both
         row_d = 2 + pns.index("PN30")
         marks = {ws.cell(1, c).value: ws.cell(row_d, c).value

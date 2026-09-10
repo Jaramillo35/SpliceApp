@@ -355,13 +355,21 @@ def _build_row(ws, r, variant_id, seq, current_col, sales_codes, code_to_col,
     # WITH one of those — either the Current cell or the note columns beside it.
     # (Bulletin prose mentions 'delete' mid-text; that must NOT exclude.)
     def _is_delete_marker(text: str) -> bool:
-        # 'DELETE P/N', a bare 'DELETE', 'Cancel' — a cell that STARTS with
-        # one. A bare DELETE used to pass as a confirmed part number.
+        # The Current cell: 'DELETE P/N', a bare 'DELETE', 'Cancel' — a cell
+        # that STARTS with one. A bare DELETE used to pass as a confirmed part
+        # number called DELETE; on the reference master that was 169 rows.
         u = text.strip().upper()
         return u.startswith("DELETE") or u.startswith("CANCEL")
 
+    def _is_note_removal(text: str) -> bool:
+        # The note columns beside Current: only the explicit sentinels. A note
+        # is prose, and 'Delete: RCA no spksr like RCG' describes a change to
+        # a part that is very much still built.
+        u = text.strip().upper()
+        return u.startswith("DELETE P") or u.startswith("CANCEL")
+
     note_removed = any(
-        _is_delete_marker(_cell_text(ws.cell(r, c)))
+        _is_note_removal(_cell_text(ws.cell(r, c)))
         for c in range(current_col + 1, min(current_col + 4, ws.max_column + 1))
     )
 
