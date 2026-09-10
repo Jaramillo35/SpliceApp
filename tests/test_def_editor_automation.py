@@ -35,6 +35,29 @@ def session():
 
 
 @pytest.fixture()
+def tk_display():
+    """A Tk root, or a skip where none can open.
+
+    The kit's window is tkinter. It opens on a Mac or Windows desktop and
+    on any X display; GitHub's Linux runner has no display at all, and the
+    two tests that drive the window there failed with 'no $DISPLAY' — so
+    they skip there, with the reason, rather than fail CI for a window that
+    was never going to be shown.
+    """
+    import tkinter as tk
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"no display for tkinter here: {exc}")
+    root.withdraw()
+    yield root
+    try:
+        root.destroy()
+    except tk.TclError:
+        pass
+
+
+@pytest.fixture()
 def opened(session):
     """A session with a harness open — where most workflows begin."""
     line = session.composite.vehicle_lines()[0]
@@ -527,7 +550,7 @@ class TestTypedTextIsMatchedToWhatIsOffered:
         assert out.ok, out.failed and out.failed.detail
         assert "M34" in out.grid.column("Circuit")
 
-    def test_the_gui_has_free_text_fields_and_a_circuit_field(self):
+    def test_the_gui_has_free_text_fields_and_a_circuit_field(self, tk_display):
         import importlib
         import tkinter as tk
         gui = importlib.import_module("defauto.gui")
@@ -636,7 +659,7 @@ class TestTheStructureRecorder:
         for auto_id in ids.ESSENTIAL:
             assert auto_id in ids.CONTROL_TYPES, auto_id
 
-    def test_the_gui_records_in_demo_mode(self, tmp_path):
+    def test_the_gui_records_in_demo_mode(self, tmp_path, tk_display):
         import importlib
         gui = importlib.import_module("defauto.gui")
         w = gui.Workbench()
