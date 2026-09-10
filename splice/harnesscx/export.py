@@ -40,10 +40,22 @@ def template_bytes() -> bytes:
     return TEMPLATE_PATH.read_bytes()
 
 
-def validate_before_export(matrix: FamilyMatrix, harness_id: str) -> list[str]:
-    """Return blocking problems (empty = ok to export). Warnings are separate."""
+def validate_before_export(matrix: FamilyMatrix, harness_id: str,
+                           side_ids: dict | None = None) -> list[str]:
+    """Return blocking problems (empty = ok to export). Warnings are separate.
+
+    A partitioned worksheet generates one file per variant, and each variant
+    is its own harness with its own ID — so every side needs one, and the
+    single ID is not accepted in their place: two harnesses sharing an ID is
+    exactly the mistake a required field exists to prevent.
+    """
     problems: list[str] = []
-    if not str(harness_id).strip():
+    if matrix.partition_sides:
+        given = {k: str(v).strip() for k, v in (side_ids or {}).items()}
+        for side in matrix.partition_sides:
+            if not given.get(side):
+                problems.append(f"Harness ID for {side} is required.")
+    elif not str(harness_id).strip():
         problems.append("Harness ID is required (enter it manually).")
     if not any(not r.excluded and r.current_pn for r in matrix.rows):
         problems.append("No part numbers to write (every row is excluded or empty).")
@@ -69,6 +81,7 @@ def unresolved_warnings(matrix: FamilyMatrix) -> list[str]:
 def generate_files(
     matrix: FamilyMatrix,
     harness_id: str,
+    side_ids: dict | None = None,
     template: bytes | None = None,
 ) -> tuple[list[tuple[bytes, str]], list[str]]:
     """Generate the individual complexity file(s) for a family matrix.
@@ -79,7 +92,8 @@ def generate_files(
     only that variant's part numbers plus the common (unmarked) ones.
     """
     matrix.harness_id = harness_id
-    problems = validate_before_export(matrix, harness_id)
+    matrix.side_ids = {k: str(v).strip() for k, v in (side_ids or {}).items()}
+    problems = validate_before_export(matrix, harness_id, side_ids)
     if problems:
         return [], problems
     template = template or template_bytes()
@@ -94,7 +108,8 @@ def generate_files(
         sub.rows = [r for r in matrix.rows if r.partition_side == side or not r.partition_side]
         sub.partition_sides = []
         sub.worksheet = f"{matrix.worksheet} {side.replace('/', '')}"
-        files.append(build_individual_complexity(sub, template, harness_id=harness_id))
+        files.append(build_individual_complexity(
+            sub, template, harness_id=matrix.side_ids[side]))
     return files, []
 
 

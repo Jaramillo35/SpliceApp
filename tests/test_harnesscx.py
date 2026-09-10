@@ -97,6 +97,11 @@ def _master_bytes(include_aht: bool = True) -> bytes:
     ws.cell(16, 1, "F")
     ws.cell(16, 5, "PN500")
     ws.cell(16, 6, "Delete: RCA no spksr like RCG")
+    ws.cell(16, code_cols["CM5/CVM"], "X")
+    # row 17: a real symbol and part number, but no X/G under any code —
+    # nothing to write; out unless the SE re-includes it
+    ws.cell(17, 1, "G")
+    ws.cell(17, 5, "PN600")
 
     # partitioned family sheet: LEFT/RIGHT marker columns on row 9
     ws2 = wb.create_sheet("SEAT 2ND ROW")
@@ -201,7 +206,10 @@ class TestMatrixExtraction:
         assert orphan.excluded
         assert "no variant symbol" in orphan.current_reason
         assert orphan.symbols.get("AHT") == "X", "marks are kept for re-inclusion"
-        assert matrix.excluded_count == 3
+        # G has a symbol and a part number but no mark under any code
+        assert by_variant["G"].excluded
+        assert "no marks" in by_variant["G"].current_reason
+        assert matrix.excluded_count == 4
 
     def test_combined_expressions(self, matrix):
         exprs = {ce.original_expr: ce for ce in matrix.combined_exprs}
@@ -333,6 +341,30 @@ class TestACommaSeparatedDefinitionIsOneColumnPerCode:
         assert ce.output_codes == ["NBU", "NAS"]
 
 
+class TestUnmarkedPartsAreOutUnlessReincluded:
+    def test_a_part_with_no_marks_is_not_written(self, matrix):
+        files, _ = export.generate_files(matrix, "H1")
+        ws = load_workbook(io.BytesIO(files[0][0]), keep_vba=True)["Complexity"]
+        pns = [ws.cell(r, 1).value for r in range(2, 10) if ws.cell(r, 1).value]
+        assert "PN600" not in pns
+
+    def test_re_including_it_writes_a_row_the_se_can_then_mark(self, matrix):
+        g = next(r for r in matrix.rows if r.current_pn == "PN600")
+        g.excluded = False
+        files, _ = export.generate_files(matrix, "H1")
+        ws = load_workbook(io.BytesIO(files[0][0]), keep_vba=True)["Complexity"]
+        pns = [ws.cell(r, 1).value for r in range(2, 10) if ws.cell(r, 1).value]
+        assert "PN600" in pns
+
+    def test_a_part_the_se_adds_is_not_hidden_for_having_no_marks_yet(self):
+        """Add PN creates a row with no marks; it must stay in play."""
+        from splice.harnesscx.models import MatrixRow, ProposalClass
+        row = MatrixRow(variant_id="(added)", current_pn="PN999", previous_pn="",
+                        current_class=ProposalClass.MANUAL, current_reason="added by the SE",
+                        current_source="workbench")
+        assert not row.excluded          # the engine rule runs at build time only
+
+
 class TestOnlySymbolRowsAreConsideredByDefault:
     def test_a_symbol_less_row_stays_out_of_the_file(self, matrix):
         files, _ = export.generate_files(matrix, "H1")
@@ -380,6 +412,44 @@ class TestTheTickIsTheDecision:
         assert "" not in pns and None in pns    # nothing blank was written
 
 
+class TestEachVariantHasItsOwnHarnessId:
+    """A partitioned worksheet is several harnesses. Each file carries its
+    own ID, and the single ID field is not accepted in their place."""
+
+    def _seat(self):
+        return adapters.extract_family_matrix(
+            _master_bytes(), "SEAT 2ND ROW", UNIVERSE, "Seat 2nd Row")
+
+    def test_each_side_needs_an_id_and_the_single_one_does_not_count(self):
+        m = self._seat()
+        assert m.partition_sides == ["LEFT", "RIGHT"]
+        assert export.validate_before_export(m, "H9") == [
+            "Harness ID for LEFT is required.", "Harness ID for RIGHT is required."]
+        assert export.validate_before_export(m, "", {"LEFT": "L1"}) == [
+            "Harness ID for RIGHT is required."]
+        assert export.validate_before_export(m, "", {"LEFT": "L1", "RIGHT": "R1"}) == []
+
+    def test_each_file_carries_its_own_id(self):
+        m = self._seat()
+        files, problems = export.generate_files(
+            m, "", side_ids={"LEFT": "SEAT-L", "RIGHT": "SEAT-R"})
+        assert problems == []
+        ids_by_file = {}
+        for data, fname in files:
+            ws = load_workbook(io.BytesIO(data), keep_vba=True)["Complexity"]
+            ids_by_file[fname] = ws.cell(1, 1).value
+        left = next(v for k, v in ids_by_file.items() if "LEFT" in k)
+        right = next(v for k, v in ids_by_file.items() if "RIGHT" in k)
+        assert left == "ID=SEAT-L" and right == "ID=SEAT-R"
+
+    def test_an_unpartitioned_family_keeps_the_single_id(self, matrix):
+        assert not matrix.partition_sides
+        assert export.validate_before_export(matrix, "H1") == []
+        files, _ = export.generate_files(matrix, "H1")
+        ws = load_workbook(io.BytesIO(files[0][0]), keep_vba=True)["Complexity"]
+        assert ws.cell(1, 1).value == "ID=H1"
+
+
 class TestExport:
     def test_validation_gates(self, matrix):
         assert export.validate_before_export(matrix, "") \
@@ -411,7 +481,8 @@ class TestExport:
     def test_partitioned_family_yields_one_file_per_side(self):
         m = adapters.extract_family_matrix(
             _master_bytes(), "SEAT 2ND ROW", UNIVERSE, "Seat 2nd Row")
-        files, problems = export.generate_files(m, "H9")
+        files, problems = export.generate_files(
+            m, "", side_ids={"LEFT": "H9-L", "RIGHT": "H9-R"})
         assert problems == [] and len(files) == 2
         by_name = {}
         for data, fname in files:

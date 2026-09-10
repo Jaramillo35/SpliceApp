@@ -125,6 +125,10 @@ class FamilyMatrix:
     combined_exprs: list[CombinedExpr] = field(default_factory=list)  # unseparable — SE reviews
     dtx_codes: list[str] = field(default_factory=list)  # sales codes the DTx uses for THIS family
     harness_id: str = ""          # entered manually by the SE
+    #: one Harness ID per variant when the master partitions the worksheet
+    #: (LEFT/RIGHT, DRIVER/PASSENGER, CUP vs CM5/CVM): each side is its own
+    #: harness with its own id, and one file each
+    side_ids: dict = field(default_factory=dict)
     # Variant sides detected on master row 9 (e.g. ['LEFT','RIGHT']). Empty = not partitioned.
     partition_sides: list[str] = field(default_factory=list)
     # Program metadata parsed from the master family-sheet header (for the info table).

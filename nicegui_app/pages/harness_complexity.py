@@ -371,6 +371,14 @@ def page() -> None:
             may be a real part nobody labelled."""
             return r.excluded and "deleted" in r.current_reason
 
+        def _unmarked(r) -> bool:
+            """No X/G under any code: nothing to write for it. Hidden like the
+            deletions, behind its own switch, and its own count."""
+            return r.excluded and "no marks" in r.current_reason
+
+        def _settled(r) -> bool:
+            return _confidently_deleted(r) or _unmarked(r)
+
         def _render_matrix(m) -> None:
             """Two tables, not one wide grid.
 
@@ -396,11 +404,15 @@ def page() -> None:
                 .classes("sx-caption")
 
             state.setdefault("show_deleted", False)
-            # Rows the master itself marks deleted / cancelled / N/A are settled:
-            # they start hidden and unticked, behind a switch, so the table is
-            # the parts in play rather than the parts that used to be.
+            state.setdefault("show_unmarked", False)
+            # Two kinds of row are settled before the engineer looks: the ones
+            # the master marks deleted / cancelled / N/A, and the ones with no
+            # X/G under any code (a blank row in the file). Both start hidden
+            # and unticked behind their own switch, with their own count, so
+            # the table is the parts in play rather than the parts that are not.
             deleted = [r for r in m.rows if _confidently_deleted(r)]
-            in_play = [r for r in m.rows if not _confidently_deleted(r)]
+            unmarked = [r for r in m.rows if _unmarked(r)]
+            in_play = [r for r in m.rows if not _settled(r)]
 
             @ui.refreshable
             def count_view() -> None:
@@ -414,18 +426,29 @@ def page() -> None:
                     if deleted:
                         c.kpi(len(deleted), "Deleted in the master",
                               hint="hidden unless shown")
+                    if unmarked:
+                        c.kpi(len(unmarked), "No marks under any code",
+                              hint="hidden unless shown")
 
             views["count"] = count_view
             count_view()
-            if deleted:
-                ui.switch(f"Show the {len(deleted)} row(s) the master marks deleted",
-                          value=state["show_deleted"],
-                          on_change=lambda v: (state.update(show_deleted=bool(v.value)),
-                                               refresh("workbench")))
+            with ui.row().classes("gap-6 flex-wrap"):
+                if deleted:
+                    ui.switch(f"Show the {len(deleted)} row(s) the master marks deleted",
+                              value=state["show_deleted"],
+                              on_change=lambda v: (state.update(show_deleted=bool(v.value)),
+                                                   refresh("workbench")))
+                if unmarked:
+                    ui.switch(f"Show the {len(unmarked)} row(s) with no marks",
+                              value=state["show_unmarked"],
+                              on_change=lambda v: (state.update(show_unmarked=bool(v.value)),
+                                                   refresh("workbench")))
 
             rows = []
             for i, r in enumerate(m.rows):
                 if _confidently_deleted(r) and not state["show_deleted"]:
+                    continue
+                if _unmarked(r) and not state["show_unmarked"]:
                     continue
                 row = {"_i": i, "Include": not r.excluded, "Symbol": r.variant_id,
                        "Harness PN": r.current_pn or ("(deleted)" if r.excluded else ""),
@@ -656,21 +679,39 @@ def page() -> None:
                     c.action("Generate .xlsm", lambda: None,
                              needs=lambda: ["an open worksheet"])
                     return
+                # A partitioned worksheet is several harnesses — one file
+                # each, and each with its own ID. One field per variant, then;
+                # the single field would give two harnesses one ID.
+                side_inputs: dict = {}
                 with ui.row().classes("items-end gap-3 flex-wrap"):
-                    id_in = ui.input("Harness ID (manual)", value=m.harness_id) \
-                        .classes("w-48").props("dense")
-                    id_in.on_value_change(lambda _e: c.recheck())
+                    if m.partition_sides:
+                        id_in = None
+                        for side in m.partition_sides:
+                            box = ui.input(f"Harness ID — {side}",
+                                           value=m.side_ids.get(side, "")) \
+                                .classes("w-48").props("dense")
+                            box.on_value_change(lambda _e: c.recheck())
+                            side_inputs[side] = box
+                    else:
+                        id_in = ui.input("Harness ID (manual)", value=m.harness_id) \
+                            .classes("w-48").props("dense")
+                        id_in.on_value_change(lambda _e: c.recheck())
 
                     def needs() -> list[str]:
                         if state["matrix"] is None:
                             return ["an open worksheet"]
+                        if side_inputs:
+                            return [f"a Harness ID for {side}"
+                                    for side, box in side_inputs.items()
+                                    if not (box.value or "").strip()]
                         return [] if (id_in.value or "").strip() else ["a Harness ID"]
 
-                    c.action("Generate .xlsm", lambda: generate(id_in), needs=needs)
+                    c.action("Generate .xlsm",
+                             lambda: generate(id_in, side_inputs), needs=needs)
                     if m.partition_sides:
-                        ui.label(f"→ {len(m.partition_sides)} files "
-                                 f"({' / '.join(m.partition_sides)})") \
-                            .classes("sx-caption")
+                        ui.label(f"→ {len(m.partition_sides)} files, one per "
+                                 f"variant ({' / '.join(m.partition_sides)}), "
+                                 "each with its own ID").classes("sx-caption")
                 for kind, text in state["gen_notes"]:
                     c.note(kind, text)
                 if state["files"]:
@@ -753,14 +794,15 @@ def page() -> None:
                 state.update(matrix=matrix, files=[], gen_notes=[])
                 refresh("workbench", "generate")
 
-        async def generate(id_in) -> None:
+        async def generate(id_in, side_inputs=None) -> None:
             m = state["matrix"]
             if m is None:
                 return   # the action is gated; this is only a guard
-            harness_id = id_in.value or ""
+            harness_id = (id_in.value or "") if id_in is not None else ""
+            side_ids = {side: (box.value or "") for side, box in (side_inputs or {}).items()}
 
             def work():
-                files, problems = export.generate_files(m, harness_id)
+                files, problems = export.generate_files(m, harness_id, side_ids)
                 if problems:
                     # the runner's toast is the one toast: a blocked export
                     # is its error, not a "finished" followed by a failure
