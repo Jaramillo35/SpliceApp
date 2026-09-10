@@ -81,10 +81,11 @@ def _guide() -> None:
             "plus the common ones.\n\n"
             "**Your review.** Work the pre-generation checks (a DTx code missing from the "
             "complexity file is the upstream cause of Circuit Health findings later; a "
-            "prefix-pair of part numbers is almost always a truncated cell). Edit part "
-            "numbers or X/G marks directly in the matrix, decide the combined "
-            "expressions, enter the Harness ID, and generate. The template's macros and "
-            "`Harness PN` formulas are preserved."
+            "prefix-pair of part numbers is almost always a truncated cell). The part "
+            "numbers to consider are one table and the sales codes another; click a "
+            "part number to edit its X/G marks. Decide the combined expressions, enter "
+            "the Harness ID, and generate. The template's macros and `Harness PN` "
+            "formulas are preserved."
         ).classes("text-sm")
 
 
@@ -365,15 +366,27 @@ def page() -> None:
                     mono=("code", "origin"), status_field="cx", pagination=15)
 
         def _render_matrix(m) -> None:
+            """Two tables, not one wide grid.
+
+            The matrix used to be one aggrid with a column per sales code —
+            ninety columns on a real IP sheet, every cell an 'X' or blank, the
+            headers truncated to a letter. Nobody could read which part carried
+            what. So: the part numbers to consider are one table, the sales
+            codes that will become columns are another, and the marks — the
+            one thing that needs both — are edited for one part number at a
+            time, by clicking it.
+            """
             from splice.harnesscx.models import ProposalClass
 
-            ui.label("Applicability matrix").classes("text-sm font-semibold mt-2")
-            ui.label("Edit a part number or an X/G mark directly — every proposed "
-                     "value shows how it was derived. Tick the boxes (or the "
-                     "header box for all) to exclude several rows at once.") \
+            state.setdefault("pn_focus", None)
+
+            # ------------------------------------------ 1 · part numbers
+            ui.label("Part numbers to consider").classes("text-sm font-semibold mt-2")
+            ui.label("Every proposed part number and how it was derived. Edit a "
+                     "part number in place; click a row to edit its marks below; "
+                     "tick rows (or the header box) to exclude several at once.") \
                 .classes("sx-caption")
 
-            code_cols = [sc.code for sc in m.sales_codes]
             rows = []
             for i, r in enumerate(m.rows):
                 if r.excluded:
@@ -381,34 +394,33 @@ def page() -> None:
                 row = {"_i": i, "Symbol": r.variant_id, "Harness PN": r.current_pn,
                        "Previous": r.previous_pn,
                        "Class": CLASS_LABEL.get(r.current_class.value,
-                                                r.current_class.value)}
+                                                r.current_class.value),
+                       "Derived from": r.current_reason,
+                       "Marks": len(r.symbols)}
                 if m.partition_sides:
                     row["Partition"] = r.partition_side
-                for code in code_cols:
-                    row[code] = r.symbols.get(code, "")
                 rows.append(row)
 
             col_defs = [
-                {"field": "Symbol", "width": 110, "pinned": "left",
+                {"field": "Symbol", "width": 100, "pinned": "left",
                  "checkboxSelection": True, "headerCheckboxSelection": True},
-                {"field": "Harness PN", "editable": True, "width": 150,
+                {"field": "Harness PN", "editable": True, "width": 160,
                  "pinned": "left", "cellStyle": {"fontWeight": "600"}},
-                {"field": "Previous", "width": 130},
+                {"field": "Previous", "width": 140},
                 {"field": "Class", "width": 100},
+                {"field": "Derived from", "flex": 1, "minWidth": 220},
+                {"field": "Marks", "width": 80, "cellStyle": {"textAlign": "center"}},
             ]
             if m.partition_sides:
-                col_defs.append({"field": "Partition", "editable": True, "width": 110})
-            col_defs += [{"field": code, "editable": True, "width": 64,
-                          "cellStyle": {"textAlign": "center"}} for code in code_cols]
+                col_defs.insert(4, {"field": "Partition", "editable": True, "width": 110})
 
-            # the app's one editable grid: it stays an aggrid
             grid = ui.aggrid({
                 "columnDefs": col_defs, "rowData": rows,
                 "rowSelection": "multiple",
                 "suppressRowClickSelection": True,   # only the checkboxes select
                 "defaultColDef": {"resizable": True, "sortable": True,
                                   "suppressMovable": True},
-            }).classes("w-full").style("height: 22rem")
+            }).classes("w-full").style("height: 16rem")
 
             def on_edit(e) -> None:
                 data = e.args.get("data", {})
@@ -423,20 +435,17 @@ def page() -> None:
                     r.current_reason = "edited by the SE"
                 if m.partition_sides and "Partition" in data:
                     r.partition_side = str(data.get("Partition") or "").strip().upper()
-                for code in code_cols:
-                    sym = str(data.get(code) or "").strip().upper()
-                    if sym in ("X", "G"):
-                        r.symbols[code] = sym
-                        r.symbol_class[code] = ProposalClass.MANUAL
-                    else:
-                        r.symbols.pop(code, None)
-                        r.symbol_class.pop(code, None)
                 state["files"] = []
-                # an edit makes any generated file stale: the Generate step
-                # and its download buttons follow, the grid keeps its place
                 refresh("generate")
 
+            def on_click(e) -> None:
+                i = (e.args.get("data") or {}).get("_i")
+                if i is not None and 0 <= i < len(m.rows):
+                    state["pn_focus"] = i
+                    views["marks"].refresh()
+
             grid.on("cellValueChanged", on_edit)
+            grid.on("rowClicked", on_click)
 
             with ui.row().classes("items-end gap-2 flex-wrap"):
                 add_in = ui.input("Add part number").classes("w-56").props("dense")
@@ -468,6 +477,8 @@ def page() -> None:
                     if not n:
                         hint.set_visibility(True)
                         return
+                    if state["pn_focus"] is not None and m.rows[state["pn_focus"]].excluded:
+                        state["pn_focus"] = None
                     ui.notify(f"Excluded {n} part number(s) — they will not appear "
                               "in the generated file", type="positive")
                     refresh("workbench", "generate")
@@ -479,6 +490,77 @@ def page() -> None:
                           on_click=exclude_selected).props("outline dense no-caps")
             hint = ui.label("Tick rows first").classes("sx-caption")
             hint.set_visibility(False)
+
+            # ------------------------------------- marks for one part number
+            @ui.refreshable
+            def marks_view() -> None:
+                i = state["pn_focus"]
+                if i is None or not (0 <= i < len(m.rows)) or m.rows[i].excluded:
+                    ui.label("Click a part number above to see and edit which "
+                             "sales codes it is marked under.").classes("sx-caption")
+                    return
+                r = m.rows[i]
+                ui.label(f"Marks — {r.current_pn}").classes("text-sm font-semibold mt-2")
+                ui.label("X or G under a code means this part carries it. Change a "
+                         "mark here; the generated file follows.").classes("sx-caption")
+                columns = list(m.sales_codes) + list(m.market_codes)
+                with ui.row().classes("gap-2 flex-wrap w-full"):
+                    for sc in columns:
+                        def set_mark(v, code=sc.code, r=r) -> None:
+                            sym = str(v.value or "").strip().upper()
+                            if sym in ("X", "G"):
+                                r.symbols[code] = sym
+                                r.symbol_class[code] = ProposalClass.MANUAL
+                            else:
+                                r.symbols.pop(code, None)
+                                r.symbol_class.pop(code, None)
+                            state["files"] = []
+                            views["codes"].refresh()
+                            refresh("generate")
+
+                        with ui.card().classes("sx-tile px-3 py-2 gap-0 items-center") \
+                                .style("min-width: 7.5rem"):
+                            ui.label(sc.code).classes("sx-mono text-sm font-semibold")
+                            if sc.market:
+                                ui.label("market").classes("sx-caption sx-faint")
+                            elif sc.feature:
+                                ui.label(sc.feature[:22]).classes("sx-caption sx-faint") \
+                                    .tooltip(sc.feature)
+                            ui.toggle({"": "—", "X": "X", "G": "G"},
+                                      value=r.symbols.get(sc.code, ""),
+                                      on_change=set_mark).props("dense no-caps")
+
+            views["marks"] = marks_view
+            marks_view()
+
+            # -------------------------------------------- 2 · sales codes
+            @ui.refreshable
+            def codes_view() -> None:
+                ui.label("Sales codes").classes("text-sm font-semibold mt-2")
+                ui.label("The columns the individual file will carry, with the "
+                         "row-9 cell each came from and how many parts are marked "
+                         "under it. Market codes appear when ticked below.") \
+                    .classes("sx-caption")
+                live = [r for r in m.rows if not r.excluded]
+                data = []
+                for sc in list(m.sales_codes) + list(m.market_codes):
+                    data.append({
+                        "code": sc.code, "feature": sc.feature,
+                        "origin": sc.original_expr, "column": sc.source_col,
+                        "kind": ("market · " + ("on" if sc.include else "off")
+                                 if sc.market else
+                                 "from OR-list" if sc.from_combined else
+                                 CLASS_LABEL.get(sc.klass.value, sc.klass.value)),
+                        "marked": sum(1 for r in live if sc.code in r.symbols),
+                        "of": len(live),
+                    })
+                c.frame_table(data, labels={
+                    "code": "Sales code", "feature": "Feature (row 7)",
+                    "origin": "Row 9 cell", "column": "Column", "kind": "Kind",
+                    "marked": "Parts marked", "of": "of"}, mono=("code", "origin"))
+
+            views["codes"] = codes_view
+            codes_view()
 
         def _render_combined(m) -> None:
             if not m.combined_exprs:

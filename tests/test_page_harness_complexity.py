@@ -175,6 +175,11 @@ class TestWorkbench:
         await wait_for(user, "Combined expressions")
         await user.should_see("QB1+(QA1/QA2)")
         await user.should_see("1 excluded")
+        # the matrix is two tables, not one grid a column per code
+        await user.should_see("Part numbers to consider")
+        await user.should_see("Sales codes")
+        await user.should_see("Click a part number above")
+        await user.should_not_see("Applicability matrix")
         await user.should_see("equality — auto-resolved: QA1, QA2")
         await user.should_see("1 combined expressions to decide")
         await user.should_see("Exclude selected rows")

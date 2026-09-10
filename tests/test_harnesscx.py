@@ -282,6 +282,35 @@ class TestMarketCodesAreOffered:
         assert "YAA" not in old["IP"] and "YAA" not in new["IP"]
 
 
+class TestACommaSeparatedDefinitionIsOneColumnPerCode:
+    """Writing 'NBU,NAS' against a combined expression means two columns with
+    the same per-row content, one per code — with or without the space."""
+
+    @pytest.mark.parametrize("definition", ["NBU,NAS", "NBU, NAS", " NBU ,NAS "])
+    def test_both_columns_are_written_with_identical_marks(self, matrix, definition):
+        ce = next(x for x in matrix.combined_exprs if x.original_expr == "RS3+(CM5/CVM)")
+        ce.include, ce.manual_code = True, definition
+        assert ce.output_codes == ["NBU", "NAS"]
+        files, problems = export.generate_files(matrix, "H1")
+        assert problems == []
+        ws = load_workbook(io.BytesIO(files[0][0]), keep_vba=True)["Complexity"]
+        headers = {ws.cell(1, c).value: c for c in range(2, 14) if ws.cell(1, c).value}
+        assert "NBU" in headers and "NAS" in headers
+        assert "RS3+(CM5/CVM)" not in headers
+        pns = [ws.cell(r, 1).value for r in range(2, 6)]
+        for pn in pns:                       # every row: same mark under both
+            r = 2 + pns.index(pn)
+            assert ws.cell(r, headers["NBU"]).value == ws.cell(r, headers["NAS"]).value
+        # row D is the one marked under this expression in the fixture
+        r = 2 + pns.index("PN30")
+        assert ws.cell(r, headers["NBU"]).value == "X"
+
+    def test_a_duplicate_in_the_definition_collapses(self):
+        from splice.harnesscx.models import CombinedExpr
+        ce = CombinedExpr(original_expr="A+B", source_col="Z", manual_code="NBU,NAS,NBU")
+        assert ce.output_codes == ["NBU", "NAS"]
+
+
 class TestExport:
     def test_validation_gates(self, matrix):
         assert export.validate_before_export(matrix, "") \
