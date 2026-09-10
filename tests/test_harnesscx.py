@@ -84,6 +84,14 @@ def _master_bytes(include_aht: bool = True) -> bytes:
     ws.cell(13, 5, "PN30")            # prefix lookalike of PN300
     ws.cell(13, code_cols["COMBINED"], "X")
     ws.cell(13, code_cols["EQ"], "G")
+    # row 14: a Current value but NO variant symbol — not a variant of the
+    # family; excluded by default, marks kept so it can be re-included
+    ws.cell(14, 5, "PN400")
+    if include_aht:
+        ws.cell(14, code_cols["AHT"], "X")
+    # row 15: a bare DELETE, which used to pass as a confirmed part number
+    ws.cell(15, 1, "E")
+    ws.cell(15, 5, "DELETE")
 
     # partitioned family sheet: LEFT/RIGHT marker columns on row 9
     ws2 = wb.create_sheet("SEAT 2ND ROW")
@@ -177,9 +185,16 @@ class TestMatrixExtraction:
         # C/O resolves to the most recent valid phase P/N, marked inferred
         assert by_variant["B"].current_pn == "PN200"
         assert by_variant["B"].current_class is ProposalClass.INFERRED
-        # DELETE row excluded
+        # DELETE P/N row excluded, and so is a bare DELETE
         assert by_variant["C"].excluded
-        assert matrix.excluded_count == 1
+        assert by_variant["E"].excluded and by_variant["E"].current_pn == ""
+        # the symbol-less PN400 row is excluded by default, reason stated
+        orphan = next(r for r in matrix.rows if r.previous_pn == "" and
+                      r.variant_id == "" and "PN400" in r.current_reason + r.current_pn)
+        assert orphan.excluded
+        assert "no variant symbol" in orphan.current_reason
+        assert orphan.symbols.get("AHT") == "X", "marks are kept for re-inclusion"
+        assert matrix.excluded_count == 3
 
     def test_combined_expressions(self, matrix):
         exprs = {ce.original_expr: ce for ce in matrix.combined_exprs}
@@ -309,6 +324,25 @@ class TestACommaSeparatedDefinitionIsOneColumnPerCode:
         from splice.harnesscx.models import CombinedExpr
         ce = CombinedExpr(original_expr="A+B", source_col="Z", manual_code="NBU,NAS,NBU")
         assert ce.output_codes == ["NBU", "NAS"]
+
+
+class TestOnlySymbolRowsAreConsideredByDefault:
+    def test_a_symbol_less_row_stays_out_of_the_file(self, matrix):
+        files, _ = export.generate_files(matrix, "H1")
+        ws = load_workbook(io.BytesIO(files[0][0]), keep_vba=True)["Complexity"]
+        pns = [ws.cell(r, 1).value for r in range(2, 8) if ws.cell(r, 1).value]
+        assert "PN400" not in pns
+        assert pns == ["PN300", "PN200", "PN30"]
+
+    def test_re_including_it_puts_it_in_the_file_with_its_marks(self, matrix):
+        orphan = next(r for r in matrix.rows if r.current_pn == "PN400")
+        orphan.excluded = False              # what the Re-include button does
+        files, _ = export.generate_files(matrix, "H1")
+        ws = load_workbook(io.BytesIO(files[0][0]), keep_vba=True)["Complexity"]
+        pns = [ws.cell(r, 1).value for r in range(2, 8) if ws.cell(r, 1).value]
+        assert "PN400" in pns
+        headers = {ws.cell(1, c).value: c for c in range(2, 12) if ws.cell(1, c).value}
+        assert ws.cell(2 + pns.index("PN400"), headers["AHT"]).value == "X"
 
 
 class TestExport:

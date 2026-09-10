@@ -491,6 +491,34 @@ def page() -> None:
             hint = ui.label("Tick rows first").classes("sx-caption")
             hint.set_visibility(False)
 
+            # ------------------------------------------ excluded, reversible
+            excluded = [(i, r) for i, r in enumerate(m.rows) if r.excluded]
+            if excluded:
+                with ui.expansion(f"Excluded part numbers ({len(excluded)}) — "
+                                  "not in the file unless re-included") \
+                        .classes("w-full").props("dense"):
+                    ui.label("Rows without a variant symbol in column A are "
+                             "excluded by default, alongside DELETE / Cancel / N/A. "
+                             "Re-include one to consider it; its marks were kept.") \
+                        .classes("sx-caption")
+                    for i, r in excluded:
+                        with ui.row().classes("items-center gap-3 flex-wrap w-full"):
+                            def reinclude(i=i) -> None:
+                                row = m.rows[i]
+                                row.excluded = False
+                                row.current_class = ProposalClass.MANUAL
+                                row.current_reason = "re-included by the SE"
+                                state["files"] = []
+                                refresh("workbench", "generate")
+                            ui.button("Re-include", icon="undo", on_click=reinclude) \
+                                .props("outline dense no-caps")
+                            ui.label(r.current_pn or "(no part number)") \
+                                .classes("sx-mono text-sm")
+                            ui.label(f"symbol: {r.variant_id or '—'}").classes("sx-caption")
+                            ui.label(r.current_reason).classes("sx-caption")
+                            if r.symbols:
+                                ui.label(f"{len(r.symbols)} mark(s) kept").classes("sx-caption")
+
             # ------------------------------------- marks for one part number
             @ui.refreshable
             def marks_view() -> None:

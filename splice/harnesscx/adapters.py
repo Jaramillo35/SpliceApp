@@ -292,6 +292,14 @@ def _build_matrix(ws, worksheet: str, universe: set[str], canonical_family: str,
                          combined_cols, worksheet)
         if part_cols:
             row.partition_side = row_side(ws, r, part_cols)
+        # A part row without a variant symbol in column A is not one of the
+        # family's variants: on the reference master those are 'No Harness'
+        # placeholders, bare DELETEs, stray carryovers and the odd orphan PN.
+        # Considered only when the SE re-includes it — never silently.
+        if not row.excluded and not variant_id:
+            row.excluded = True
+            row.current_class = ProposalClass.EXCLUDED
+            row.current_reason = "no variant symbol in column A — re-include to consider"
         rows.append(row)
         if len(rows) >= 2000:  # safety cap
             break
@@ -347,8 +355,10 @@ def _build_row(ws, r, variant_id, seq, current_col, sales_codes, code_to_col,
     # WITH one of those — either the Current cell or the note columns beside it.
     # (Bulletin prose mentions 'delete' mid-text; that must NOT exclude.)
     def _is_delete_marker(text: str) -> bool:
+        # 'DELETE P/N', a bare 'DELETE', 'Cancel' — a cell that STARTS with
+        # one. A bare DELETE used to pass as a confirmed part number.
         u = text.strip().upper()
-        return u.startswith("DELETE P") or u.startswith("CANCEL")
+        return u.startswith("DELETE") or u.startswith("CANCEL")
 
     note_removed = any(
         _is_delete_marker(_cell_text(ws.cell(r, c)))
