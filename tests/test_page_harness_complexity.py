@@ -186,6 +186,7 @@ class TestWorkbench:
         await user.should_see("Part numbers selected")
         # the master's own deletions start hidden, behind a switch
         await user.should_see("the master marks deleted")
+        await user.should_see("Part numbers selected")
         await user.should_see("equality — auto-resolved: QA1, QA2")
         await user.should_see("1 combined expressions to decide")
         await user.should_see("Include all")

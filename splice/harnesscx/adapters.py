@@ -300,6 +300,13 @@ def _build_matrix(ws, worksheet: str, universe: set[str], canonical_family: str,
             row.excluded = True
             row.current_class = ProposalClass.EXCLUDED
             row.current_reason = "no variant symbol in column A — re-include to consider"
+        # A part with no X/G under any code — band, market or combined — has
+        # no applicability to write: its row in the file would be blank. Out
+        # unless the SE says otherwise; a part they add themselves is theirs.
+        if not row.excluded and not row.symbols and not row.combined_symbols:
+            row.excluded = True
+            row.current_class = ProposalClass.EXCLUDED
+            row.current_reason = "no marks under any sales code — re-include to consider"
         rows.append(row)
         if len(rows) >= 2000:  # safety cap
             break

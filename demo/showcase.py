@@ -448,6 +448,7 @@ def write_master_complexity(path: Path, *, include_new_code: bool = True) -> Pat
             ws.cell(row, 1, "E")
             ws.cell(row, 4, "99000105AA")
             ws.cell(row, 5, "C/O")
+            ws.cell(row, first_code_col, "X")     # a carried-over part still carries codes
             row += 1
             ws.cell(row, 1, "F")
             ws.cell(row, 5, "DELETE P/N")
