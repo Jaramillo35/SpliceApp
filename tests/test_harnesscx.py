@@ -352,6 +352,34 @@ class TestOnlySymbolRowsAreConsideredByDefault:
         assert ws.cell(2 + pns.index("PN400"), headers["AHT"]).value == "X"
 
 
+class TestTheTickIsTheDecision:
+    """What the workbench's Include column does to the model, and what the
+    file then contains. The reported failure: every part ticked but one, and
+    the unticked one was still written — because a grid selection is not a
+    decision until something copies it into the model. Now the tick IS the
+    model: ``excluded`` flips on the click, and generate reads nothing else."""
+
+    def test_all_but_one_writes_all_but_one(self, matrix):
+        live = [r for r in matrix.rows if not r.excluded]
+        assert len(live) >= 3
+        left_out = live[1]
+        left_out.excluded = True                 # what unticking does
+        files, problems = export.generate_files(matrix, "H1")
+        assert problems == []
+        ws = load_workbook(io.BytesIO(files[0][0]), keep_vba=True)["Complexity"]
+        pns = [ws.cell(r, 1).value for r in range(2, 10) if ws.cell(r, 1).value]
+        assert left_out.current_pn not in pns
+        assert pns == [r.current_pn for r in live if r is not left_out]
+
+    def test_ticking_a_deleted_row_cannot_write_an_empty_part(self, matrix):
+        deleted = next(r for r in matrix.rows if r.excluded and not r.current_pn)
+        deleted.excluded = False                 # ticked by mistake
+        files, _ = export.generate_files(matrix, "H1")
+        ws = load_workbook(io.BytesIO(files[0][0]), keep_vba=True)["Complexity"]
+        pns = [ws.cell(r, 1).value for r in range(2, 10)]
+        assert "" not in pns and None in pns    # nothing blank was written
+
+
 class TestExport:
     def test_validation_gates(self, matrix):
         assert export.validate_before_export(matrix, "") \

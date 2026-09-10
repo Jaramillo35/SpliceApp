@@ -382,16 +382,17 @@ def page() -> None:
 
             # ------------------------------------------ 1 · part numbers
             ui.label("Part numbers to consider").classes("text-sm font-semibold mt-2")
-            ui.label("Every proposed part number and how it was derived. Edit a "
-                     "part number in place; click a row to edit its marks below; "
-                     "tick rows (or the header box) to exclude several at once.") \
+            ui.label("The tick IS the decision: a ticked part is written to the file, "
+                     "an unticked one is not, and the file follows immediately. Rows "
+                     "with a variant symbol start ticked; deleted rows and rows "
+                     "without a symbol start unticked with the reason beside them. "
+                     "Edit a part number in place; click a row to edit its marks.") \
                 .classes("sx-caption")
 
             rows = []
             for i, r in enumerate(m.rows):
-                if r.excluded:
-                    continue
-                row = {"_i": i, "Symbol": r.variant_id, "Harness PN": r.current_pn,
+                row = {"_i": i, "Include": not r.excluded, "Symbol": r.variant_id,
+                       "Harness PN": r.current_pn or ("(deleted)" if r.excluded else ""),
                        "Previous": r.previous_pn,
                        "Class": CLASS_LABEL.get(r.current_class.value,
                                                 r.current_class.value),
@@ -402,25 +403,28 @@ def page() -> None:
                 rows.append(row)
 
             col_defs = [
-                {"field": "Symbol", "width": 100, "pinned": "left",
-                 "checkboxSelection": True, "headerCheckboxSelection": True},
+                {"field": "Include", "width": 92, "pinned": "left", "editable": True,
+                 "cellRenderer": "agCheckboxCellRenderer",
+                 "cellEditor": "agCheckboxCellEditor",
+                 "cellStyle": {"textAlign": "center"}},
+                {"field": "Symbol", "width": 90, "pinned": "left"},
                 {"field": "Harness PN", "editable": True, "width": 160,
                  "pinned": "left", "cellStyle": {"fontWeight": "600"}},
                 {"field": "Previous", "width": 140},
                 {"field": "Class", "width": 100},
-                {"field": "Derived from", "flex": 1, "minWidth": 220},
+                {"field": "Derived from", "flex": 1, "minWidth": 240},
                 {"field": "Marks", "width": 80, "cellStyle": {"textAlign": "center"}},
             ]
             if m.partition_sides:
-                col_defs.insert(4, {"field": "Partition", "editable": True, "width": 110})
+                col_defs.insert(5, {"field": "Partition", "editable": True, "width": 110})
 
             grid = ui.aggrid({
                 "columnDefs": col_defs, "rowData": rows,
-                "rowSelection": "multiple",
-                "suppressRowClickSelection": True,   # only the checkboxes select
                 "defaultColDef": {"resizable": True, "sortable": True,
                                   "suppressMovable": True},
-            }).classes("w-full").style("height: 16rem")
+                # an unticked row reads as what it is
+                ":rowClassRules": "{'sx-row-off': p => !p.data.Include}",
+            }).classes("w-full").style("height: 18rem")
 
             def on_edit(e) -> None:
                 data = e.args.get("data", {})
@@ -428,14 +432,25 @@ def page() -> None:
                 if i is None or not (0 <= i < len(m.rows)):
                     return
                 r = m.rows[i]
+                include = bool(data.get("Include"))
+                if include == r.excluded:            # the tick changed
+                    r.excluded = not include
+                    r.current_class = (ProposalClass.MANUAL if include
+                                       else ProposalClass.EXCLUDED)
+                    r.current_reason = ("re-included by the SE" if include
+                                        else "excluded by the SE")
+                    if not include and state["pn_focus"] == i:
+                        state["pn_focus"] = None
+                        views["marks"].refresh()
                 pn = str(data.get("Harness PN") or "").strip()
-                if pn != r.current_pn:
+                if pn not in (r.current_pn, "(deleted)") and pn != r.current_pn:
                     r.current_pn = pn
                     r.current_class = ProposalClass.MANUAL
                     r.current_reason = "edited by the SE"
                 if m.partition_sides and "Partition" in data:
                     r.partition_side = str(data.get("Partition") or "").strip().upper()
                 state["files"] = []
+                views["codes"].refresh()
                 refresh("generate")
 
             def on_click(e) -> None:
@@ -463,61 +478,28 @@ def page() -> None:
                     state["files"] = []
                     refresh("workbench", "generate")
 
-                async def exclude_selected() -> None:
-                    selected = await grid.get_selected_rows()
-                    n = 0
-                    for row in selected:
-                        i = row.get("_i")
-                        if i is not None and 0 <= i < len(m.rows):
-                            m.rows[i].excluded = True
-                            m.rows[i].current_class = ProposalClass.EXCLUDED
-                            m.rows[i].current_reason = "excluded by the SE"
-                            n += 1
+                def set_all(include: bool) -> None:
+                    for r in m.rows:
+                        if include and not r.current_pn:
+                            continue                  # a deleted row has nothing to write
+                        if r.excluded == include:
+                            r.excluded = not include
+                            r.current_class = (ProposalClass.MANUAL if include
+                                               else ProposalClass.EXCLUDED)
+                            r.current_reason = ("re-included by the SE" if include
+                                                else "excluded by the SE")
                     state["files"] = []
-                    if not n:
-                        hint.set_visibility(True)
-                        return
-                    if state["pn_focus"] is not None and m.rows[state["pn_focus"]].excluded:
-                        state["pn_focus"] = None
-                    ui.notify(f"Excluded {n} part number(s) — they will not appear "
-                              "in the generated file", type="positive")
+                    state["pn_focus"] = None
                     refresh("workbench", "generate")
 
                 ui.button("Add PN", icon="add", on_click=add_pn).props("outline dense no-caps")
-                # excluding only marks rows in memory — not destructive, so
-                # not a negative button
-                ui.button("Exclude selected rows", icon="playlist_remove",
-                          on_click=exclude_selected).props("outline dense no-caps")
-            hint = ui.label("Tick rows first").classes("sx-caption")
-            hint.set_visibility(False)
-
-            # ------------------------------------------ excluded, reversible
-            excluded = [(i, r) for i, r in enumerate(m.rows) if r.excluded]
-            if excluded:
-                with ui.expansion(f"Excluded part numbers ({len(excluded)}) — "
-                                  "not in the file unless re-included") \
-                        .classes("w-full").props("dense"):
-                    ui.label("Rows without a variant symbol in column A are "
-                             "excluded by default, alongside DELETE / Cancel / N/A. "
-                             "Re-include one to consider it; its marks were kept.") \
-                        .classes("sx-caption")
-                    for i, r in excluded:
-                        with ui.row().classes("items-center gap-3 flex-wrap w-full"):
-                            def reinclude(i=i) -> None:
-                                row = m.rows[i]
-                                row.excluded = False
-                                row.current_class = ProposalClass.MANUAL
-                                row.current_reason = "re-included by the SE"
-                                state["files"] = []
-                                refresh("workbench", "generate")
-                            ui.button("Re-include", icon="undo", on_click=reinclude) \
-                                .props("outline dense no-caps")
-                            ui.label(r.current_pn or "(no part number)") \
-                                .classes("sx-mono text-sm")
-                            ui.label(f"symbol: {r.variant_id or '—'}").classes("sx-caption")
-                            ui.label(r.current_reason).classes("sx-caption")
-                            if r.symbols:
-                                ui.label(f"{len(r.symbols)} mark(s) kept").classes("sx-caption")
+                ui.button("Include all", icon="done_all",
+                          on_click=lambda: set_all(True)).props("outline dense no-caps")
+                ui.button("Exclude all", icon="remove_done",
+                          on_click=lambda: set_all(False)).props("outline dense no-caps")
+            n_in = sum(1 for r in m.rows if not r.excluded)
+            ui.label(f"{n_in} of {len(m.rows)} part number(s) ticked — this is what "
+                     "the file will contain.").classes("sx-caption")
 
             # ------------------------------------- marks for one part number
             @ui.refreshable

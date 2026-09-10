@@ -180,6 +180,10 @@ class TestWorkbench:
         await user.should_see("Sales codes")
         await user.should_see("Click a part number above")
         await user.should_not_see("Applicability matrix")
+        # the tick is the decision: no separate exclude step to forget
+        await user.should_see("Include all")
+        await user.should_not_see("Exclude selected rows")
+        await user.should_see("part number(s) ticked")
         await user.should_see("equality — auto-resolved: QA1, QA2")
         await user.should_see("1 combined expressions to decide")
         await user.should_see("Exclude selected rows")
