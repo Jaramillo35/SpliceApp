@@ -88,9 +88,17 @@ class TestTheFixtureIsUsable:
         assert meta.phase == fx.PHASE
 
     def test_the_programme_is_deterministic(self):
-        """A benchmark whose input drifts between runs measures nothing."""
-        assert fx.programme(families=4).dtx_bytes() \
-            == fx.programme(families=4).dtx_bytes()
+        """A benchmark whose input drifts between runs measures nothing.
+
+        Compared as content, not bytes: openpyxl stamps the workbook with the
+        time it was written, so two builds a second apart differ as files
+        while being the same programme — which made this flake in the full run.
+        """
+        one, two = fx.programme(families=4), fx.programme(families=4)
+        assert one.rows == two.rows
+        assert one.builds == two.builds
+        assert one.tracked == two.tracked
+        assert one.def_ids == two.def_ids
 
     def test_every_family_matches_its_complexity_file(self, loaded):
         rows, _, harnesses, metas = loaded
