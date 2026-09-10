@@ -36,7 +36,11 @@ def _master_bytes(include_aht: bool = True) -> bytes:
     ws.cell(3, 1, "Harness: IP Harness")
 
     headers = {3: "Made from", 4: "P1", 5: "Current"}
-    col = 6
+    # the row-6 header band: a package column outside it, then the anchors
+    ws.cell(9, 6, "PC3 AWD")            # three-character tokens, not codes
+    ws.cell(6, 6, "CPOS Packages")
+    ws.cell(6, 7, "Optional Features")
+    col = 7
     code_cols: dict[str, int] = {}
     if include_aht:
         headers[col] = "AHT"
@@ -53,6 +57,8 @@ def _master_bytes(include_aht: bool = True) -> bytes:
     for c, text in headers.items():
         ws.cell(9, c, text)
         ws.cell(7, c, f"feature {text}")
+    ws.cell(6, col + 1, "RELEASE/EBOM STRING")
+    ws.cell(9, col + 2, "ZZZ")                  # right of the band, never a code
 
     # row 10: confirmed Current value, marked under AHT (when present)
     ws.cell(10, 1, "A")
@@ -78,9 +84,11 @@ def _master_bytes(include_aht: bool = True) -> bytes:
     ws2 = wb.create_sheet("SEAT 2ND ROW")
     ws2.cell(9, 3, "Made from")
     ws2.cell(9, 5, "Current")
+    ws2.cell(6, 6, "Optional\nFeatures")       # the line-break spelling
     ws2.cell(9, 6, "AHT")
-    ws2.cell(9, 7, "LEFT")
+    ws2.cell(9, 7, "LEFT")                      # variant markers, inside the band
     ws2.cell(9, 8, "RIGHT")
+    ws2.cell(6, 9, "RELEASE/EBOM STRING")
     ws2.cell(10, 1, "A")
     ws2.cell(10, 5, "PNL1")
     ws2.cell(10, 6, "X")

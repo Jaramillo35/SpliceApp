@@ -97,7 +97,7 @@ async def open_fed(user: User, files: dict) -> None:
     """Open the page and feed the four workbooks, in page order."""
     await user.open("/harness-complexity")
     await user.should_see("Analyze families")
-    crossref, new, old, dtx = in_order(user.find(ui.upload).elements)
+    new, crossref, old, dtx = in_order(user.find(ui.upload).elements)
     await crossref.handle_uploads([StubFile(files["crossref"])])
     await new.handle_uploads([StubFile(files["new"])])
     await old.handle_uploads([StubFile(files["old"])])
@@ -130,8 +130,9 @@ class TestInputs:
         await user.should_see("Analyze families")
         act = button(user, "Analyze families")
         assert not act.enabled
-        await user.should_see("Needs: the cross-reference workbook, the NEW master")
-        crossref, new, _old, _dtx = in_order(user.find(ui.upload).elements)
+        # the master is the only required input; the cross-reference is optional
+        await user.should_see("Needs: the NEW master")
+        new, crossref, _old, _dtx = in_order(user.find(ui.upload).elements)
         await crossref.handle_uploads([StubFile(files["crossref"])])
         await wait_for(user, f"✓ {files['crossref'].name}")
         await user.should_see("Needs: the NEW master")

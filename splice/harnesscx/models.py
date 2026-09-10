@@ -125,6 +125,9 @@ class FamilyMatrix:
     vehicle: str = ""
     phase: str = ""
     harness_name: str = ""
+    #: Row 9 as it was read — every cell between the anchors with its codes
+    #: and operators — so the SE can see exactly what the detection saw.
+    band: object = None
 
     @property
     def complexity_codes(self) -> set[str]:

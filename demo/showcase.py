@@ -21,7 +21,6 @@ Run:  python -m demo.showcase [--out demo/showcase]
 from __future__ import annotations
 
 import argparse
-import io
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -375,8 +374,13 @@ def write_build_spec(path: Path) -> Path:
 def write_master_complexity(path: Path, *, include_new_code: bool = True) -> Path:
     """A Master Complexity workbook: one sheet per family, sales codes on row 9.
 
-    Row 7 carries the feature description, row 9 the codes, and the part rows
-    start at row 10 under a 'Current' column — the layout the workbench reads.
+    The layout the workbench reads, as the real master has it: a row-6 header
+    band whose ``Optional Features`` and ``RELEASE/EBOM STRING`` cells bracket
+    the sales-code columns; a package column (``PC1``) and a market column
+    (``YAA``) left of the band that look like codes and are not; row 7 for
+    the feature description; part rows from row 10 under a ``Current`` column.
+    One sheet spells the left anchor with a line break, as three sheets of a
+    real master do — the shape that used to go undetected.
     """
     wb = Workbook()
     first = True
@@ -394,8 +398,18 @@ def write_master_complexity(path: Path, *, include_new_code: bool = True) -> Pat
 
         ws.cell(9, 3, "Made from")
         ws.cell(9, 4, "P1")
+        ws.cell(6, 5, "Current Part Numbers")
         ws.cell(9, 5, "Current")
-        col = 6
+        # outside the band: look like sales codes, are a package and a market
+        ws.cell(6, 6, "CPOS Packages")
+        ws.cell(9, 6, "PC1")
+        ws.cell(6, 7, "Markets")
+        ws.cell(9, 7, "YAA")
+
+        first_code_col = 8
+        ws.cell(6, first_code_col,
+                "Optional\nFeatures" if family == "DASH" else "Optional Features")
+        col = first_code_col
         for code in codes:
             ws.cell(7, col, SALES_CODES[code])
             ws.cell(9, col, code)
@@ -412,6 +426,8 @@ def write_master_complexity(path: Path, *, include_new_code: bool = True) -> Pat
             col += 1
         else:
             combined_col = equality_col = None
+        ws.cell(6, col, "RELEASE/EBOM STRING")
+        ws.cell(9, col + 1, "ZZZ")            # right of the band: never a code
 
         row = 10
         for index, build in enumerate(BUILDS[family]):
@@ -420,7 +436,7 @@ def write_master_complexity(path: Path, *, include_new_code: bool = True) -> Pat
             ws.cell(row, 5, build.pn)                    # Current
             for offset, code in enumerate(codes):
                 if code in build.codes:
-                    ws.cell(row, 6 + offset, "X")
+                    ws.cell(row, first_code_col + offset, "X")
             if combined_col and index == 0:
                 ws.cell(row, combined_col, "X")
             if equality_col and index == 1:

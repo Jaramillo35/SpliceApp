@@ -1,9 +1,16 @@
 """Harness Complexity — individual-file workbench (ported from WEAVE).
 
-Cross-reference + NEW master complexity (+ optional OLD master and DTx
+NEW master complexity (+ optional cross-reference, OLD master and DTx
 exports) → affected families → a per-family review matrix the SE edits →
 validated individual ``.xlsm`` files generated from the bundled macro
 template, one per variant when the master partitions a worksheet.
+
+The master is the only required input. Its family worksheets are the ones
+carrying a sales-code band — row 9 between the ``Optional Features`` and
+``RELEASE/EBOM STRING`` anchors of the row-6 header — and that band is what
+says which row-9 tokens are sales codes. The DTx used to be needed for that;
+it now only adds coverage evidence, and the cross-reference only adds the
+canonical family names and the DTx-family mapping.
 
 Archetype B (workbench): a sticky step bar names the four stages from the
 first paint — Inputs, Families, Workbench, Generate — and a KPI strip under
@@ -54,8 +61,12 @@ def _guide() -> None:
             "extract for you and shows *why* every value was proposed, so you review "
             "decisions instead of retyping cells.\n\n"
             "**The rules it applies.**\n"
-            "- Sales codes are the row-9 tokens that also appear in the DTx `Sales Code` "
-            "data — phase / PC / market codes are ignored automatically.\n"
+            "- Sales codes are read from row 9 **between the `Optional Features` and "
+            "`RELEASE/EBOM STRING` anchors** of each family sheet's row-6 header. "
+            "Package (`PC3`, `PC5 AWD`), market (`YAA`) and release columns sit "
+            "outside that band and are never codes; `+` is AND, `/` is OR, `-` is "
+            "NOT, `=` is a package equivalence, `()` groups. *Row 9 as read* under "
+            "an open family shows every cell the way the detection saw it.\n"
             "- The Current P/N comes from the `Current` column; `C/O` resolves to the most "
             "recent valid P/N (marked *Inferred*); `DELETE` / `Cancel` / `N/A` rows are "
             "excluded and never appear in the file.\n"
@@ -82,6 +93,9 @@ def page() -> None:
 
     state: dict = {
         "crossref": None, "new_master": None, "old_master": None, "dtx": [],
+        #: the cross-reference is optional now, so "has the analysis run" is
+        #: its own flag rather than "is there a cross-reference"
+        "analysed": False,
         "cr": None, "_frames": [], "universe": set(), "affected": [],
         "worksheets": [], "matrix": None, "files": [],
         #: what the last analysis and the last generation had to say —
@@ -101,7 +115,7 @@ def page() -> None:
     def sync() -> None:
         """Step states and KPIs follow the state; nothing sets them by hand."""
         m = state["matrix"]
-        if state["cr"] is None:
+        if not state["analysed"]:
             steps = {"Inputs": ("current", ""), "Families": ("waiting", ""),
                      "Workbench": ("waiting", ""), "Generate": ("waiting", "")}
         else:
@@ -132,12 +146,7 @@ def page() -> None:
         views["kpis"].refresh()
 
     def missing_inputs() -> list[str]:
-        out = []
-        if not state["crossref"]:
-            out.append("the cross-reference workbook")
-        if not state["new_master"]:
-            out.append("the NEW master")
-        return out
+        return [] if state["new_master"] else ["the NEW master"]
 
     # --------------------------------------------------------------- page
     with c.frame("Harness Complexity",
@@ -147,7 +156,7 @@ def page() -> None:
 
         @ui.refreshable
         def kpi_view() -> None:
-            if state["cr"] is None:
+            if not state["analysed"]:
                 return
             m = state["matrix"]
             n_aff = len(state["affected"])
@@ -171,16 +180,18 @@ def page() -> None:
 
         # ---------------------------------------------------- 1 · Inputs
         with c.section("Inputs",
-                       "The cross-reference and NEW master are required. DTx exports "
-                       "define which row-9 tokens count as sales codes; the OLD master "
-                       "adds the added/removed-code evidence per family.",
+                       "Only the NEW master is required: its family sheets and their "
+                       "sales codes are read from the sheet itself. The OLD master "
+                       "adds the added/removed-code evidence per family; the "
+                       "cross-reference adds canonical family names and the DTx "
+                       "mapping; DTx exports add sales-code coverage checks.",
                        step="Inputs"):
             with ui.row().classes("w-full gap-4 flex-wrap"):
-                c.upload_row("Cross-reference workbook (.xlsx)",
-                             lambda n, b: state.update(crossref=b), accept=".xlsx")
                 c.upload_row("NEW Master Complexity (.xlsx/.xlsm)",
                              lambda n, b: state.update(new_master=b),
                              accept=".xlsx,.xlsm")
+                c.upload_row("Cross-reference workbook (optional)",
+                             lambda n, b: state.update(crossref=b), accept=".xlsx")
                 c.upload_row("OLD Master Complexity (optional)",
                              lambda n, b: state.update(old_master=b),
                              accept=".xlsx,.xlsm")
@@ -192,17 +203,14 @@ def page() -> None:
         # -------------------------------------------------- 2 · Families
         @ui.refreshable
         def families_view() -> None:
-            if state["cr"] is None:
+            if not state["analysed"]:
                 return
             with c.section("Harness families",
-                           "Affected families first (with the evidence); any mapped "
+                           "Affected families first (with the evidence); any family "
                            "worksheet in the NEW master can be opened.",
                            step="Families"):
                 for kind, text in state["analyze_notes"]:
                     c.note(kind, text)
-                if not state["universe"]:
-                    c.note("high", "No DTx sales-code data — row-9 tokens cannot be "
-                                   "identified as sales codes. Load a DTx export.")
                 aff = state["affected"]
                 if aff:
                     ui.label("Affected by this change").classes("text-sm font-semibold")
@@ -256,9 +264,33 @@ def page() -> None:
                     if m.unresolved_count:
                         c.chip("review", f"{m.unresolved_count} row(s) uncertain")
 
+                _render_band(m)
                 _render_checks(m)
                 _render_matrix(m)
                 _render_combined(m)
+
+        def _render_band(m) -> None:
+            """Row 9 exactly as the detection read it — the answer to "why is
+            this code missing" is on this table, not in a debugger."""
+            b = getattr(m, "band", None)
+            if b is None:
+                return
+            for note in b.notes:
+                c.note("review", note)
+            from openpyxl.utils import get_column_letter as _L
+            with ui.expansion(
+                    f"Row {b.row_used} as read — {len(b.cells)} cell(s), "
+                    f"{len(b.codes)} code(s), columns {_L(b.start_col)}–"
+                    f"{_L(b.end_col - 1)} between the anchors") \
+                    .classes("w-full").props("dense"):
+                c.frame_table(
+                    [{"column": x.column_name, "raw": x.raw_expression,
+                      "codes": ", ".join(x.sales_codes),
+                      "operators": " ".join(x.operators) or "—",
+                      "feature": x.feature} for x in b.cells],
+                    labels={"column": "Column", "raw": "Row 9 cell",
+                            "codes": "Sales codes", "operators": "Operators",
+                            "feature": "Feature (row 7)"})
 
         def _render_checks(m) -> None:
             cov = checks.coverage_rows(m)
@@ -507,28 +539,40 @@ def page() -> None:
                 return   # the action is gated; this is only a guard
 
             def work():
-                cr = adapters.load_crossref(state["crossref"])
+                cr = (adapters.load_crossref(state["crossref"])
+                      if state["crossref"] else None)
                 frames = adapters.read_dtx_frames(state["dtx"])
                 universe = adapters.dtx_sales_code_universe(frames)
-                sheets = [s for s in adapters.master_worksheets(state["new_master"])
-                          if s in cr.worksheets]
+                families = adapters.master_worksheets(state["new_master"])
+                sheets = [s for s in families
+                          if cr is None or s in cr.worksheets]
                 changes = []
                 if state["old_master"]:
                     changes = compare.compare_complexity(
                         state["old_master"], state["new_master"], cr, universe)
                 affected = compare.affected_families({}, changes, cr)
-                return cr, frames, universe, sheets, affected
+                return cr, frames, universe, families, sheets, affected
 
             out = await c.run_engine(work, running="Reading the workbooks…",
                                      done="Families ready")
             if out is None:
                 return
-            cr, frames, universe, sheets, affected = out
+            cr, frames, universe, families, sheets, affected = out
             notes = []
-            if not sheets:
-                notes.append(("high", "No master worksheet matches the cross-reference "
-                                      "— check the 'Complexity File' column."))
-            state.update(cr=cr, _frames=frames, universe=universe,
+            if not families:
+                notes.append(("high", "No family worksheet found: none of the sheets "
+                                      "carries 'Optional Features' before "
+                                      "'RELEASE/EBOM STRING' on its row-6 header."))
+            elif not sheets:
+                notes.append(("high", f"{len(families)} family worksheet(s) found, but "
+                                      "none matches the cross-reference — check its "
+                                      "'Complexity File' column, or leave the "
+                                      "cross-reference out."))
+            elif cr is not None and len(sheets) < len(families):
+                notes.append(("info", f"{len(families) - len(sheets)} family "
+                                      "worksheet(s) are not in the cross-reference "
+                                      "and were left out."))
+            state.update(analysed=True, cr=cr, _frames=frames, universe=universe,
                          worksheets=sheets, affected=affected,
                          matrix=None, files=[], analyze_notes=notes, gen_notes=[])
             refresh("families", "workbench", "generate")
@@ -541,9 +585,10 @@ def page() -> None:
             def work():
                 fam_codes = adapters.family_dtx_sales_codes(
                     state.get("_frames", []), cr, worksheet)
+                canonical = (cr.worksheet_to_canonical.get(worksheet, worksheet)
+                             if cr is not None else worksheet)
                 return adapters.extract_family_matrix(
-                    state["new_master"], worksheet, state["universe"],
-                    cr.worksheet_to_canonical.get(worksheet, worksheet),
+                    state["new_master"], worksheet, state["universe"], canonical,
                     family_dtx_codes=fam_codes)
 
             matrix = await c.run_engine(

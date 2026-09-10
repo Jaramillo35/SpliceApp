@@ -5,8 +5,12 @@ Ported from WEAVE (harness-suite-v2) into Splice. The rules:
 * the cross-reference workbook maps DTx family names <-> master worksheet
   names <-> canonical harness-family names;
 * sales-code expressions live in **row 9** of each per-family master
-  worksheet, mixed with phases / PC / market codes — so a row-9 token counts
-  as a sales code only if it also appears in the DTx ``Sales Code`` data;
+  worksheet, between the ``Optional Features`` and ``RELEASE/EBOM STRING``
+  anchors of the row-6 header band — see ``splice.harnesscx.band``. The
+  package, market and release columns outside that band carry tokens that
+  look like codes (``PC3``, ``AWD``, ``YAA``) and are not. The DTx used to be
+  what told them apart; the band does now, so the master is the only input
+  the workbench needs and the DTx only adds coverage evidence;
 * sources are never modified; always parsed from bytes.
 """
 
@@ -21,6 +25,7 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 from splice.common.errors import SpliceError
+from splice.harnesscx import band as band_mod
 from splice.harnesscx.models import (
     CombinedExpr,
     FamilyMatrix,
@@ -139,35 +144,19 @@ def load_crossref(file_bytes: bytes) -> CrossRef:
 
 def extract_family_sales_codes(
     master_bytes: bytes,
-    worksheets: set[str],
-    universe: set[str],
+    worksheets: set[str] | None = None,
+    universe: set[str] | None = None,
 ) -> dict[str, set[str]]:
-    """Per family worksheet present in the master, its row-9 sales codes.
+    """Per family worksheet present in the master, its sales codes.
 
-    A row-9 token is kept only if it is in ``universe`` (the DTx sales-code set).
+    Read from the band between the row-6 anchors, so no DTx is needed to
+    tell a code from a package or market column. ``universe`` is accepted for
+    the callers that still pass one and is no longer a filter: a code the
+    master declares is a code whether or not any DTx export has used it yet.
+    ``worksheets`` limits the result; ``None`` means every family sheet.
     """
-    if not master_bytes:
-        raise SpliceError("Master complexity workbook is empty or was not provided.")
-    try:
-        wb = load_workbook(io.BytesIO(master_bytes), data_only=True, read_only=True)
-    except Exception as exc:
-        raise SpliceError(f"Could not read the master complexity workbook: {exc}") from exc
-
-    result: dict[str, set[str]] = {}
-    try:
-        for sheet in wb.sheetnames:
-            if sheet not in worksheets:
-                continue
-            ws = wb[sheet]
-            codes: set[str] = set()
-            for cell in next(ws.iter_rows(min_row=SALES_CODE_ROW, max_row=SALES_CODE_ROW), []):
-                for token in extract_code_tokens(cell.value):
-                    if token in universe:
-                        codes.add(token)
-            result[sheet] = codes
-    finally:
-        wb.close()
-    return result
+    bands = band_mod.read_master(master_bytes, worksheets)
+    return {name: set(b.codes) for name, b in bands.items()}
 
 
 def _cell_text(cell) -> str:
@@ -175,17 +164,11 @@ def _cell_text(cell) -> str:
 
 
 def master_worksheets(master_bytes: bytes) -> list[str]:
-    """The sheet names of a master complexity workbook (for unmapped fallback)."""
+    """The family worksheets of a master — the sheets that carry a sales-code
+    band. The change log, the summary and the markup guide do not."""
     if not master_bytes:
         return []
-    try:
-        wb = load_workbook(io.BytesIO(master_bytes), read_only=True)
-    except Exception as exc:
-        raise SpliceError(f"Could not read the master complexity workbook: {exc}") from exc
-    try:
-        return list(wb.sheetnames)
-    finally:
-        wb.close()
+    return band_mod.family_worksheets(master_bytes)
 
 
 def extract_family_matrix(
@@ -198,8 +181,9 @@ def extract_family_matrix(
 ) -> FamilyMatrix:
     """Build the proposed individual-complexity matrix for one harness family.
 
-    Sales codes are row-9 tokens present in ``universe`` (separable OR-lists split,
-    originals retained); the Current P/N is under the ``Current`` column with
+    Sales codes are the row-9 cells between the band anchors (separable OR-lists
+    split, originals retained) — ``universe`` no longer filters them, see
+    ``splice.harnesscx.band``; the Current P/N is under the ``Current`` column with
     carryover (``C/O``) resolution and DELETE/``N/A``/Cancel exclusion; the
     Previous P/N is the most recent valid PN before ``Current``. Every proposed
     value is classified and carries its source. A pure equality expression
@@ -240,20 +224,23 @@ def _build_matrix(ws, worksheet: str, universe: set[str], canonical_family: str,
     phase_cols = [c for c in range(made_from_col + 1, current_col)
                   if _cell_text(ws.cell(SALES_CODE_ROW, c))]
 
-    # Sales-code columns (right of Current). A cell with one token, or a pure OR-list
-    # (only '/'/','), becomes independent sales-code column(s); a cell that mixes AND /
-    # negation / grouping cannot be separated safely and becomes a CombinedExpr the SE
+    # Sales-code columns: the cells of the band between the row-6 anchors.
+    # A cell with one token, or a pure OR-list (only '/'/','), becomes
+    # independent sales-code column(s); a cell that mixes AND / negation /
+    # grouping cannot be separated safely and becomes a CombinedExpr the SE
     # reviews. First occurrence of a token wins.
+    band = band_mod.read_band(ws, worksheet)
+    if band is None:
+        raise SpliceError(
+            f"'{worksheet}' has no sales-code band: the row-6 header must carry "
+            f"'Optional Features' before 'RELEASE/EBOM STRING'.")
     sales_codes: list[SalesCodeColumn] = []
     combined_exprs: list[CombinedExpr] = []
     code_to_col: dict[str, int] = {}
     combined_cols: list[tuple[CombinedExpr, int]] = []
-    for c in range(current_col + 1, ws.max_column + 1):
-        txt = _cell_text(ws.cell(SALES_CODE_ROW, c))
-        tokens = [t for t in extract_code_tokens(txt) if t in universe]
-        if not tokens:
-            continue
-        feature = _cell_text(ws.cell(FEATURE_ROW, c))
+    for cell in band.cells:
+        c, txt, tokens, feature = (cell.column, cell.raw_expression,
+                                   list(cell.sales_codes), cell.feature)
         if len(tokens) == 1 or _separable_or_list(txt, tokens):
             combined = len(tokens) > 1
             for token in tokens:
@@ -311,6 +298,7 @@ def _build_matrix(ws, worksheet: str, universe: set[str], canonical_family: str,
         dtx_codes=sorted(family_dtx_codes or set()), partition_sides=partition_sides,
         year=meta.get("year", ""), vehicle=meta.get("vehicle", ""),
         phase=meta.get("phase", ""), harness_name=meta.get("harness", "") or worksheet,
+        band=band,
     )
 
 

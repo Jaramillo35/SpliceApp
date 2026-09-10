@@ -20,12 +20,19 @@ logger = logging.getLogger(__name__)
 def compare_complexity(
     old_master_bytes: bytes,
     new_master_bytes: bytes,
-    crossref: CrossRef,
-    universe: set[str],
+    crossref: CrossRef | None = None,
+    universe: set[str] | None = None,
 ) -> list[ComplexityFamilyChange]:
-    """Per family worksheet, the sales codes added/removed between OLD and NEW master."""
-    old_codes = extract_family_sales_codes(old_master_bytes, crossref.worksheets, universe)
-    new_codes = extract_family_sales_codes(new_master_bytes, crossref.worksheets, universe)
+    """Per family worksheet, the sales codes added/removed between OLD and NEW master.
+
+    Without a cross-reference every family sheet of either master is compared;
+    with one, only the sheets it maps. ``universe`` is accepted and unused —
+    the band decides what is a code, not the DTx.
+    """
+    wanted = crossref.worksheets if crossref is not None else None
+    old_codes = extract_family_sales_codes(old_master_bytes, wanted)
+    new_codes = extract_family_sales_codes(new_master_bytes, wanted)
+    canonical = crossref.worksheet_to_canonical if crossref is not None else {}
 
     changes: list[ComplexityFamilyChange] = []
     for worksheet in sorted(set(old_codes) | set(new_codes)):
@@ -36,7 +43,7 @@ def compare_complexity(
         if added or removed:
             changes.append(ComplexityFamilyChange(
                 worksheet=worksheet,
-                canonical_family=crossref.worksheet_to_canonical.get(worksheet, worksheet),
+                canonical_family=canonical.get(worksheet, worksheet),
                 added_codes=added, removed_codes=removed,
             ))
     logger.info("Complexity compare: %d families with sales-code changes.", len(changes))
@@ -46,7 +53,7 @@ def compare_complexity(
 def affected_families(
     dtx_family_counts: dict[str, int],
     complexity_changes: list[ComplexityFamilyChange],
-    crossref: CrossRef,
+    crossref: CrossRef | None = None,
 ) -> list[AffectedFamily]:
     """Consolidate affected harness families with reasons and source links.
 
@@ -59,7 +66,7 @@ def affected_families(
     for dtx_family, count in dtx_family_counts.items():
         if not dtx_family:
             continue
-        worksheet = crossref.worksheet_for_dtx(dtx_family)
+        worksheet = crossref.worksheet_for_dtx(dtx_family) if crossref else None
         if worksheet:
             canonical = crossref.worksheet_to_canonical.get(worksheet, dtx_family)
             af = by_worksheet.setdefault(
