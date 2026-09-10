@@ -451,6 +451,7 @@ def page() -> None:
                     r.partition_side = str(data.get("Partition") or "").strip().upper()
                 state["files"] = []
                 views["codes"].refresh()
+                views["count"].refresh()
                 refresh("generate")
 
             def on_click(e) -> None:
@@ -497,9 +498,17 @@ def page() -> None:
                           on_click=lambda: set_all(True)).props("outline dense no-caps")
                 ui.button("Exclude all", icon="remove_done",
                           on_click=lambda: set_all(False)).props("outline dense no-caps")
-            n_in = sum(1 for r in m.rows if not r.excluded)
-            ui.label(f"{n_in} of {len(m.rows)} part number(s) ticked — this is what "
-                     "the file will contain.").classes("sx-caption")
+            @ui.refreshable
+            def count_view() -> None:
+                """How many are selected, live — it moves with every tick."""
+                n_in = sum(1 for r in m.rows if not r.excluded)
+                c.chip("ok" if n_in else "review",
+                       f"{n_in} of {len(m.rows)} part numbers selected")
+                ui.label("This is what the file will contain.").classes("sx-caption")
+
+            views["count"] = count_view
+            with ui.row().classes("items-center gap-3"):
+                count_view()
 
             # ------------------------------------- marks for one part number
             @ui.refreshable
