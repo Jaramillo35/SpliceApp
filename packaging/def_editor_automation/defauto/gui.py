@@ -159,37 +159,42 @@ class Workbench(tk.Tk):
         ttk.Label(card, text="WHAT TO OPEN", style="Head.TLabel").grid(
             row=0, column=0, columnspan=6, sticky="w", pady=(0, 10))
 
-        self.field_program = self._field(card, "Program", 1, 0)
-        self.field_year = self._field(card, "Model year", 1, 1)
-        self.field_phase = self._field(card, "Phase", 1, 2)
-        self.field_harness = self._field(card, "Harness", 1, 3, width=24)
-        self.field_program.bind("<<ComboboxSelected>>",
-                                lambda _e: self._offer_years())
-        self.field_year.bind("<<ComboboxSelected>>",
-                             lambda _e: self._offer_harnesses())
-        self.field_phase.bind("<<ComboboxSelected>>",
-                              lambda _e: self._offer_harnesses())
+        self.field_program, self.hint_program = self._field(card, "Vehicle", 1, 0)
+        self.field_year, self.hint_year = self._field(card, "Model year", 1, 1)
+        self.field_phase, self.hint_phase = self._field(card, "Phase", 1, 2)
+        self.field_harness, self.hint_harness = self._field(card, "Harness", 1, 3,
+                                                            width=22)
+        self.field_circuit, _ = self._field(card, "Circuit to filter", 1, 4,
+                                            width=10)
+        self.field_circuit.insert(0, workflow.TARGET_CIRCUIT)
+        # typing a vehicle, year or phase re-reads what DEF Editor offers below it
+        self.field_program.bind("<FocusOut>", lambda _e: self._offer_years())
+        self.field_year.bind("<FocusOut>", lambda _e: self._offer_harnesses())
+        self.field_phase.bind("<FocusOut>", lambda _e: self._offer_harnesses())
 
-        self.run_button = ttk.Button(
-            card, text=f"Run test  →  filter circuit {workflow.TARGET_CIRCUIT}",
-            style="Accent.TButton", command=self.on_run)
-        self.run_button.grid(row=2, column=4, padx=(16, 0), sticky="w")
+        self.run_button = ttk.Button(card, text="Run test", style="Accent.TButton",
+                                     command=self.on_run)
+        self.run_button.grid(row=2, column=5, padx=(16, 0), sticky="w")
 
-        ttk.Label(card, text="The composite is found for you: DEF Editor needs "
-                             "one to reach a harness, so the run searches the "
-                             "composites this programme returned.",
-                  style="Muted.TLabel", wraplength=880, justify="left").grid(
-            row=3, column=0, columnspan=6, sticky="w", pady=(10, 0))
+        ttk.Label(card, text="Type anything: what you write is matched to what DEF "
+                             "Editor offers — exactly, then ignoring case, then as "
+                             "a unique start or part of a name — and the match is "
+                             "shown in the run. The composite is found for you.",
+                  style="Muted.TLabel", wraplength=900, justify="left").grid(
+            row=4, column=0, columnspan=6, sticky="w", pady=(10, 0))
 
     def _field(self, parent, label: str, row: int, column: int,
-               width: int = 16) -> ttk.Combobox:
+               width: int = 16):
+        """An open text field, with a hint line under it that shows what DEF
+        Editor offers once attached. Returns ``(entry, hint label)``."""
         ttk.Label(parent, text=label, style="Muted.TLabel").grid(
             row=row, column=column, sticky="w", padx=(0, 12))
-        # editable on purpose: the values are typed, and once attached the
-        # dropdown offers what DEF Editor actually has
-        box = ttk.Combobox(parent, width=width, font=UI)
-        box.grid(row=row + 1, column=column, sticky="w", padx=(0, 12))
-        return box
+        entry = ttk.Entry(parent, width=width, font=UI)
+        entry.grid(row=row + 1, column=column, sticky="w", padx=(0, 12))
+        hint = ttk.Label(parent, text="", style="Muted.TLabel", wraplength=180,
+                         justify="left", font=("Segoe UI", 8))
+        hint.grid(row=row + 2, column=column, sticky="nw", padx=(0, 12), pady=(2, 0))
+        return entry, hint
 
     def _build_steps(self, panes) -> None:
         frame = ttk.Frame(panes, padding=(16, 14))
@@ -300,9 +305,9 @@ class Workbench(tk.Tk):
         except Exception as exc:  # noqa: BLE001 - shown, not raised
             self.log(f"Could not read the program list: {exc}", "warn")
             return
-        self.field_program.configure(values=lines)
+        self._hint(self.hint_program, lines)
         if lines and not self.field_program.get():
-            self.field_program.set(lines[0])
+            self.field_program.insert(0, lines[0])
         self._offer_years()
 
     def _offer_years(self) -> None:
@@ -313,9 +318,10 @@ class Workbench(tk.Tk):
 
         def work():
             from defauto import ids
-            if program not in self.session.composite.vehicle_lines():
+            match, _how = workflow.resolve(program, self.session.composite.vehicle_lines())
+            if match is None:
                 return None
-            self.session.backend.select(ids.COMBO_VEHICLE_LINE, program)
+            self.session.backend.select(ids.COMBO_VEHICLE_LINE, match)
             return (self.session.composite.model_years(),
                     self.session.composite.phases())
 
@@ -323,12 +329,12 @@ class Workbench(tk.Tk):
             if result is None:
                 return
             years, phases = result
-            self.field_year.configure(values=years)
-            self.field_phase.configure(values=phases)
+            self._hint(self.hint_year, years)
+            self._hint(self.hint_phase, phases)
             if years and not self.field_year.get():
-                self.field_year.set(years[0])
+                self.field_year.insert(0, years[0])
             if phases and not self.field_phase.get():
-                self.field_phase.set(phases[0])
+                self.field_phase.insert(0, phases[0])
             self._offer_harnesses()
 
         self._run(work, then)
@@ -342,7 +348,17 @@ class Workbench(tk.Tk):
             return
 
         def work():
-            self.session.composite.choose_programme(program, year, phase)
+            from defauto import ids
+            picks = []
+            for auto_id, typed in ((ids.COMBO_VEHICLE_LINE, program),
+                                   (ids.COMBO_MODEL_YEAR, year),
+                                   (ids.COMBO_PHASE, phase)):
+                match, _how = workflow.resolve(typed, self.session.backend.options(auto_id))
+                if match is None:
+                    return []
+                self.session.backend.select(auto_id, match)
+                picks.append(match)
+            self.session.composite.choose_programme(*picks)
             if not len(self.session.composite.search()):
                 return []
             names = set()
@@ -352,11 +368,16 @@ class Workbench(tk.Tk):
             return sorted(names)
 
         def then(names) -> None:
-            self.field_harness.configure(values=names)
+            self._hint(self.hint_harness, names)
             if names and not self.field_harness.get():
-                self.field_harness.set(names[0])
+                self.field_harness.insert(0, names[0])
 
         self._run(work, then)
+
+    @staticmethod
+    def _hint(label, options) -> None:
+        shown = ", ".join(options[:6]) + (" …" if len(options) > 6 else "")
+        label.configure(text=f"offered: {shown}" if options else "offered: (none)")
 
     def on_demo(self) -> None:
         from defauto.fake import FakeBackend
@@ -463,19 +484,19 @@ class Workbench(tk.Tk):
         year = self.field_year.get().strip()
         phase = self.field_phase.get().strip()
         harness = self.field_harness.get().strip()
-        blank = [name for name, value in (("program", program), ("year", year),
+        target = self.field_circuit.get().strip() or workflow.TARGET_CIRCUIT
+        blank = [name for name, value in (("vehicle", program), ("year", year),
                                           ("phase", phase),
                                           ("harness", harness)) if not value]
         if blank:
             self.log(f"Fill in: {', '.join(blank)}", "warn")
             return
 
-        self._show_plan(workflow.plan(program, year, phase, harness))
+        self._show_plan(workflow.plan(program, year, phase, harness, target))
         self.verdict.configure(text="Running…", style="Muted.TLabel")
         self.run_button.state(["disabled"])
         self.tree.delete(*self.tree.get_children())
-        self.log(f"Run: {program} / {year} / {phase} / {harness} "
-                 f"→ circuit {workflow.TARGET_CIRCUIT}")
+        self.log(f"Run: {program} / {year} / {phase} / {harness} → circuit {target}")
 
         def on_step(step) -> None:
             self._post(lambda s=step: self._update_step(s))
@@ -485,7 +506,7 @@ class Workbench(tk.Tk):
             self._finish(outcome)
 
         self._run(lambda: workflow.run(self.session, program, year, phase,
-                                       harness, on_step=on_step), then)
+                                       harness, target, on_step=on_step), then)
 
     def _show_plan(self, steps) -> None:
         for child in self.steps_box.winfo_children():
@@ -514,9 +535,10 @@ class Workbench(tk.Tk):
     def _finish(self, outcome) -> None:
         if outcome.ok:
             self.verdict.configure(
-                text=f"PASSED — reached {self.field_harness.get()} in "
+                text=f"PASSED — reached {outcome.harness} in "
                      f"{outcome.composite} and filtered "
-                     f"{workflow.TARGET_CIRCUIT}: {len(outcome.grid)} row(s).",
+                     f"{self.field_circuit.get().strip() or workflow.TARGET_CIRCUIT}: "
+                     f"{len(outcome.grid)} row(s).",
                 style="Ok.TLabel")
             self.log("Test passed.", "ok")
         else:
@@ -532,7 +554,8 @@ class Workbench(tk.Tk):
     def _show(self, grid: Grid) -> None:
         self.grid_data = grid
         self.result_title.configure(
-            text=f"RESULT — circuit {workflow.TARGET_CIRCUIT}: "
+            text=f"RESULT — circuit "
+                 f"{self.field_circuit.get().strip() or workflow.TARGET_CIRCUIT}: "
                  f"{len(grid)} row(s)")
         self.tree.delete(*self.tree.get_children())
         self.tree.configure(columns=grid.headers)
@@ -550,7 +573,8 @@ class Workbench(tk.Tk):
             return
         try:
             report = self.session.reports.save(
-                f"Circuits_{workflow.TARGET_CIRCUIT}", self.grid_data)
+                f"Circuits_{self.field_circuit.get().strip() or workflow.TARGET_CIRCUIT}",
+                self.grid_data)
         except Exception as exc:  # noqa: BLE001 - shown, not raised
             self.log(f"Export failed: {exc}", "bad")
             return

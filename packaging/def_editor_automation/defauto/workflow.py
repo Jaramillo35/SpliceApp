@@ -40,11 +40,40 @@ class Step:
         return {True: "PASS", False: "FAIL", None: "...."}[self.ok]
 
 
+def resolve(typed: str, offered: List[str]) -> Tuple[Optional[str], str]:
+    """Match what the user typed to what DEF Editor offers.
+
+    Exact first, then case-insensitive, then a unique prefix, then a unique
+    substring — so ``2031`` reaches ``2031ZR``, ``v1`` reaches ``V1_A`` and
+    ``body`` reaches ``BODY_LEFT``. Anything ambiguous is refused with the
+    candidates named: the kit narrows a choice, it does not make one.
+    Returns ``(match or None, how it matched)``.
+    """
+    wanted = (typed or "").strip()
+    if not wanted:
+        return None, "nothing typed"
+    if wanted in offered:
+        return wanted, "exact"
+    low = wanted.lower()
+    same = [o for o in offered if o.lower() == low]
+    if len(same) == 1:
+        return same[0], "case-insensitive"
+    prefix = [o for o in offered if o.lower().startswith(low)]
+    if len(prefix) == 1:
+        return prefix[0], f"prefix of {prefix[0]!r}"
+    within = [o for o in offered if low in o.lower()]
+    if len(within) == 1:
+        return within[0], f"contained in {within[0]!r}"
+    if prefix or within:
+        return None, f"ambiguous — could be {', '.join(prefix or within)}"
+    return None, f"not offered — available: {', '.join(offered) or '(none)'}"
+
+
 def plan(program: str, year: str, phase: str, harness: str,
          target: str = TARGET_CIRCUIT) -> List[Step]:
     """The steps this test will run, before any of them have."""
     return [Step("Attach and check the controls are present"),
-            Step(f"Select program {program}"),
+            Step(f"Select vehicle {program}"),
             Step(f"Select model year {year}"),
             Step(f"Select phase {phase}"),
             Step("Press Filter and read the composites"),
@@ -97,20 +126,24 @@ def run(session, program: str, year: str, phase: str, harness: str,
 
         # 2, 3, 4 - the cascade, one combo at a time so a wrong value is
         # reported against the combo that refused it
+        chosen = {}
         for auto_id, value in ((ids.COMBO_VEHICLE_LINE, program),
                                (ids.COMBO_MODEL_YEAR, year),
                                (ids.COMBO_PHASE, phase)):
             offered = session.backend.options(auto_id)
-            if value not in offered:
-                done(False, f"not offered. Available: {', '.join(offered) or '(none)'}")
+            match, how = resolve(value, offered)
+            if match is None:
+                done(False, how)
                 return outcome
-            session.backend.select(auto_id, value)
-            done(True, f"selected from {len(offered)} option(s)")
+            session.backend.select(auto_id, match)
+            chosen[auto_id] = match
+            done(True, f"{match!r}" + (f" ({how})" if how != "exact" else "")
+                       + f" — from {len(offered)} option(s)")
             index += 1
 
-        session.composite.selection.vehicle_line = program
-        session.composite.selection.model_year = year
-        session.composite.selection.phase = phase
+        session.composite.selection.vehicle_line = chosen[ids.COMBO_VEHICLE_LINE]
+        session.composite.selection.model_year = chosen[ids.COMBO_MODEL_YEAR]
+        session.composite.selection.phase = chosen[ids.COMBO_PHASE]
 
         # 5 - Filter is what fills the grid; without it there is nothing to search
         grid = session.composite.search()
@@ -123,8 +156,12 @@ def run(session, program: str, year: str, phase: str, harness: str,
         # 6 - which composite holds the harness, and how DEF Editor spells it
         found = _locate(session, harness)
         if found is None:
-            done(False, f"{harness!r} is not in any of the "
-                        f"{len(session.composite.composites())} composite(s)")
+            names = sorted({n for comp in session.composite.composites()
+                            for n in (session.composite.choose_composite(comp),
+                                      *session.composite.harnesses())[1:]})
+            done(False, f"{harness!r} matches none of the harnesses in "
+                        f"{len(session.composite.composites())} composite(s): "
+                        f"{', '.join(names)}")
             return outcome
         outcome.composite, actual = found
         outcome.harness = actual
@@ -186,15 +223,19 @@ def _exact(grid: Grid, target: str) -> int:
 def _locate(session, harness: str) -> Optional[Tuple[str, str]]:
     """``(composite, harness as the application spells it)``, or None.
 
-    Matched case-insensitively, because an engineer typing a harness name
-    should not have to match the application's capitalisation — but the
-    application's own spelling is returned, because the list box that follows
-    matches exactly and would refuse the typed one.
+    Every composite's harness list is gathered first and the typed text is
+    resolved against all of them at once — exact, then case-insensitive,
+    then unique prefix or substring — so ``body`` reaches ``BODY_LEFT`` when
+    it is the only one, and is refused when it is not. The application's own
+    spelling is returned, because the list box that follows matches exactly.
     """
-    wanted = harness.strip().lower()
+    where: dict = {}
     for composite in session.composite.composites():
         session.composite.choose_composite(composite)
         for name in session.composite.harnesses():
-            if name.strip().lower() == wanted:
-                return composite, name
-    return None
+            where.setdefault(name, composite)
+    match, _how = resolve(harness, list(where))
+    if match is None:
+        return None
+    session.composite.choose_composite(where[match])
+    return where[match], match

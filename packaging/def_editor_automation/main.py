@@ -28,7 +28,7 @@ def selftest(program: str = "2031ZR", year: str = "2031", phase: str = "V1_A",
              seed: int = 31) -> int:
     session = application.demo(seed)
     print(f"defauto selftest — scripted DEF Editor, seed {seed}")
-    print(f"{program} / {year} / {phase} / {harness}  ->  circuit {target}\n")
+    print(f"vehicle {program} / {year} / {phase} / {harness}  ->  circuit {target}\n")
 
     outcome = workflow.run(session, program, year, phase, harness, target)
     for index, step in enumerate(outcome.steps, start=1):
@@ -51,7 +51,7 @@ def main(argv=None) -> int:
                         help="open the window already attached to the demo")
     parser.add_argument("--selftest", action="store_true",
                         help="run the test headlessly and exit")
-    parser.add_argument("--program", default="2031ZR")
+    parser.add_argument("--vehicle", "--program", dest="program", default="2031ZR")
     parser.add_argument("--year", default="2031")
     parser.add_argument("--phase", default="V1_A")
     parser.add_argument("--harness", default="BODY_LEFT")

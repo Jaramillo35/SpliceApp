@@ -6,10 +6,10 @@ What it is
 A prototype that answers one question: can DEF EDITOR be driven through
 Windows UI Automation?
 
-You give it four values - program, model year, phase, harness - and it does
-one sequence:
+You give it a vehicle, model year, phase and harness - typed freely, matched
+to what DEF Editor offers - and a circuit, and it does one sequence:
 
-   open that harness  ->  open its Circuits page  ->  filter for circuit B4
+   open that harness  ->  open its Circuits page  ->  filter for the circuit
 
 Ten steps, each reported PASS or FAIL with a sentence saying what happened,
 stopping at the first failure. That is the whole app. It is a test harness,
@@ -60,9 +60,13 @@ Use
    Double-click the right one (or select it and press "Attach to selected").
    The kit never guesses the window title - if the marked one is wrong, pick
    another; "Refresh" re-reads the desktop.
-3. The four dropdowns fill from what DEF Editor actually offers. Pick or type
-   program, model year, phase and harness.
-4. Press "Run test". Watch the ten steps.
+3. Type the vehicle, model year, phase and harness - anything. Under each
+   field the kit shows what DEF Editor offers; what you typed is matched to
+   it exactly, then ignoring case, then as a unique start or part of a name
+   ("2031" reaches "2031ZR", "body" reaches "BODY_LEFT" when it is the only
+   one). An ambiguous entry is refused and the candidates named. The circuit
+   to filter is a field too (B4 by default).
+4. Press "Run test". Watch the ten steps; each says what it matched.
 
 If it fails, the step that failed says why. Step 1 is the important one: it
 lists any AutomationId this kit expects and the window does not have.
@@ -74,7 +78,8 @@ B4 is one constant, at the top of defauto\workflow.py:
 
       TARGET_CIRCUIT = "B4"
 
-or pass it on the command line:  python main.py --selftest --circuit A0
+or type it in the window's "Circuit to filter" field, or pass it on the
+command line:  python main.py --selftest --circuit A0
 
 
 When DEF Editor changes

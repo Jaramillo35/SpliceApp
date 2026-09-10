@@ -304,7 +304,7 @@ class TestTheAutomationTest:
             self, session):
         out = workflow.run(session, "NOPE", "2031", "V1_A", "BODY_LEFT")
         assert not out.ok
-        assert out.failed.name == "Select program NOPE"
+        assert out.failed.name == "Select vehicle NOPE"
         assert "2031ZR" in out.failed.detail, out.failed.detail
 
     def test_a_wrong_year_fails_on_the_year_step(self, session):
@@ -315,6 +315,7 @@ class TestTheAutomationTest:
         out = workflow.run(session, "2031ZR", "2031", "V1_A", "NOT_A_HARNESS")
         assert out.failed.name == "Find the composite holding NOT_A_HARNESS"
         assert "composite" in out.failed.detail
+        assert "BODY_LEFT" in out.failed.detail, "the candidates are named"
 
     def test_it_stops_at_the_first_failure(self, session):
         """Steps after the failure must stay unrun, not be reported as passing."""
@@ -485,3 +486,59 @@ class TestTheWindowPicker:
         gui = importlib.import_module("defauto.gui")
         assert hasattr(gui.Workbench, "_pick_window")
         assert hasattr(gui.Workbench, "on_demo_direct")
+
+
+
+class TestTypedTextIsMatchedToWhatIsOffered:
+    """The fields are free text. What is typed is resolved against what DEF
+    Editor offers — exactly, then ignoring case, then as a unique start or
+    part of a name — and an ambiguous entry is refused with the candidates."""
+
+    @pytest.mark.parametrize("typed, offered, match, how", [
+        ("2031ZR", ["2031ZR", "2032QX"], "2031ZR", "exact"),
+        ("2031zr", ["2031ZR", "2032QX"], "2031ZR", "case-insensitive"),
+        ("2031", ["2031ZR", "2032QX"], "2031ZR", "prefix of '2031ZR'"),
+        ("v1", ["V1_A", "V2_A"], "V1_A", "prefix of 'V1_A'"),
+        ("left", ["BODY_LEFT", "DASH"], "BODY_LEFT", "contained in 'BODY_LEFT'"),
+    ])
+    def test_it_matches(self, typed, offered, match, how):
+        assert workflow.resolve(typed, offered) == (match, how)
+
+    def test_ambiguity_is_refused_with_the_candidates(self):
+        match, how = workflow.resolve("203", ["2031ZR", "2032QX"])
+        assert match is None
+        assert "2031ZR" in how and "2032QX" in how
+
+    def test_nothing_offered_is_said(self):
+        match, how = workflow.resolve("x", ["A", "B"])
+        assert match is None and "available: A, B" in how
+        assert workflow.resolve("", ["A"]) == (None, "nothing typed")
+
+    def test_the_run_accepts_loosely_typed_values_and_says_what_it_matched(self, session):
+        out = workflow.run(session, "2031", "2031", "v1", "body")
+        assert out.ok, out.failed and (out.failed.name, out.failed.detail)
+        assert "'2031ZR'" in out.steps[1].detail and "prefix" in out.steps[1].detail
+        assert "'V1_A'" in out.steps[3].detail
+        assert out.harness == "BODY_LEFT"
+
+    def test_the_user_chooses_the_circuit(self, session):
+        out = workflow.run(session, "2031ZR", "2031", "V1_A", "BODY_LEFT", target="M34")
+        assert out.steps[-1].name == "Filter circuits for M34"
+        assert out.ok, out.failed and out.failed.detail
+        assert "M34" in out.grid.column("Circuit")
+
+    def test_the_gui_has_free_text_fields_and_a_circuit_field(self):
+        import importlib
+        import tkinter as tk
+        gui = importlib.import_module("defauto.gui")
+        w = gui.Workbench()
+        try:
+            assert isinstance(w.field_program, tk.ttk.Entry)
+            assert isinstance(w.field_circuit, tk.ttk.Entry)
+            assert w.field_circuit.get() == workflow.TARGET_CIRCUIT
+            w.on_demo_direct(); w.update()
+            for _ in range(60):
+                w.update()
+            assert w.hint_program.cget("text").startswith("offered:")
+        finally:
+            w.destroy()
