@@ -365,6 +365,12 @@ def page() -> None:
                             "origin": "Row-9 cell"},
                     mono=("code", "origin"), status_field="cx", pagination=15)
 
+        def _confidently_deleted(r) -> bool:
+            """The master said so: a DELETE / Cancel / N/A in its Current cell
+            or a deletion sentinel in the notes. Not a symbol-less row, which
+            may be a real part nobody labelled."""
+            return r.excluded and "deleted" in r.current_reason
+
         def _render_matrix(m) -> None:
             """Two tables, not one wide grid.
 
@@ -389,8 +395,38 @@ def page() -> None:
                      "Edit a part number in place; click a row to edit its marks.") \
                 .classes("sx-caption")
 
+            state.setdefault("show_deleted", False)
+            # Rows the master itself marks deleted / cancelled / N/A are settled:
+            # they start hidden and unticked, behind a switch, so the table is
+            # the parts in play rather than the parts that used to be.
+            deleted = [r for r in m.rows if _confidently_deleted(r)]
+            in_play = [r for r in m.rows if not _confidently_deleted(r)]
+
+            @ui.refreshable
+            def count_view() -> None:
+                """How many are selected, big, above the table — it moves with
+                every tick."""
+                n_in = sum(1 for r in in_play if not r.excluded)
+                with c.kpi_strip():
+                    c.kpi(n_in, "Part numbers selected", "ok" if n_in else "review",
+                          hint=f"of {len(in_play)} in play — this is what the file "
+                               "will contain")
+                    if deleted:
+                        c.kpi(len(deleted), "Deleted in the master",
+                              hint="hidden unless shown")
+
+            views["count"] = count_view
+            count_view()
+            if deleted:
+                ui.switch(f"Show the {len(deleted)} row(s) the master marks deleted",
+                          value=state["show_deleted"],
+                          on_change=lambda v: (state.update(show_deleted=bool(v.value)),
+                                               refresh("workbench")))
+
             rows = []
             for i, r in enumerate(m.rows):
+                if _confidently_deleted(r) and not state["show_deleted"]:
+                    continue
                 row = {"_i": i, "Include": not r.excluded, "Symbol": r.variant_id,
                        "Harness PN": r.current_pn or ("(deleted)" if r.excluded else ""),
                        "Previous": r.previous_pn,
@@ -498,17 +534,9 @@ def page() -> None:
                           on_click=lambda: set_all(True)).props("outline dense no-caps")
                 ui.button("Exclude all", icon="remove_done",
                           on_click=lambda: set_all(False)).props("outline dense no-caps")
-            @ui.refreshable
-            def count_view() -> None:
-                """How many are selected, live — it moves with every tick."""
-                n_in = sum(1 for r in m.rows if not r.excluded)
-                c.chip("ok" if n_in else "review",
-                       f"{n_in} of {len(m.rows)} part numbers selected")
-                ui.label("This is what the file will contain.").classes("sx-caption")
-
-            views["count"] = count_view
-            with ui.row().classes("items-center gap-3"):
-                count_view()
+            ui.label(f"{sum(1 for r in in_play if not r.excluded)} part numbers "
+                     "selected — see the tile above; it follows every tick.") \
+                .classes("sx-caption")
 
             # ------------------------------------- marks for one part number
             @ui.refreshable
