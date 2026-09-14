@@ -30,8 +30,11 @@ is one more row here plus `scripts/agent-worktree.sh <role>`.
 1. **Set up once:** from any checkout, `scripts/agent-worktree.sh <role>`.
    It creates `../Splice-wt/<role>` on `agent/<role>` from `origin/main`,
    copies `.claude/launch.json`, and proves that `import splice` resolves to
-   the worktree, not the root. Move your session there (Claude Code: change
-   the project directory to that path).
+   the worktree, not the root. **Open your Claude Code session on that
+   path.** Changing directory mid-session moves the shell but not the
+   Browser preview server, which keeps launching from the directory the
+   session was opened in — so a session that must preview its own code
+   starts in its worktree.
 2. **Work** on `agent/<role>`. Commit as usual. Never `git stash` bare — the
    stash is shared across worktrees; use a WIP commit or
    `git stash push -u -m "<unique tag>"` and `apply` by SHA.

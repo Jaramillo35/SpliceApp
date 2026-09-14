@@ -40,4 +40,4 @@ print("imports resolve to this worktree")
 PYEOF
 )
 echo "ready: $WT  (branch $BRANCH)"
-echo "next: move your session there, work, then scripts/ship.sh"
+echo "next: open your Claude Code session ON this path (a mid-session cd does not re-target the preview server), work, then scripts/ship.sh"
