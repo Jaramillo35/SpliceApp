@@ -120,6 +120,18 @@ class TestInputs:
         assert not button(user, "Match comments").enabled
 
 
+class TestInstructionsAndCoverage:
+    async def test_the_page_says_how_it_works_before_anything_is_loaded(self, user: User):
+        await user.open("/inline-comments")
+        await user.should_see("How it works — and what you do")
+
+    async def test_missing_inlines_are_shown_after_the_match(self, user: User, files):
+        await open_matched(user, files)
+        await user.should_see("Inlines: 2 in both reports (matched)")
+        await user.should_see("Only in OLD: X903A - Y903A")
+        await user.should_see("Only in NEW: X904A - Y904A")
+
+
 class TestReview:
     async def test_the_result_is_counted_and_nothing_is_dropped(self, user: User, files):
         await open_matched(user, files)

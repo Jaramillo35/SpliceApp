@@ -317,3 +317,24 @@ class TestLostCommentsAreAcknowledged:
             result.acknowledge("X903A - Y903A!2!lost", "whatever")
         with pytest.raises(ValueError):
             result.acknowledge_all("whatever")
+
+
+
+class TestInlineCoverage:
+    """Matching runs on the inlines present in both reports; the ones in only
+    one are named, never silently skipped."""
+
+    def test_shared_and_missing_inlines_are_named(self, result):
+        cov = result.coverage
+        assert cov.in_both == ["X901A - Y901A", "X902A - Y902A"]
+        assert cov.old_only == ["X903A - Y903A"]
+        assert cov.new_only == ["X904A - Y904A"]
+        assert not cov.complete and cov.missing == 2
+
+    def test_only_shared_inlines_produce_proposals(self, result):
+        assert {p.sheet for p in result.proposals} <= set(result.coverage.in_both)
+
+    def test_identical_reports_are_complete(self, old_bytes):
+        report = co.read_report(old_bytes)
+        cov = co.match(report, report).coverage
+        assert cov.complete and cov.in_both == list(report.sheets)

@@ -295,6 +295,32 @@ def page() -> None:
         views["kpis"] = kpi_view
         kpi_view()
 
+        # --------------------------------------------------- how it works
+        with ui.expansion("How it works — and what you do", icon="help_outline") \
+                .classes("w-full").props("dense"):
+            ui.markdown(
+                "**What it does.** Reads the comments in last release's inline "
+                "report and puts them into this release's, inline sheet by inline "
+                "sheet, row by row.\n\n"
+                "**How a comment finds its row.** Same pin and circuit, then:\n"
+                "- *Row identical* on both sides → the comment is **copied for you**.\n"
+                "- *Only the sales codes changed* → the wire is the same, so the old "
+                "comment is **suggested**; you confirm it or write a new one.\n"
+                "- *Anything else changed* (colour, size, spec, suffix, a side gone) → "
+                "**nothing is suggested**; a comment like `WIRE TYPE OK` may no longer "
+                "be true, so you decide.\n\n"
+                "**What you do.**\n"
+                "1. Drop the OLD report (with comments) and the NEW report, press "
+                "**Match comments**.\n"
+                "2. Check the inline coverage: an inline in only one report cannot "
+                "carry comments — the analysis runs on the inlines in both.\n"
+                "3. Work the review queue, likeliest-wrong first: **C** copy, **W** "
+                "write new, **B** leave blank, **K** keep the new report's own, "
+                "**U** undo. Comments whose row is gone must be acknowledged.\n"
+                "4. When nothing is left to decide, **Write the commented report** "
+                "and download it — the NEW file, comments filled in, format untouched."
+            ).classes("sx-caption")
+
         # --------------------------------------------------------- Inputs
         with c.section("Inputs",
                        "The OLD report is the one your comments are in; the NEW "
@@ -326,6 +352,7 @@ def page() -> None:
                     c.empty("Match the two reports — the comments that need a "
                             "decision land here.", icon="rate_review")
                     return
+                _coverage(res)
                 for note in res.notes:
                     c.note("info", note)
                 _gate(res)
@@ -343,6 +370,28 @@ def page() -> None:
                     with split.after:
                         with ui.column().classes("w-full gap-3 pl-3"):
                             _card(res)
+
+        def _coverage(res) -> None:
+            """Which inlines the two reports share. Functional rendering; the
+            UI/UX design of this block is being done separately."""
+            cov = res.coverage
+            if cov.complete:
+                c.note("ok", f"Inlines: all {len(cov.in_both)} inline sheet(s) are in "
+                             "both reports — every one is matched.")
+                return
+            c.note("high",
+                   f"Inlines: {len(cov.in_both)} in both reports (matched)"
+                   + (f" · {len(cov.old_only)} only in OLD — their comments cannot "
+                      "carry" if cov.old_only else "")
+                   + (f" · {len(cov.new_only)} only in NEW — nothing to carry into "
+                      "them" if cov.new_only else "")
+                   + ". Ideally every inline is in both; the analysis runs on the "
+                     "shared ones.")
+            with ui.row().classes("gap-6 flex-wrap"):
+                if cov.old_only:
+                    ui.label("Only in OLD: " + ", ".join(cov.old_only)).classes("sx-mono text-sm")
+                if cov.new_only:
+                    ui.label("Only in NEW: " + ", ".join(cov.new_only)).classes("sx-mono text-sm")
 
         def _gate(res) -> None:
             items = res.queue()

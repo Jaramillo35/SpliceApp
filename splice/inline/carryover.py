@@ -425,10 +425,35 @@ class Lost:
 
 
 @dataclass
+class Coverage:
+    """Which inline sheets the two reports share.
+
+    Matching runs sheet by sheet, so only an inline present in *both* reports
+    — a direct connection between them — can carry a comment. An inline in
+    the OLD report alone loses its comments (they are listed, and must be
+    acknowledged); an inline in the NEW report alone has nothing to receive.
+    Ideally both lists are empty; the analysis still runs on the shared ones.
+    """
+
+    in_both: List[str] = field(default_factory=list)
+    old_only: List[str] = field(default_factory=list)
+    new_only: List[str] = field(default_factory=list)
+
+    @property
+    def complete(self) -> bool:
+        return not self.old_only and not self.new_only
+
+    @property
+    def missing(self) -> int:
+        return len(self.old_only) + len(self.new_only)
+
+
+@dataclass
 class Carryover:
     proposals: List[Proposal] = field(default_factory=list)
     lost: List[Lost] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    coverage: Coverage = field(default_factory=Coverage)
 
     # ------------------------------------------------------------ reading
     def get(self, pid: str) -> Proposal:
@@ -570,7 +595,10 @@ def _diffs(old: Row, new: Row, keys: List[str]) -> List[Diff]:
 
 def match(old: Report, new: Report) -> Carryover:
     """Pair every commented old row with at most one new row."""
-    out = Carryover()
+    out = Carryover(coverage=Coverage(
+        in_both=[n for n in new.sheets if n in old.sheets],
+        old_only=[n for n in old.sheets if n not in new.sheets],
+        new_only=[n for n in new.sheets if n not in old.sheets]))
 
     for name, new_sheet in new.sheets.items():
         old_sheet = old.sheets.get(name)
