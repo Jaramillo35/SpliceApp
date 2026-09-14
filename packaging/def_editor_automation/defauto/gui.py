@@ -461,7 +461,11 @@ class Workbench(tk.Tk):
                      f"{n[termmatl.NOT_FOUND]} not found · {n[termmatl.UNKNOWN]} unknown",
                      "ok" if n[termmatl.CHANGE] else "warn")
 
-        self._run(lambda: termmatl.plan(self.session.backend, updates), then)
+        def progress(done: int, total: int) -> None:
+            if done == total or done % 100 == 1:
+                self._post(lambda: self.log(f"  reading the grid: {done} of {total} rows"))
+
+        self._run(lambda: termmatl.plan(self.session.backend, updates, progress), then)
 
     def on_apply(self) -> None:
         changes = [p for p in self.planned if p.will_change]

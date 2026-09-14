@@ -434,9 +434,33 @@ class FakeBackend:
                 rows = [r for r in rows if r[2] == "1"]
         return list(found.headers), rows
 
-    def grid(self, automation_id: str, scope: str = "") -> Grid:
+    def grid(self, automation_id: str, scope: str = "", columns=None,
+             progress=None) -> Grid:
         headers, rows = self._visible(automation_id, scope)
+        if columns:
+            keep = []
+            for wanted in columns:
+                key = wanted.strip().lower().replace(" ", "")
+                try:
+                    keep.append(next(i for i, h in enumerate(headers)
+                                     if h.strip().lower().replace(" ", "") == key))
+                except StopIteration:
+                    raise ControlNotFound(f"{automation_id}[{wanted}]",
+                                          f"columns: {headers}") from None
+            headers = [headers[i] for i in keep]
+            rows = [[r[i] for i in keep] for r in rows]
+        if progress is not None:
+            progress(len(rows), len(rows))
         return Grid(headers, [list(r) for r in rows])
+
+    def cell(self, automation_id: str, row: int, column: str, scope: str = "") -> str:
+        headers, rows = self._visible(automation_id, scope)
+        key = column.strip().lower().replace(" ", "")
+        col = next(i for i, h in enumerate(headers)
+                   if h.strip().lower().replace(" ", "") == key)
+        if row >= len(rows):
+            raise ControlNotFound(f"row {row + 1}", f"{len(rows)} rows")
+        return rows[row][col]
 
     def set_cell(self, automation_id: str, row: int, column: str, value: str,
                  scope: str = "") -> None:

@@ -49,6 +49,18 @@ def session():
     return application.demo()
 
 
+@pytest.fixture()
+def on_circuits(session):
+    """The demo with a harness open on its Circuits page — where the
+    Terminal Material updater starts from."""
+    session.composite.choose_programme("2031ZR", "2031", "V1_A")
+    session.composite.search()
+    session.composite.choose_composite(session.composite.composites()[0])
+    session.composite.choose_harness("BODY_LEFT")
+    session.circuits.open()
+    return session
+
+
 def _pump(w, done, seconds: float = 10.0) -> None:
     """Run the window's event loop until ``done()`` or the deadline.
 
@@ -896,3 +908,35 @@ class TestTheFirstRealSnapshot:
         for grid in ids.GRIDS:
             assert set(ids.CONTROL_TYPES[grid]) == {"Table", "DataGrid"}
         assert ids.GRID_OWNER[ids.GRID_CIRCUITS] == ids.UC_CIRCUITS
+
+
+    def test_preview_reads_only_the_three_columns_it_needs(self, on_circuits):
+        """785 rows × 20 columns is what hung Preview on the real grid."""
+        from defauto import ids, termmatl as tm
+        backend = on_circuits.backend
+        seen = {}
+        real = backend.grid
+
+        def spy(automation_id, scope="", columns=None, progress=None):
+            seen["columns"] = columns
+            return real(automation_id, scope, columns, progress)
+
+        backend.grid = spy
+        grid = real(ids.GRID_CIRCUITS)
+        tm.plan(backend, tm.read_updates(_updates_xlsx(grid, [("Gold", 0)])))
+        assert seen["columns"] == ["Connector No", "Circuit", "Term Matl"]
+
+    def test_apply_reads_back_the_cell_not_the_grid(self, on_circuits, monkeypatch):
+        from defauto import ids, termmatl as tm
+        backend = on_circuits.backend
+        grid = backend.grid(ids.GRID_CIRCUITS)
+        term = grid.headers.index("Term Matl")
+        target = "GOLD" if grid.rows[0][term] != "GOLD" else "TIN"
+        planned = tm.plan(backend, tm.read_updates(_updates_xlsx(grid, [(target.title(), 0)])))
+        calls = {"grid": 0}
+        real = backend.grid
+        monkeypatch.setattr(backend, "grid",
+                            lambda *a, **k: (calls.__setitem__("grid", calls["grid"] + 1), real(*a, **k))[1])
+        tm.apply(backend, planned)
+        assert planned[0].status == tm.APPLIED and calls["grid"] == 0
+        assert backend.cell(ids.GRID_CIRCUITS, 0, "Term Matl") == target

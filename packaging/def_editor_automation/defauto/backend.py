@@ -21,7 +21,7 @@ control by AutomationId, and read or poke it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Protocol, Sequence
+from typing import Callable, List, Optional, Protocol, Sequence
 
 
 class AutomationError(RuntimeError):
@@ -145,7 +145,20 @@ class Backend(Protocol):
 
     def select(self, automation_id: str, value: str, scope: str = "") -> None: ...
 
-    def grid(self, automation_id: str, scope: str = "") -> Grid: ...
+    def grid(self, automation_id: str, scope: str = "",
+             columns: Optional[Sequence[str]] = None,
+             progress: Optional[Callable[[int, int], None]] = None) -> Grid:
+        """The grid as text. ``columns`` limits the read to those headers —
+        on a 785-row, 20-column DEF Editor grid every cell is a
+        cross-process call, and the updater needs three columns, not
+        twenty. ``progress(done, total)`` is called as rows are read."""
+        ...
+
+    def cell(self, automation_id: str, row: int, column: str,
+             scope: str = "") -> str:
+        """One cell's text, for reading a write back without re-reading
+        the whole grid."""
+        ...
 
     def set_cell(self, automation_id: str, row: int, column: str, value: str,
                  scope: str = "") -> None:
@@ -437,17 +450,75 @@ class UiaBackend:
         kids = row.children()
         return kids if kids else [row]
 
-    def grid(self, automation_id: str, scope: str = "") -> Grid:
+    # A WinForms DataGridView (DEF Editor's circuits grid, per the second
+    # structure snapshot: Table, 785 Custom rows with NO children) does not
+    # put its cells in the UI Automation tree. They are reached through the
+    # Grid pattern — GetItem(row, column) — which is what these use. The
+    # tree walk stays as the fallback for a grid that does expose cells.
+    def _grid_cell(self, control, row: int, col: int):
+        try:
+            element = control.iface_grid.GetItem(row, col)
+        except Exception:  # noqa: BLE001 - no Grid pattern, or out of range
+            return None
+        if element is None:
+            return None
+        try:
+            from pywinauto.controls.uiawrapper import UIAWrapper  # noqa: PLC0415
+            from pywinauto.uia_element_info import UIAElementInfo  # noqa: PLC0415
+
+            return UIAWrapper(UIAElementInfo(element))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _column_index(self, headers: List[str], column: str) -> int:
+        wanted = column.strip().lower().replace(" ", "")
+        for i, h in enumerate(headers):
+            if h.strip().lower().replace(" ", "") == wanted:
+                return i
+        raise AutomationError(f"the grid has no column {column!r}; headers: {headers}")
+
+    def grid(self, automation_id: str, scope: str = "",
+             columns: Optional[Sequence[str]] = None,
+             progress: Optional[Callable[[int, int], None]] = None) -> Grid:
         control = self._find(automation_id, scope)
         headers, rows = self._rows_of(control)
+        if not headers:
+            self.notes.append(f"{automation_id!r}: no column headers found — columns "
+                              "are matched by name, so take a structure snapshot")
+            return Grid(headers=[], rows=[])
+        wanted = list(range(len(headers))) if not columns else \
+            [self._column_index(headers, c) for c in columns]
+        by_pattern = self._grid_cell(control, 0, wanted[0]) is not None if rows else False
+        if by_pattern and "grid pattern" not in " ".join(self.notes):
+            self.notes.append(f"{automation_id!r}: cells read through the Grid pattern "
+                              f"({len(rows)} rows × {len(wanted)} columns)")
         out: List[List[str]] = []
-        for row in rows:
-            out.append([self._text(c) for c in self._cells_of(row)])
-        if out and not headers:
-            self.notes.append(f"{automation_id!r}: {len(out)} rows read but no column "
-                              "headers found — columns are matched by name, so take a "
-                              "structure snapshot of this page")
-        return Grid(headers=headers, rows=out)
+        total = len(rows)
+        for r, row in enumerate(rows):
+            if by_pattern:
+                values = []
+                for c in wanted:
+                    cell = self._grid_cell(control, r, c)
+                    values.append(self._text(cell) if cell is not None else "")
+            else:
+                cells = self._cells_of(row)
+                values = [self._text(cells[c]) if c < len(cells) else "" for c in wanted]
+            out.append(values)
+            if progress is not None and (r % 25 == 0 or r == total - 1):
+                progress(r + 1, total)
+        return Grid(headers=[headers[c] for c in wanted], rows=out)
+
+    def cell(self, automation_id: str, row: int, column: str, scope: str = "") -> str:
+        control = self._find(automation_id, scope)
+        headers, rows = self._rows_of(control)
+        col = self._column_index(headers, column)
+        found = self._grid_cell(control, row, col)
+        if found is not None:
+            return self._text(found)
+        if row < len(rows):
+            cells = self._cells_of(rows[row])
+            return self._text(cells[col]) if col < len(cells) else ""
+        raise AutomationError(f"row {row + 1} is beyond the grid's {len(rows)} rows")
 
     def set_cell(self, automation_id: str, row: int, column: str, value: str,
                  scope: str = "") -> None:
@@ -463,21 +534,18 @@ class UiaBackend:
 
         control = self._find(automation_id, scope)
         headers, rows = self._rows_of(control)
-        wanted = column.strip().lower().replace(" ", "")
-        try:
-            col = next(i for i, h in enumerate(headers)
-                       if h.strip().lower().replace(" ", "") == wanted)
-        except StopIteration:
-            raise AutomationError(f"grid {automation_id!r} has no column "
-                                  f"{column!r}; headers: {headers}") from None
+        col = self._column_index(headers, column)
         if row >= len(rows):
             raise AutomationError(f"grid {automation_id!r} has {len(rows)} rows, "
                                   f"row {row + 1} asked for")
-        cells = self._cells_of(rows[row])
-        if col >= len(cells):
-            raise AutomationError(f"row {row + 1} has {len(cells)} cells, column "
-                                  f"{col + 1} asked for")
-        cell = cells[col]
+        cell = self._grid_cell(control, row, col)
+        if cell is None:
+            cells = self._cells_of(rows[row])
+            if col >= len(cells):
+                raise AutomationError(f"row {row + 1} exposes no cell for column "
+                                      f"{column!r} — the Grid pattern is not "
+                                      "available and the tree has no cells")
+            cell = cells[col]
         pid = int(self._root().process_id())
         cell.click_input()
         time.sleep(0.2)

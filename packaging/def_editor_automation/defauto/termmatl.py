@@ -148,9 +148,18 @@ def _column(grid: Grid, wanted: str) -> int:
         "Edit Harness → Circuits page?")
 
 
-def plan(backend: Backend, updates: Sequence[Update]) -> List[Planned]:
-    """Match every Excel row to the grid, touching nothing."""
-    grid = backend.grid(ids.GRID_CIRCUITS)
+def plan(backend: Backend, updates: Sequence[Update],
+         progress: Optional[Callable[[int, int], None]] = None) -> List[Planned]:
+    """Match every Excel row to the grid, touching nothing.
+
+    Reads only the three columns it matches on: on DEF Editor's grid every
+    cell is a cross-process call, and 785 rows × 20 columns is a wait that
+    looks like a hang; 785 × 3 is a few seconds.
+    """
+    grid = backend.grid(ids.GRID_CIRCUITS,
+                        columns=[ids.TERM_COLUMNS["cnum"], ids.TERM_COLUMNS["circuit"],
+                                 ids.TERM_COLUMNS["terminal"]],
+                        progress=progress)
     cnum_i = _column(grid, ids.TERM_COLUMNS["cnum"])
     ckt_i = _column(grid, ids.TERM_COLUMNS["circuit"])
     term_i = _column(grid, ids.TERM_COLUMNS["terminal"])
@@ -212,10 +221,13 @@ def apply(backend: Backend, planned: Sequence[Planned],
             except AutomationError as exc:
                 failures.append(f"row {r + 1}: {exc}")
                 continue
-        after = backend.grid(ids.GRID_CIRCUITS)
-        term_i = _column(after, term)
-        read_back = [after.rows[r][term_i].strip() if r < len(after.rows) else "?"
-                     for r in p.rows]
+        # read back the cells written, not the whole grid again
+        read_back = []
+        for r in p.rows:
+            try:
+                read_back.append(backend.cell(ids.GRID_CIRCUITS, r, term).strip())
+            except AutomationError as exc:
+                read_back.append(f"?({exc})")
         wrong = [v for v in read_back if v.upper() != p.target]
         if failures or wrong:
             p.status = FAILED
