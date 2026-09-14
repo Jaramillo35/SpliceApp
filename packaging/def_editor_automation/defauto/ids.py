@@ -239,3 +239,11 @@ GRID_OWNER = {GRID_CIRCUITS: UC_CIRCUITS, GRID_DEVICES: UC_DEVICES,
               GRID_CIRCUIT_COMPLEXITY: UC_CIRCUITS_USAGE,
               GRID_SALES_CODES_EDIT: UC_SALES_CODES}
 GRID_TYPES = ("Table", "DataGrid")
+
+#: The Term Matl editor, as the third structure snapshot recorded it with the
+#: list open: not a combo box in the cell but DEF Editor's own pane, shown
+#: under the Term Matl column, holding a ListBox of the materials (first item
+#: empty) and a close button.
+PANE_TERM_MATL = "uc_Harness_Edit_Circuits_SelectTermMatl"
+LIST_TERM_MATL = "ListBox_Ends"
+CLOSE_TERM_MATL = "PictureBox_Close"

@@ -77,9 +77,10 @@ Use
 If Preview reports that the grid has no "Connector No" / "Circuit" / "Term
 Matl" column, DEF Editor is not on the Circuits page, or the columns are
 named differently in your release - the names live in defauto\ids.py
-(TERM_COLUMNS). If Apply fails on every row, the cell editor is not what the
-kit assumed: take a RECORD STRUCTURE snapshot with the grid on screen and
-send the structure folder.
+(TERM_COLUMNS). If Apply fails on every row, take a RECORD STRUCTURE snapshot with a Term
+Matl cell's list open and send the structure folder. (The kit already knows
+DEF Editor's editor from such a snapshot: the pane
+uc_Harness_Edit_Circuits_SelectTermMatl with its ListBox_Ends.)
 
 
 Recording the structure (do this first when something fails)

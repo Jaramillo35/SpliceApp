@@ -940,3 +940,11 @@ class TestTheFirstRealSnapshot:
         tm.apply(backend, planned)
         assert planned[0].status == tm.APPLIED and calls["grid"] == 0
         assert backend.cell(ids.GRID_CIRCUITS, 0, "Term Matl") == target
+
+
+    def test_the_term_matl_editor_is_known_by_id(self):
+        """Third snapshot, list open: DEF Editor's own pane and ListBox, not a
+        ComboBox in the cell."""
+        assert ids.PANE_TERM_MATL == "uc_Harness_Edit_Circuits_SelectTermMatl"
+        assert ids.LIST_TERM_MATL == "ListBox_Ends"
+        assert ids.CLOSE_TERM_MATL == "PictureBox_Close"

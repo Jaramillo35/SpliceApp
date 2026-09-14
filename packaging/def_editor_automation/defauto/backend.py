@@ -548,11 +548,37 @@ class UiaBackend:
             cell = cells[col]
         pid = int(self._root().process_id())
         cell.click_input()
-        time.sleep(0.2)
-        cell.click_input()                       # second click opens the editor
-        time.sleep(0.4)
+        time.sleep(0.3)
 
-        # The editor. A WinForms combo column opens a ComboBox in the cell;
+        # DEF Editor's Term Matl editor (third structure snapshot, list open):
+        # its own pane under the column, a ListBox of the materials, a close
+        # button. Pick from that list; close the pane if the pick leaves it
+        # open, so the next row starts clean.
+        pane = self._term_matl_pane()
+        if pane is None:
+            cell.click_input()                   # a second click, if the first only selected
+            time.sleep(0.4)
+            pane = self._term_matl_pane()
+        if pane is not None:
+            from defauto import ids
+
+            try:
+                box = pane.child_window(auto_id=ids.LIST_TERM_MATL, control_type="List")
+                box.wait("exists", timeout=2)
+                items = [(i, self._text(i)) for i in box.descendants(control_type="ListItem")]
+            except Exception as exc:  # noqa: BLE001
+                raise AutomationError(f"the Term Matl pane opened but its list "
+                                      f"{ids.LIST_TERM_MATL!r} could not be read: {exc}") from exc
+            pick = next((i for i, n in items if n.strip().upper() == value.strip().upper()), None)
+            if pick is None:
+                raise AutomationError(f"{value!r} is not in the Term Matl list: "
+                                      f"{[n for _i, n in items]}")
+            pick.click_input()
+            time.sleep(0.3)
+            self._close_term_matl_pane()
+            return
+
+        # Any other grid. A WinForms combo column opens a ComboBox in the cell;
         # a DevExpress lookup opens a popup — its own top-level window of the
         # same process — holding the items. Look in the cell, the row, the
         # grid, then the process's windows, and take the first place whose
@@ -595,6 +621,32 @@ class UiaBackend:
             cell.type_keys("{ENTER}", set_foreground=False)
         except Exception:  # noqa: BLE001 - the click may already have committed
             pass
+
+    def _term_matl_pane(self):
+        """The material selector, if it is open right now."""
+        from defauto import ids
+
+        try:
+            pane = self._root().child_window(auto_id=ids.PANE_TERM_MATL, control_type="Pane")
+            pane.wait("exists visible", timeout=1.5)
+            return pane
+        except Exception:  # noqa: BLE001 - not open
+            return None
+
+    def _close_term_matl_pane(self) -> None:
+        """Close the selector if the pick left it open; harmless if it did not."""
+        from defauto import ids
+
+        pane = self._term_matl_pane()
+        if pane is None:
+            return
+        try:
+            pane.child_window(auto_id=ids.CLOSE_TERM_MATL).click_input()
+        except Exception:  # noqa: BLE001
+            try:
+                pane.type_keys("{ESC}", set_foreground=False)
+            except Exception:  # noqa: BLE001
+                pass
 
     def menu(self, *path: str) -> None:
         self._root().menu_select("->".join(path))
