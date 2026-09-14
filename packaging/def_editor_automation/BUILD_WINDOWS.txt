@@ -6,7 +6,15 @@ What it is
 Sets the Term Matl of circuits in DEF EDITOR from an Excel list.
 
 You navigate DEF Editor by hand to Edit Harness > Circuits. Then, in this
-window: Connect (pick the DEF Editor window), Choose Excel, Preview, Apply.
+window: Connect (pick the DEF Editor window), 1 Read circuits, 2 Choose
+Excel, 3 Preview, 4 Apply.
+
+Read circuits comes first: it extracts what DEF Editor's page shows -
+Connector No, Circuit, Term Matl of every row - and lists it in the top
+table. That list is the whole universe the Excel is matched against. A row
+of the Excel whose circuit is not on the page is counted ("N not on this
+page"), kept in the CSV with a hint at what the page has instead, and left
+out of the preview: the preview shows only circuits DEF Editor is showing.
 
 The Excel has three columns in its first row - CNUM, Circuit Name, Terminal.
 Terminal is Silver, Gold or Tin (any case) or empty. Each row is matched to
@@ -14,9 +22,11 @@ the circuits grid: CNUM to "Connector No", Circuit Name to "Circuit". The
 matching row's Term Matl cell is opened and the value picked from DEF
 Editor's own list (BERYLLIUM, GOLD, SILVER, SILVER+NICKEL, SILVER+TIN, TIN).
 
-Preview first, always. Every row is shown with what would happen and nothing
-is touched: Will change (with the current value) / Already that value /
-Not in the grid / Terminal empty - left as is / Unknown value - left as is.
+Preview before Apply, always. Every matched row is shown with what would
+happen and nothing is touched: Will change (with the current value) /
+Already that value / Terminal empty - left as is / Unknown value - left as
+is. The Excel may carry other columns (Harness Family, say) and trailing
+blank rows; only the three named columns are read and blank rows are skipped.
 Apply sets exactly the rows marked "Will change", one at a time, reads each
 cell back, and reports Applied or Failed per row. "Export results CSV" keeps
 the record. Nothing is guessed: any Terminal other than Silver, Gold or Tin
@@ -65,14 +75,27 @@ Use
 2. Run the exe, press "Connect to DEF Editor". A picker lists EVERY window on
    the desktop; the ones that look like DEF Editor are first and marked.
    Double-click the right one. The kit never guesses the window title.
-3. "Choose Excel..." - the update list. The label says how many rows it read,
-   or what is wrong with the file (a missing column is named).
-4. "Preview". The table fills, one line per Excel row, coloured by what will
-   happen. Read it. Rows marked "Not in the grid" or "Unknown value" are
-   yours to fix in the Excel; nothing will be done to them.
-5. "Apply N change(s)". Rows turn Applied (green) or Failed (red) one by one;
-   a Failed row says what the cell read back. "Export results CSV" saves the
-   table next to the exe.
+3. "1 Read circuits". The top table fills with every row of the page -
+   Connector No, Circuit, Term Matl - and the header says how many. If it
+   reads 0 rows, DEF Editor is not showing the circuits grid.
+4. "2 Choose Excel..." - the update list. The label says how many rows it
+   read, or what is wrong with the file (a missing column is named).
+5. "3 Preview". The bottom table fills with the rows of the list that are on
+   the page, coloured by what will happen; the top table's last column says,
+   per circuit, what the list would do to it. Rows marked "Unknown value"
+   are yours to fix in the Excel; nothing will be done to them. Rows not on
+   the page are counted in the header and the log, not shown. If NONE of the
+   list is on the page, the log prints the page's first Connector No and
+   Circuit so you can compare them with the Excel's CNUM and Circuit Name.
+6. "4 Apply N change(s)". Rows turn Applied (green) or Failed (red) one by
+   one; a Failed row says what the cell read back. "Export results CSV"
+   saves the table (every row, including those not on the page) next to
+   the exe.
+
+Cells in DEF Editor's grid are NAMED "<column> Row <n>" (a WinForms
+DataGridView habit) and hold their content in the Value pattern; the kit
+reads the value. An older build read the name and reported "Not in the grid"
+for every row - that is fixed, and the log notes it when it sees such cells.
 
 If Preview reports that the grid has no "Connector No" / "Circuit" / "Term
 Matl" column, DEF Editor is not on the Circuits page, or the columns are

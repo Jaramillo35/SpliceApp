@@ -20,6 +20,7 @@ control by AutomationId, and read or poke it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Protocol, Sequence
 
@@ -388,7 +389,7 @@ class UiaBackend:
     # ------------------------------------------------------ grid reading
     @staticmethod
     def _text(element) -> str:
-        """A cell's text, from whichever pattern the control exposes."""
+        """An element's interface text: a header, a list item, a button."""
         try:
             value = element.window_text()
             if value:
@@ -405,6 +406,41 @@ class UiaBackend:
             except Exception:  # noqa: BLE001
                 continue
         return ""
+
+    #: how a WinForms DataGridView names its cells: "<column header> Row <n>"
+    CELL_LABEL = re.compile(r".* Row \d+$")
+
+    @classmethod
+    def _cell_text(cls, element) -> str:
+        """A grid cell's CONTENT.
+
+        A WinForms DataGridView (DEF Editor's circuits grid; the third
+        structure snapshot shows a cell named " Row 0") gives every cell the
+        accessible *name* "<column header> Row <n>" and puts what the cell
+        shows in its *value*. Reading the name matched labels against the
+        Excel and found nothing. So: the Value pattern first, the legacy
+        Value next, and the name only when it is not that label.
+        """
+        try:
+            value = element.iface_value.CurrentValue
+            if value is not None and str(value) != "":
+                return str(value)
+        except Exception:  # noqa: BLE001 - no Value pattern here
+            pass
+        try:
+            got = element.legacy_properties().get("Value")
+            if got:
+                return str(got)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            name = element.window_text()
+        except Exception:  # noqa: BLE001
+            name = ""
+        name = str(name or "")
+        if cls.CELL_LABEL.match(name):
+            return ""
+        return name
 
     @staticmethod
     def _ctype(element) -> str:
@@ -488,10 +524,15 @@ class UiaBackend:
             return Grid(headers=[], rows=[])
         wanted = list(range(len(headers))) if not columns else \
             [self._column_index(headers, c) for c in columns]
-        by_pattern = self._grid_cell(control, 0, wanted[0]) is not None if rows else False
+        first = self._grid_cell(control, 0, wanted[0]) if rows else None
+        by_pattern = first is not None
         if by_pattern and "grid pattern" not in " ".join(self.notes):
             self.notes.append(f"{automation_id!r}: cells read through the Grid pattern "
                               f"({len(rows)} rows × {len(wanted)} columns)")
+            if self.CELL_LABEL.match(self._text(first) or ""):
+                self.notes.append(f"{automation_id!r}: cells are named "
+                                  f"'<column> Row <n>' — values read through the "
+                                  "Value pattern, not the name")
         out: List[List[str]] = []
         total = len(rows)
         for r, row in enumerate(rows):
@@ -499,10 +540,11 @@ class UiaBackend:
                 values = []
                 for c in wanted:
                     cell = self._grid_cell(control, r, c)
-                    values.append(self._text(cell) if cell is not None else "")
+                    values.append(self._cell_text(cell) if cell is not None else "")
             else:
                 cells = self._cells_of(row)
-                values = [self._text(cells[c]) if c < len(cells) else "" for c in wanted]
+                values = [self._cell_text(cells[c]) if c < len(cells) else ""
+                          for c in wanted]
             out.append(values)
             if progress is not None and (r % 25 == 0 or r == total - 1):
                 progress(r + 1, total)
@@ -514,10 +556,10 @@ class UiaBackend:
         col = self._column_index(headers, column)
         found = self._grid_cell(control, row, col)
         if found is not None:
-            return self._text(found)
+            return self._cell_text(found)
         if row < len(rows):
             cells = self._cells_of(rows[row])
-            return self._text(cells[col]) if col < len(cells) else ""
+            return self._cell_text(cells[col]) if col < len(cells) else ""
         raise AutomationError(f"row {row + 1} is beyond the grid's {len(rows)} rows")
 
     def set_cell(self, automation_id: str, row: int, column: str, value: str,

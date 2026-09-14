@@ -79,26 +79,51 @@ def _pump(w, done, seconds: float = 10.0) -> None:
     w.update()
 
 
-def hidden_workbench():
-    """The kit's window, built withdrawn — or a skip where no display exists.
+_WORKBENCH = {}
 
-    Two rules learned here. The window is its own Tk root, so it is withdrawn
-    before its first ``update()`` or it pops up mid-suite on a desktop. And it
-    must be the ONLY Tk root in the process: a second root (an earlier
-    ``tk_display`` fixture made one to test for a display) plus the window's
-    worker thread posting results deadlocks ``update()`` for good — the GUI
-    test hung, not failed. So the display check is this function's own
-    ``Workbench()`` call; GitHub's Linux runner has no display and skips.
+
+def hidden_workbench():
+    """The kit's window, built withdrawn, ONCE per process — or a skip where
+    no display exists.
+
+    Three rules learned here. The window is its own Tk root, so it is
+    withdrawn before its first ``update()`` or it pops up mid-suite on a
+    desktop. It must be the ONLY Tk root in the process: a second root plus
+    the window's worker thread posting results deadlocked ``update()`` for
+    good — the GUI test hung, not failed. And on macOS a second root built
+    AFTER the first was destroyed is no better: depending on what the first
+    window did, the next ``update()`` hung or the process died with SIGBUS.
+    So one window is built and every GUI test borrows it, handing it back
+    through ``_release``. The display check is the ``Workbench()`` call;
+    GitHub's Linux runner has no display and skips.
     """
     import importlib
     import tkinter as tk
-    gui = importlib.import_module("defauto.gui")
-    try:
-        w = gui.Workbench()
-    except tk.TclError as exc:
-        pytest.skip(f"no display for tkinter here: {exc}")
-    w.withdraw()
-    return w
+    if "w" not in _WORKBENCH:
+        gui = importlib.import_module("defauto.gui")
+        try:
+            w = gui.Workbench()
+        except tk.TclError as exc:
+            pytest.skip(f"no display for tkinter here: {exc}")
+        w.withdraw()
+        _WORKBENCH["w"] = w
+    return _WORKBENCH["w"]
+
+
+def _release(w) -> None:
+    """Hand the shared window back as it was built: nothing attached, nothing
+    loaded, no auto-snapshot ticking."""
+    if w.rec_auto.get():
+        w.rec_auto.set(False)
+        w.on_auto_toggle()
+    w.session = None
+    w._recorder = None
+    w.updates, w.updates_name = [], ""
+    w.circuits, w.planned = None, []
+    w._show_circuits()
+    w._show_plan()
+    w._set_log("")
+    w.update()
 
 
 @pytest.fixture()
@@ -624,7 +649,7 @@ class TestTypedTextIsMatchedToWhatIsOffered:
             w.on_export()
             assert list((tmp_path / "exports").glob("TermMatl_*.csv"))
         finally:
-            w.destroy()
+            _release(w)
 
 
 class TestTheStructureRecorder:
@@ -730,7 +755,7 @@ class TestTheStructureRecorder:
             assert len(saved) == 1
             assert "Saved structure" in w.log_text.get("1.0", "end")
         finally:
-            w.destroy()
+            _release(w)
 
 
 
@@ -949,6 +974,114 @@ class TestTheFirstRealSnapshot:
         assert ids.LIST_TERM_MATL == "ListBox_Ends"
         assert ids.CLOSE_TERM_MATL == "PictureBox_Close"
 
+
+    def test_a_cell_named_column_row_n_reads_its_value_not_its_name(self):
+        """Third snapshot: a cell named " Row 0". A WinForms DataGridView names
+        every cell "<column> Row <n>" and keeps the content in its Value —
+        reading the name matched labels against the Excel and found nothing
+        ("Not in the grid" on every row of TerminalsDeFE.xlsx)."""
+        from defauto.backend import UiaBackend
+
+        class Value:
+            def __init__(self, v): self.CurrentValue = v
+
+        class Cell:
+            def __init__(self, name, value=None, legacy=None):
+                self._name, self._value, self._legacy = name, value, legacy
+            def window_text(self): return self._name
+            @property
+            def iface_value(self):
+                if self._value is None:
+                    raise RuntimeError("no Value pattern")
+                return Value(self._value)
+            def legacy_properties(self):
+                if self._legacy is None:
+                    raise RuntimeError("no legacy")
+                return {"Name": self._name, "Value": self._legacy}
+
+        assert UiaBackend._cell_text(Cell("Connector No Row 12", "D5900A")) == "D5900A"
+        assert UiaBackend._cell_text(Cell("Circuit Row 3", None, "D5")) == "D5"
+        assert UiaBackend._cell_text(Cell("Term Matl Row 7", "")) == ""
+        assert UiaBackend._cell_text(Cell(" Row 0")) == "", "a bare label is not a value"
+        assert UiaBackend._cell_text(Cell("TIN")) == "TIN", "a grid that names cells by content"
+        assert UiaBackend._text(Cell("Connector No Row 12", "D5900A")) == "Connector No Row 12", \
+            "interface text (headers, list items) still reads the name"
+
+    def test_the_page_is_read_first_and_only_its_circuits_are_matched(self, on_circuits):
+        """Read circuits extracts the page; the preview lists only what is on it."""
+        import io
+        from openpyxl import Workbook
+        from defauto import ids, termmatl as tm
+        backend = on_circuits.backend
+        circuits = tm.read_circuits(backend)
+        grid = backend.grid(ids.GRID_CIRCUITS)
+        assert len(circuits) == len(grid.rows) and circuits.grid.headers == \
+            ["Connector No", "Circuit", "Term Matl"]
+        first = circuits.rows()[0]
+        assert (first.cnum, first.circuit) == (
+            grid.rows[0][grid.headers.index("Connector No")],
+            grid.rows[0][grid.headers.index("Circuit")])
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["CNUM", "Harness Family", "Circuit Name", "Terminal"])   # the real file's shape
+        ws.append([first.cnum, "BODY_LEFT", first.circuit, "Tin" if first.terminal != "TIN" else "Gold"])
+        ws.append(["D9999A", "BODY_LEFT", first.circuit, "Tin"])            # circuit elsewhere
+        ws.append([first.cnum, "BODY_LEFT", "ZZ999", "Tin"])                # cnum, other circuit
+        ws.append(["D9999A", "BODY_LEFT", "ZZ999", "Tin"])                  # nothing
+        for _ in range(5):
+            ws.append([None, None, None, None])                             # trailing blanks
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        updates = tm.read_updates(buffer.getvalue())
+        assert len(updates) == 4
+        planned = tm.plan(backend, updates, circuits=circuits)
+        assert [p.status for p in planned] == [tm.CHANGE, tm.NOT_FOUND, tm.NOT_FOUND, tm.NOT_FOUND]
+        assert [p.update.line for p in tm.on_page(planned)] == [2]
+        assert f"is on this page under {first.cnum}" in planned[1].detail
+        assert f"{first.cnum} is on this page but has no circuit ZZ999" == planned[2].detail
+        assert "neither" in planned[3].detail
+        assert tm.STATUS_LABEL[tm.NOT_FOUND] == "Not on this page"
+        # apply keeps the extracted copy in step with the cell it wrote
+        tm.apply(backend, planned, circuits=circuits)
+        assert circuits.terminal(first.row) == planned[0].target
+        assert backend.cell(ids.GRID_CIRCUITS, first.row, "Term Matl") == planned[0].target
+
+    def test_the_gui_lists_the_page_then_previews_only_what_is_on_it(self, tmp_path):
+        from defauto import ids, termmatl as tm
+        w = hidden_workbench()
+        try:
+            w.out_dir = tmp_path / "exports"
+            w.on_demo_direct()
+            w.on_read_circuits()
+            _pump(w, lambda: w.circuits is not None)
+            grid = w.session.backend.grid(ids.GRID_CIRCUITS)
+            assert len(w.circuits_tree.get_children()) == len(grid.rows)
+            assert f"{len(grid.rows)} row(s) read" in w.circuits_head.cget("text")
+            data = _updates_xlsx(grid, [("Gold", 0), ("", 1)])
+            # one more row the page does not show
+            from openpyxl import load_workbook
+            import io
+            wb = load_workbook(io.BytesIO(data))
+            wb.active.append(["D9999A", "ZZ999", "Tin"])
+            buffer = io.BytesIO()
+            wb.save(buffer)
+            w.load_updates(buffer.getvalue(), "u.xlsx")
+            w.on_preview()
+            _pump(w, lambda: len(w.planned) == 3)
+            assert len(w.tree.get_children()) == 2, "only rows on the page are previewed"
+            assert "2 of 3 list row(s) on this page" in w.summary.cget("text")
+            assert "1 not on this page" in w.summary.cget("text")
+            says = [w.circuits_tree.item(i, "values")[4] for i in w.circuits_tree.get_children()]
+            assert "Will change" in says[0] and "Terminal empty" in says[1]
+            noted = {r for p in w.planned for r in p.rows}     # twins share a note
+            assert all(bool(s) == (i in noted) for i, s in enumerate(says))
+            assert "D9999A" in tm.results_csv(w.planned), "the CSV keeps every row"
+            w.on_apply()
+            first = lambda: w.circuits_tree.item(w.circuits_tree.get_children()[0], "values")  # noqa: E731
+            _pump(w, lambda: "Applied" in first()[4])
+            assert first()[3] == "GOLD", "the page table shows the cell as written"
+        finally:
+            _release(w)
 
     def test_a_pane_name_is_recorded_as_a_shape_not_a_value(self):
         """R57 — a circuit — came through on a pane's name in a snapshot that

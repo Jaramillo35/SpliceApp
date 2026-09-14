@@ -9,10 +9,16 @@ upload an Excel file with three columns — ``CNUM``, ``Circuit Name``,
 This is the one thing in the kit that *changes* DEF Editor, so it is built as
 preview, then apply, then report:
 
-**Preview** matches every Excel row to the grid without touching it — CNUM
-against the ``Connector No`` column, Circuit Name against ``Circuit``, both
-exactly after trimming and case — and says per row what would happen:
-*change* (with the current value), *already* that value, *not found*,
+**Read circuits** extracts what the page shows — every row's ``Connector
+No``, ``Circuit`` and ``Term Matl`` — and nothing else. That is the universe
+the list is matched against: an Excel row whose circuit is not on this page
+is *not on this page*, counted and kept for the CSV, and left out of the
+preview, which shows only the circuits DEF Editor is showing.
+
+**Preview** matches every Excel row to those circuits without touching
+anything — CNUM against ``Connector No``, Circuit Name against ``Circuit``,
+both exactly after trimming and case — and says per row what would happen:
+*change* (with the current value), *already* that value, *not on this page*,
 *several rows* (all of them will be set, and the count is shown), *no value*
 (Terminal empty: left as it is), or *unknown value*.
 
@@ -53,7 +59,7 @@ FAILED = "failed"
 
 STATUS_LABEL = {
     CHANGE: "Will change", ALREADY: "Already that value",
-    NOT_FOUND: "Not in the grid", NO_VALUE: "Terminal empty — left as is",
+    NOT_FOUND: "Not on this page", NO_VALUE: "Terminal empty — left as is",
     UNKNOWN: "Unknown value — left as is", APPLIED: "Applied",
     FAILED: "Failed — read back different",
 }
@@ -148,42 +154,106 @@ def _column(grid: Grid, wanted: str) -> int:
         "Edit Harness → Circuits page?")
 
 
-def plan(backend: Backend, updates: Sequence[Update],
-         progress: Optional[Callable[[int, int], None]] = None) -> List[Planned]:
-    """Match every Excel row to the grid, touching nothing.
+def _key(cnum: str, circuit: str) -> tuple:
+    return cnum.strip().upper(), circuit.strip().upper()
 
-    Reads only the three columns it matches on: on DEF Editor's grid every
-    cell is a cross-process call, and 785 rows × 20 columns is a wait that
-    looks like a hang; 785 × 3 is a few seconds.
+
+@dataclass
+class Circuit:
+    """One row of the page, as the updater sees it."""
+
+    row: int                    # grid row index (0-based)
+    cnum: str
+    circuit: str
+    terminal: str               # the Term Matl cell as it reads now
+
+
+@dataclass
+class Circuits:
+    """What the Circuits page shows: the universe the list is matched in."""
+
+    grid: Grid
+    cnum_i: int
+    ckt_i: int
+    term_i: int
+
+    def __len__(self) -> int:
+        return len(self.grid.rows)
+
+    def rows(self) -> List[Circuit]:
+        return [Circuit(r, row[self.cnum_i], row[self.ckt_i], row[self.term_i])
+                for r, row in enumerate(self.grid.rows)
+                if max(self.cnum_i, self.ckt_i, self.term_i) < len(row)]
+
+    def index(self) -> dict:
+        """``(CNUM, circuit) → [row indexes]``."""
+        out: dict = {}
+        for c in self.rows():
+            out.setdefault(_key(c.cnum, c.circuit), []).append(c.row)
+        return out
+
+    def terminal(self, row: int) -> str:
+        return self.grid.rows[row][self.term_i].strip()
+
+    def set_terminal(self, row: int, value: str) -> None:
+        """Keep the extracted copy in step with a cell that was written."""
+        self.grid.rows[row][self.term_i] = value
+
+
+def read_circuits(backend: Backend,
+                  progress: Optional[Callable[[int, int], None]] = None) -> Circuits:
+    """Extract the circuits DEF Editor is showing, touching nothing.
+
+    Reads only the three columns the updater matches on: on DEF Editor's
+    grid every cell is a cross-process call, and 785 rows × 20 columns is a
+    wait that looks like a hang; 785 × 3 is a few seconds.
     """
     grid = backend.grid(ids.GRID_CIRCUITS,
                         columns=[ids.TERM_COLUMNS["cnum"], ids.TERM_COLUMNS["circuit"],
                                  ids.TERM_COLUMNS["terminal"]],
                         progress=progress)
-    cnum_i = _column(grid, ids.TERM_COLUMNS["cnum"])
-    ckt_i = _column(grid, ids.TERM_COLUMNS["circuit"])
-    term_i = _column(grid, ids.TERM_COLUMNS["terminal"])
+    return Circuits(grid, _column(grid, ids.TERM_COLUMNS["cnum"]),
+                    _column(grid, ids.TERM_COLUMNS["circuit"]),
+                    _column(grid, ids.TERM_COLUMNS["terminal"]))
 
-    def key(cnum: str, circuit: str) -> tuple:
-        return cnum.strip().upper(), circuit.strip().upper()
 
-    index: dict = {}
-    for r, row in enumerate(grid.rows):
-        if max(cnum_i, ckt_i, term_i) < len(row):
-            index.setdefault(key(row[cnum_i], row[ckt_i]), []).append(r)
+def _why_not(u: Update, circuits: Circuits) -> str:
+    """For a row that is not on the page: what the page has that is close."""
+    cnum, ckt = _key(u.cnum, u.circuit)
+    at = sorted({c.cnum for c in circuits.rows() if _key("", c.circuit)[1] == ckt})
+    if at:
+        return f"circuit {u.circuit} is on this page under {', '.join(at)}, not {u.cnum}"
+    if any(_key(c.cnum, "")[0] == cnum for c in circuits.rows()):
+        return f"{u.cnum} is on this page but has no circuit {u.circuit}"
+    return "neither this CNUM nor this circuit is on this page"
+
+
+def plan(backend: Backend, updates: Sequence[Update],
+         progress: Optional[Callable[[int, int], None]] = None,
+         circuits: Optional[Circuits] = None) -> List[Planned]:
+    """Match every Excel row to the circuits on the page, touching nothing.
+
+    ``circuits`` is what ``read_circuits`` extracted; when it is not given
+    the page is read here. Rows the page does not show come back as
+    *not on this page* with a hint at what the page has instead — they are
+    kept, for the CSV, and ``on_page`` leaves them out of the preview.
+    """
+    if circuits is None:
+        circuits = read_circuits(backend, progress)
+    grid, term_i = circuits.grid, circuits.term_i
+    index = circuits.index()
 
     out: List[Planned] = []
     for u in updates:
         target = normalise_terminal(u.terminal)
-        rows = index.get(key(u.cnum, u.circuit), [])
+        rows = index.get(_key(u.cnum, u.circuit), [])
         current = sorted({grid.rows[r][term_i].strip() for r in rows}) if rows else []
         shown = " / ".join(v or "(empty)" for v in current)
-        if target is None:
+        if not rows:
+            out.append(Planned(u, NOT_FOUND, target or "", "", [], _why_not(u, circuits)))
+        elif target is None:
             out.append(Planned(u, UNKNOWN, "", shown, rows,
                                f"{u.terminal!r} is not Silver, Gold or Tin"))
-        elif not rows:
-            out.append(Planned(u, NOT_FOUND, target, "", [],
-                               "no grid row has this CNUM and circuit"))
         elif target == "":
             out.append(Planned(u, NO_VALUE, "", shown, rows))
         elif all(v.upper() == target for v in current):
@@ -195,6 +265,11 @@ def plan(backend: Backend, updates: Sequence[Update],
     return out
 
 
+def on_page(planned: Sequence[Planned]) -> List[Planned]:
+    """The rows the page shows — what the preview lists."""
+    return [p for p in planned if p.status != NOT_FOUND]
+
+
 def summary(planned: Sequence[Planned]) -> dict:
     out = {s: 0 for s in STATUS_LABEL}
     for p in planned:
@@ -204,7 +279,8 @@ def summary(planned: Sequence[Planned]) -> dict:
 
 # ----------------------------------------------------------------- applying
 def apply(backend: Backend, planned: Sequence[Planned],
-          on_row: Optional[Callable[[Planned], None]] = None) -> List[Planned]:
+          on_row: Optional[Callable[[Planned], None]] = None,
+          circuits: Optional[Circuits] = None) -> List[Planned]:
     """Set every row the preview said *change*, reading each back.
 
     Rows the preview did not mark as a change are never touched — a preview
@@ -235,6 +311,10 @@ def apply(backend: Backend, planned: Sequence[Planned],
         else:
             p.status = APPLIED
             p.current = p.target
+        if circuits is not None:
+            for r, v in zip(p.rows, read_back):
+                if not v.startswith("?("):
+                    circuits.set_terminal(r, v)
         if on_row is not None:
             on_row(p)
     return list(planned)
