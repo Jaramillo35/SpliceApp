@@ -57,6 +57,21 @@ def tk_display():
         pass
 
 
+def hidden_workbench():
+    """The kit's window, built withdrawn.
+
+    ``Workbench`` is its own Tk root, so the ``tk_display`` fixture withdrawing
+    *its* root did nothing for it: on a machine with a display the window
+    popped up in the middle of the full suite. Withdrawn before the first
+    ``update()`` it is never mapped, and every widget still works.
+    """
+    import importlib
+    gui = importlib.import_module("defauto.gui")
+    w = gui.Workbench()
+    w.withdraw()
+    return w
+
+
 @pytest.fixture()
 def opened(session):
     """A session with a harness open — where most workflows begin."""
@@ -551,10 +566,8 @@ class TestTypedTextIsMatchedToWhatIsOffered:
         assert "M34" in out.grid.column("Circuit")
 
     def test_the_gui_has_free_text_fields_and_a_circuit_field(self, tk_display):
-        import importlib
         import tkinter as tk
-        gui = importlib.import_module("defauto.gui")
-        w = gui.Workbench()
+        w = hidden_workbench()
         try:
             assert isinstance(w.field_program, tk.ttk.Entry)
             assert isinstance(w.field_circuit, tk.ttk.Entry)
@@ -660,9 +673,7 @@ class TestTheStructureRecorder:
             assert auto_id in ids.CONTROL_TYPES, auto_id
 
     def test_the_gui_records_in_demo_mode(self, tmp_path, tk_display):
-        import importlib
-        gui = importlib.import_module("defauto.gui")
-        w = gui.Workbench()
+        w = hidden_workbench()
         try:
             w.out_dir = tmp_path / "exports"
             w.on_demo_direct()
