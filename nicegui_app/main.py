@@ -31,7 +31,7 @@ configure(log_dir=DATA_DIR / "logs")
 # importing each module registers its route
 from nicegui_app.pages import (  # noqa: F401,E402
     admin, ask, circuit_applicability, circuit_health, docs, downloads,
-    dtx_compare, harness_complexity, home, hrn_chart, secr, splice_gen,
+    dtx_compare, harness_complexity, home, hrn_chart, inline_comments, secr, splice_gen,
     transcripts, vbom,
 )
 

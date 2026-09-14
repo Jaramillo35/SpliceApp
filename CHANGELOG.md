@@ -112,6 +112,12 @@ after an update.
   on the demo data.
 
 ### Added
+- **Inline Comment Carryover.** Drop last release's inline report (with your
+  comments) and this release's. Comments on rows that are identical are copied
+  automatically; where only the sales codes changed the old comment is
+  suggested; where anything else changed you decide. The report is not written
+  until every such row has a decision, comments with no matching row are listed
+  rather than dropped, and the new report comes back in exactly its own format.
 - **Splices now follow the harness's own options.** A circuit does not have
   one topology: M34 in Door_Driver_2 reaches an LCF device, a LEQ/LEM device
   and an inline, so the part number carrying LCF needs a splice while the one

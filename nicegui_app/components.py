@@ -78,6 +78,9 @@ PAGES: tuple[Page, ...] = (
     Page("Harness Complexity", "table_view", "/harness-complexity", "Workbenches",
          "Individual harness-complexity .xlsm files from the master workbook — "
          "reviewed matrix, combined-expression decisions, macros preserved."),
+    Page("Inline Comment Carryover", "content_copy", "/inline-comments", "Workbenches",
+         "Comments from a past inline report copied into the new one — "
+         "identical rows automatically, changed rows through a review gate."),
     Page("VBOM Risk Matrix", "grid_on", "/vbom", "Workbenches",
          "DoAll / BuildSpec + complexity files into the VBOM workbook bundle, "
          "with a review gate before the DEFE."),
