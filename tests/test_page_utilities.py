@@ -26,6 +26,8 @@ async def test_downloads_lists_every_kit(user: User):
     await user.open("/downloads")
     for _filename, title, _desc in downloads.ITEMS:
         await user.should_see(title)
+    for _kit, _filename, title, _desc in downloads.BUILT:
+        await user.should_see(title)
 
 
 async def test_transcripts_names_the_recorder_and_says_it_is_per_machine(user: User):

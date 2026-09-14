@@ -16,14 +16,18 @@ DOWNLOADS = Path(__file__).resolve().parents[2] / "assets" / "downloads"
 #: tests run against — see ``splice.common.kits``.
 BUILT = [
     ("def_editor_automation", "def-editor-automation.zip",
-     "DEF Editor automation prototype (Windows .exe)",
-     "Automates DEF EDITOR through Windows UI Automation: walks program → "
-     "model year → phase → composite → harness, reads any module's grid, runs "
-     "the quality checks, exports CSV. Ships as source with a PyInstaller "
-     "spec — unzip on a Windows PC, pip install -r requirements.txt, "
-     "pyinstaller def_editor_automation.spec. Includes a Demo mode and a "
-     "--selftest that run the whole workflow with no DEF Editor, so the kit "
-     "can be tried anywhere before it is built."),
+     "DEF Editor Terminal Material updater (Windows .exe)",
+     "Updates the Terminal Material of circuits in DEF Editor from an Excel "
+     "list. You open Edit Harness → Circuits yourself, pick the window, and "
+     "upload a workbook with CNUM, Circuit Name and Terminal (Silver, Gold, "
+     "Tin, or empty). The kit previews every row's match against the grid by "
+     "Connector No and Circuit, then applies only the rows marked \"Will "
+     "change\", reading each one back and reporting it — nothing is guessed, "
+     "and a value it does not recognise is left alone. Ships as source with a "
+     "PyInstaller spec: unzip on a Windows PC, pip install -r "
+     "requirements.txt, pyinstaller def_editor_automation.spec. Demo mode and "
+     "--selftest run the whole flow with no DEF Editor, so it can be tried "
+     "anywhere first."),
 ]
 
 ITEMS = [
