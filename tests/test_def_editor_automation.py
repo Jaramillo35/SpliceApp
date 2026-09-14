@@ -948,3 +948,29 @@ class TestTheFirstRealSnapshot:
         assert ids.PANE_TERM_MATL == "uc_Harness_Edit_Circuits_SelectTermMatl"
         assert ids.LIST_TERM_MATL == "ListBox_Ends"
         assert ids.CLOSE_TERM_MATL == "PictureBox_Close"
+
+
+    def test_a_pane_name_is_recorded_as_a_shape_not_a_value(self):
+        """R57 — a circuit — came through on a pane's name in a snapshot that
+        was supposed to be redacted. Panes carry data in DEF Editor."""
+        import json
+        from dataclasses import asdict
+        from defauto import observe
+
+        class E(observe.Element):
+            def __init__(self, ct, aid="", name="", kids=()):
+                self.control_type, self.automation_id, self.name = ct, aid, name
+                self.class_name, self._kids = "", list(kids)
+                self.rect, self.enabled, self.visible = [0, 0, 1, 1], True, True
+
+            def children(self):
+                return list(self._kids)
+
+        tree = E("Window", "FormMasterForm", "DEF EDITOR - Master Form", kids=[
+            E("Pane", "PictureBox_Close", "R57"),
+            E("Pane", "Panel_Bottom", "2031ZR V1_A (Composite ID 12345)"),
+            E("Button", "SimpleButtonFilter", "Filter")])
+        text = json.dumps(asdict(observe.walk(tree)))
+        assert "R57" not in text and "Composite ID" not in text
+        assert '"name_shape": "3 upper/digit"' in text
+        assert "Filter" in text and "DEF EDITOR - Master Form" in text

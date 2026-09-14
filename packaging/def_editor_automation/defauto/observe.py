@@ -32,16 +32,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional
 
-#: control types whose Name is interface, not data
+#: control types whose Name is interface, not data.
+#:
+#: Pane is deliberately NOT here. It was, and DEF Editor puts data in pane
+#: names: a circuit on a picture-box close button, the composite string on
+#: Panel_Bottom, the harness with its PID and CID on the back button, an
+#: identifier on the logo panes. A pane's name is recorded as a shape.
 NAMED_TYPES = {
-    "Window", "Pane", "Button", "MenuBar", "Menu", "MenuItem", "TabItem", "Tab",
+    "Window", "Button", "MenuBar", "Menu", "MenuItem", "TabItem", "Tab",
     "Header", "HeaderItem", "CheckBox", "RadioButton", "ToolBar", "StatusBar",
     "TitleBar", "Group", "Hyperlink", "SplitButton", "Separator", "ScrollBar",
     "Thumb", "Spinner", "ToolTip",
 }
 #: control types whose Name is data (or might be): shape only
 DATA_TYPES = {"DataItem", "DataGrid", "Edit", "Document", "Text", "ListItem",
-              "List", "ComboBox", "Custom", "Image", "TreeItem", "Table"}
+              "List", "ComboBox", "Custom", "Image", "TreeItem", "Table", "Pane"}
 
 #: WinForms nests deep — the circuits grid sits 15 panes below the main
 #: window, and a depth-14 cap cut the first real snapshot off exactly there.
