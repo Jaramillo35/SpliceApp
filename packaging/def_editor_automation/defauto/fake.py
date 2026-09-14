@@ -87,7 +87,16 @@ def _harness(zone: str, rng: random.Random) -> _Harness:
         harness.circuits.append(
             [name, f"{zone} - FEED {name}", str(ends),
              rng.choice(["", "", rng.choice(SALES_CODES)]),
-             "0.35", "TXL"])
+             "0.35", "TXL",
+             # where the circuit lands, and what plating it has today
+             rng.choice(harness.devices)[0],
+             rng.choice(["", "TIN", "TIN", "SILVER", "GOLD", "SILVER+NICKEL"])])
+    # one circuit lands twice at the same connector (two cavities), so an
+    # update naming that CNUM and circuit is two rows — the case the updater
+    # must set as a whole and say so
+    twin = list(harness.circuits[1])
+    twin[7] = "TIN" if twin[7] != "TIN" else "SILVER"
+    harness.circuits.append(twin)
     for i in range(1, rng.randint(2, 5)):
         harness.splices.append(
             [f"S{zone[:2]}{i:02d}", rng.choice(harness.circuits)[0],
@@ -257,7 +266,8 @@ class FakeBackend:
             ids.GRID_DEVICES: Grid(["CNUM", "Device", "Cavities", "Connector PN"],
                                    list(h.devices)),
             ids.GRID_CIRCUITS: Grid(
-                ["Circuit", "Function", "Ends", "Sales Code", "Gauge", "Type"],
+                ["Circuit", "Function", "Ends", "Sales Code", "Gauge", "Type",
+                 "Connector No", "Term Matl"],
                 list(h.circuits)),
             ids.GRID_SPLICES: Grid(["Splice", "Circuit", "Cavities", "Process"],
                                    list(h.splices)),
@@ -390,7 +400,11 @@ class FakeBackend:
             raise ControlNotFound(automation_id, scope)
         self._note(f"select {automation_id} = {value!r}")
 
-    def grid(self, automation_id: str, scope: str = "") -> Grid:
+    def _visible(self, automation_id: str, scope: str = ""):
+        """``(headers, the REAL row objects)`` the grid currently shows —
+        filtered as the user filtered it, identity kept, so a write through
+        ``set_cell`` lands on the row the engineer clicked and not on the
+        first row that happens to look like it."""
         grids = self._grids()
         if automation_id not in grids:
             raise ControlNotFound(automation_id, scope)
@@ -418,7 +432,29 @@ class FakeBackend:
                 rows = [r for r in rows if not r[3]]
             if self.checks.get(ids.CHECK_CKT_SINGLE_END):
                 rows = [r for r in rows if r[2] == "1"]
-        return Grid(list(found.headers), [list(r) for r in rows])
+        return list(found.headers), rows
+
+    def grid(self, automation_id: str, scope: str = "") -> Grid:
+        headers, rows = self._visible(automation_id, scope)
+        return Grid(headers, [list(r) for r in rows])
+
+    def set_cell(self, automation_id: str, row: int, column: str, value: str,
+                 scope: str = "") -> None:
+        """The one writing verb: only the circuits grid's Term Matl, only a
+        value DEF Editor's list offers, only a row that exists."""
+        if automation_id != ids.GRID_CIRCUITS:
+            raise ControlNotFound(automation_id, "editable grid")
+        if column.strip().lower().replace(" ", "") != "termmatl":
+            raise ControlNotFound(f"{automation_id}[{column}]", "editable column")
+        if value.strip().upper() not in ids.TERM_MATL_OPTIONS:
+            raise ControlNotFound(f"{value!r}", f"list: {list(ids.TERM_MATL_OPTIONS)}")
+        # the same rows, in the same order, that grid() showed — by identity,
+        # so two identical rows are two rows
+        _headers, shown = self._visible(automation_id)
+        if row >= len(shown):
+            raise ControlNotFound(f"row {row + 1}", f"{len(shown)} rows")
+        shown[row][7] = value.strip().upper()
+        self._note(f"set Term Matl row {row + 1} = {value!r}")
 
     def menu(self, *path: str) -> None:
         if path and path[0] not in ids.MENUS:

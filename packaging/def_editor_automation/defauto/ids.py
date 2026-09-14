@@ -214,3 +214,14 @@ CONTROL_TYPES = {
     **{f: "Edit" for f in FILTERS},
     **{c: "CheckBox" for c in CHECKBOXES},
 }
+
+
+# ------------------------------------------------------ terminal material
+#: the list DEF Editor offers in a Term Matl cell, as its items are named
+TERM_MATL_OPTIONS = ("BERYLLIUM", "GOLD", "SILVER", "SILVER+NICKEL",
+                     "SILVER+TIN", "TIN")
+
+#: the circuits grid's column headers the updater matches on. Headers, not
+#: positions: the grid's column order is the user's to rearrange.
+TERM_COLUMNS = {"cnum": "Connector No", "circuit": "Circuit",
+                "terminal": "Term Matl"}

@@ -147,6 +147,15 @@ class Backend(Protocol):
 
     def grid(self, automation_id: str, scope: str = "") -> Grid: ...
 
+    def set_cell(self, automation_id: str, row: int, column: str, value: str,
+                 scope: str = "") -> None:
+        """Open a grid cell's list editor and pick ``value``.
+
+        ``row`` is 0-based in the grid as ``grid()`` returned it; ``column`` is
+        a header. The only verb in the kit that writes into DEF Editor.
+        """
+        ...
+
     def menu(self, *path: str) -> None: ...
 
     def invoke(self, name: str, scope: str = "") -> None:
@@ -339,6 +348,67 @@ class UiaBackend:
                 if hasattr(item, "descendants") else [str(item.window_text())]
             rows.append(texts)
         return Grid(headers=headers, rows=rows)
+
+    def set_cell(self, automation_id: str, row: int, column: str, value: str,
+                 scope: str = "") -> None:
+        """Click the cell, take the list editor that opens, pick the value.
+
+        Written against the description of DEF Editor's grids, not a recorded
+        tree: a WinForms DataGridView exposes rows as DataItems and cells as
+        their children, and a combo-box column opens a ComboBox editor on
+        click whose items are ListItems. Each step is checked and named, so
+        a wrong assumption reports which one.
+        """
+        control = self._find(automation_id, scope)
+        headers = [str(h) for h in control.column_headers()] \
+            if hasattr(control, "column_headers") else []
+        wanted = column.strip().lower().replace(" ", "")
+        try:
+            col = next(i for i, h in enumerate(headers)
+                       if h.strip().lower().replace(" ", "") == wanted)
+        except StopIteration:
+            raise AutomationError(f"grid {automation_id!r} has no column "
+                                  f"{column!r}; headers: {headers}") from None
+        items = control.items()
+        if row >= len(items):
+            raise AutomationError(f"grid {automation_id!r} has {len(items)} rows, "
+                                  f"row {row + 1} asked for")
+        cells = items[row].children()
+        if col >= len(cells):
+            raise AutomationError(f"row {row + 1} has {len(cells)} cells, column "
+                                  f"{col + 1} asked for")
+        cell = cells[col]
+        cell.click_input()
+        cell.click_input()                       # second click opens the editor
+        editor = None
+        for finder in (lambda: cell.descendants(control_type="ComboBox"),
+                       lambda: items[row].descendants(control_type="ComboBox"),
+                       lambda: control.descendants(control_type="ComboBox")):
+            try:
+                found = finder()
+            except Exception:  # noqa: BLE001
+                found = []
+            if found:
+                editor = found[0]
+                break
+        if editor is None:
+            raise AutomationError(f"no list editor opened on {column!r} of row "
+                                  f"{row + 1} — the cell may not be editable")
+        try:
+            editor.expand()
+        except Exception:  # noqa: BLE001 - some editors are already open
+            pass
+        options = [i for i in editor.descendants(control_type="ListItem")]
+        names = [o.window_text() for o in options]
+        pick = next((o for o, n in zip(options, names)
+                     if n.strip().upper() == value.strip().upper()), None)
+        if pick is None:
+            raise AutomationError(f"{value!r} is not in the list: {names}")
+        pick.click_input()
+        try:
+            editor.type_keys("{ENTER}", set_foreground=False)
+        except Exception:  # noqa: BLE001 - the click may already have committed
+            pass
 
     def menu(self, *path: str) -> None:
         self._root().menu_select("->".join(path))

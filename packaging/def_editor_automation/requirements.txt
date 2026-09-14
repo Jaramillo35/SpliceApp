@@ -9,3 +9,5 @@ comtypes
 pyinstaller
 # shows the executable name beside each window in the picker (optional)
 psutil
+# reads the CNUM / Circuit Name / Terminal update list
+openpyxl

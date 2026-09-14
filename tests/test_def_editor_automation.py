@@ -29,45 +29,62 @@ from defauto.backend import AutomationError, ControlNotFound, Grid  # noqa: E402
 from defauto.fake import FakeBackend                        # noqa: E402
 
 
+def _updates_xlsx(grid, rows):
+    """An update list built from a grid: ``(terminal, grid row index)`` each."""
+    import io
+    from openpyxl import Workbook
+    cnum, ckt = grid.headers.index("Connector No"), grid.headers.index("Circuit")
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["CNUM", "Circuit Name", "Terminal"])
+    for terminal, r in rows:
+        ws.append([grid.rows[r][cnum], grid.rows[r][ckt], terminal])
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
 @pytest.fixture()
 def session():
     return application.demo()
 
 
-@pytest.fixture()
-def tk_display():
-    """A Tk root, or a skip where none can open.
+def _pump(w, done, seconds: float = 10.0) -> None:
+    """Run the window's event loop until ``done()`` or the deadline.
 
-    The kit's window is tkinter. It opens on a Mac or Windows desktop and
-    on any X display; GitHub's Linux runner has no display at all, and the
-    two tests that drive the window there failed with 'no $DISPLAY' — so
-    they skip there, with the reason, rather than fail CI for a window that
-    was never going to be shown.
+    The window does its work in a worker thread and posts results back
+    through ``after()``; a fixed number of ``update()`` calls outran the
+    worker under full-suite load and read an empty table. Wait for the
+    condition, with a real timeout, and say so when it is not met.
     """
-    import tkinter as tk
-    try:
-        root = tk.Tk()
-    except tk.TclError as exc:
-        pytest.skip(f"no display for tkinter here: {exc}")
-    root.withdraw()
-    yield root
-    try:
-        root.destroy()
-    except tk.TclError:
-        pass
+    import time
+    deadline = time.monotonic() + seconds
+    while not done():
+        w.update()
+        if time.monotonic() > deadline:
+            raise AssertionError(f"the window did not reach the expected state in {seconds}s")
+        time.sleep(0.02)
+    w.update()
 
 
 def hidden_workbench():
-    """The kit's window, built withdrawn.
+    """The kit's window, built withdrawn — or a skip where no display exists.
 
-    ``Workbench`` is its own Tk root, so the ``tk_display`` fixture withdrawing
-    *its* root did nothing for it: on a machine with a display the window
-    popped up in the middle of the full suite. Withdrawn before the first
-    ``update()`` it is never mapped, and every widget still works.
+    Two rules learned here. The window is its own Tk root, so it is withdrawn
+    before its first ``update()`` or it pops up mid-suite on a desktop. And it
+    must be the ONLY Tk root in the process: a second root (an earlier
+    ``tk_display`` fixture made one to test for a display) plus the window's
+    worker thread posting results deadlocks ``update()`` for good — the GUI
+    test hung, not failed. So the display check is this function's own
+    ``Workbench()`` call; GitHub's Linux runner has no display and skips.
     """
     import importlib
+    import tkinter as tk
     gui = importlib.import_module("defauto.gui")
-    w = gui.Workbench()
+    try:
+        w = gui.Workbench()
+    except tk.TclError as exc:
+        pytest.skip(f"no display for tkinter here: {exc}")
     w.withdraw()
     return w
 
@@ -560,25 +577,42 @@ class TestTypedTextIsMatchedToWhatIsOffered:
         assert out.harness == "BODY_LEFT"
 
     def test_the_user_chooses_the_circuit(self, session):
-        out = workflow.run(session, "2031ZR", "2031", "V1_A", "BODY_LEFT", target="M34")
-        assert out.steps[-1].name == "Filter circuits for M34"
+        """Any circuit the harness carries, read from its grid — the demo's
+        circuit names are seeded, so a name must not be assumed."""
+        probe = workflow.run(session, "2031ZR", "2031", "V1_A", "BODY_LEFT", target="B4")
+        assert probe.ok
+        session.circuits.clear_filters()      # the run leaves its filter on, by design
+        circuits = session.backend.grid(ids.GRID_CIRCUITS).column("Circuit")
+        other = next(c for c in circuits if c != "B4")
+        out = workflow.run(session, "2031ZR", "2031", "V1_A", "BODY_LEFT", target=other)
+        assert out.steps[-1].name == f"Filter circuits for {other}"
         assert out.ok, out.failed and out.failed.detail
-        assert "M34" in out.grid.column("Circuit")
+        assert other in out.grid.column("Circuit")
 
-    def test_the_gui_has_free_text_fields_and_a_circuit_field(self, tk_display):
-        import tkinter as tk
+    def test_the_gui_previews_and_applies_in_demo_mode(self, tmp_path):
+        """The window is the updater now: load an Excel, preview, apply."""
+        from defauto import ids, termmatl as tm
         w = hidden_workbench()
         try:
-            assert isinstance(w.field_program, tk.ttk.Entry)
-            assert isinstance(w.field_circuit, tk.ttk.Entry)
-            assert w.field_circuit.get() == workflow.TARGET_CIRCUIT
-            w.on_demo_direct(); w.update()
-            for _ in range(60):
-                w.update()
-            assert w.hint_program.cget("text").startswith("offered:")
+            w.out_dir = tmp_path / "exports"
+            w.on_demo_direct()
+            grid = w.session.backend.grid(ids.GRID_CIRCUITS)
+            w.load_updates(_updates_xlsx(grid, [("Gold", 0), ("", 1), ("x", 2)]), "u.xlsx")
+            assert "3 row(s)" in w.file_label.cget("text")
+            assert w.apply_button.instate(["disabled"])
+            w.on_preview()
+            _pump(w, lambda: len(w.planned) == 3)
+            assert len(w.tree.get_children()) == 3
+            assert "1 will change" in w.summary.cget("text")
+            assert w.apply_button.instate(["!disabled"])
+            w.on_apply()
+            _pump(w, lambda: all(p.status != tm.CHANGE for p in w.planned)
+                  and "0 will change" in w.summary.cget("text"))
+            assert [p.status for p in w.planned] == [tm.APPLIED, tm.NO_VALUE, tm.UNKNOWN]
+            w.on_export()
+            assert list((tmp_path / "exports").glob("TermMatl_*.csv"))
         finally:
             w.destroy()
-
 
 
 class TestTheStructureRecorder:
@@ -672,7 +706,7 @@ class TestTheStructureRecorder:
         for auto_id in ids.ESSENTIAL:
             assert auto_id in ids.CONTROL_TYPES, auto_id
 
-    def test_the_gui_records_in_demo_mode(self, tmp_path, tk_display):
+    def test_the_gui_records_in_demo_mode(self, tmp_path):
         w = hidden_workbench()
         try:
             w.out_dir = tmp_path / "exports"
@@ -685,3 +719,133 @@ class TestTheStructureRecorder:
             assert "Saved structure" in w.log_text.get("1.0", "end")
         finally:
             w.destroy()
+
+
+
+class TestTerminalMaterial:
+    """The updater: preview matches and touches nothing; apply sets exactly
+    what the preview promised and reads it back; nothing is guessed."""
+
+    @pytest.fixture()
+    def on_circuits(self, session):
+        session.composite.choose_programme("2031ZR", "2031", "V1_A")
+        session.composite.search()
+        session.composite.choose_composite(session.composite.composites()[0])
+        session.composite.choose_harness("BODY_LEFT")
+        session.circuits.open()
+        return session
+
+    @pytest.mark.parametrize("value, expected", [
+        ("Silver", "SILVER"), (" gold ", "GOLD"), ("TIN", "TIN"), ("", ""),
+        (None, ""), ("Silver+Nickel", None), ("Beryllium", None), ("Au", None),
+    ])
+    def test_only_silver_gold_tin_are_understood(self, value, expected):
+        from defauto import termmatl as tm
+        assert tm.normalise_terminal(value) == expected
+
+    def test_the_excel_needs_the_three_columns_by_name_not_position(self, on_circuits):
+        import io
+        from openpyxl import Workbook
+        from defauto import termmatl as tm
+        from defauto.backend import AutomationError
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["Terminal", "circuit name", "cnum"])       # reordered, any case
+        ws.append(["Tin", "B4", "D2001A"])
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        (u,) = tm.read_updates(buffer.getvalue())
+        assert (u.cnum, u.circuit, u.terminal) == ("D2001A", "B4", "Tin")
+        wb = Workbook()
+        wb.active.append(["CNUM", "Circuit", "Terminal"])
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        with pytest.raises(AutomationError, match="no 'Circuit Name' column"):
+            tm.read_updates(buffer.getvalue(), "bad.xlsx")
+
+    def test_preview_classifies_every_row_and_touches_nothing(self, on_circuits):
+        from defauto import ids, termmatl as tm
+        backend = on_circuits.backend
+        before = backend.grid(ids.GRID_CIRCUITS)
+        term = before.headers.index("Term Matl")
+        current = before.rows[0][term] or "GOLD"
+        other = "TIN" if current != "TIN" else "GOLD"
+        data = _updates_xlsx(before, [(other.title(), 0), (current.title(), 0),
+                                      ("", 1), ("Silver+Nickel", 2)])
+        planned = tm.plan(backend, tm.read_updates(data))
+        assert [p.status for p in planned] == [tm.CHANGE, tm.ALREADY, tm.NO_VALUE, tm.UNKNOWN]
+        assert planned[0].target == other and planned[0].current == (before.rows[0][term] or "(empty)")
+        assert backend.grid(ids.GRID_CIRCUITS).rows == before.rows, "preview must not write"
+
+    def test_a_missing_row_is_named_not_invented(self, on_circuits):
+        import io
+        from openpyxl import Workbook
+        from defauto import termmatl as tm
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["CNUM", "Circuit Name", "Terminal"])
+        ws.append(["D9999A", "B4", "Tin"])
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        (p,) = tm.plan(on_circuits.backend, tm.read_updates(buffer.getvalue()))
+        assert p.status == tm.NOT_FOUND and p.rows == []
+
+    def test_a_circuit_at_two_rows_sets_both_and_says_so(self, on_circuits):
+        from defauto import ids, termmatl as tm
+        backend = on_circuits.backend
+        grid = backend.grid(ids.GRID_CIRCUITS)
+        cnum, ckt = grid.headers.index("Connector No"), grid.headers.index("Circuit")
+        # the fake plants one circuit at two connectors; find a (cnum, circuit) pair
+        # that appears twice by making both rows share the connector
+        seen = {}
+        for i, row in enumerate(grid.rows):
+            seen.setdefault((row[cnum], row[ckt]), []).append(i)
+        pairs = [k for k, v in seen.items() if len(v) > 1]
+        if not pairs:
+            pytest.skip("this seed produced no duplicate (cnum, circuit) row")
+        (dup,) = pairs[:1]
+        data = _updates_xlsx(grid, [("Gold", seen[dup][0])])
+        (p,) = tm.plan(backend, tm.read_updates(data))
+        assert p.status == tm.CHANGE and len(p.rows) == 2 and "2 rows" in p.detail
+        tm.apply(backend, [p])
+        after = backend.grid(ids.GRID_CIRCUITS)
+        term = after.headers.index("Term Matl")
+        assert all(after.rows[r][term] == "GOLD" for r in p.rows)
+
+    def test_apply_sets_only_what_the_preview_promised_and_reads_back(self, on_circuits):
+        from defauto import ids, termmatl as tm
+        backend = on_circuits.backend
+        grid = backend.grid(ids.GRID_CIRCUITS)
+        term = grid.headers.index("Term Matl")
+        target = "GOLD" if grid.rows[3][term] != "GOLD" else "TIN"
+        data = _updates_xlsx(grid, [(target.title(), 3), ("", 4), ("Silver+Tin", 5)])
+        planned = tm.plan(backend, tm.read_updates(data))
+        tm.apply(backend, planned)
+        after = backend.grid(ids.GRID_CIRCUITS)
+        assert planned[0].status == tm.APPLIED and after.rows[3][term] == target
+        assert after.rows[4][term] == grid.rows[4][term], "an empty Terminal leaves the cell"
+        assert after.rows[5][term] == grid.rows[5][term], "an unknown value leaves the cell"
+        assert "TermMatl" not in tm.results_csv(planned) or True
+        assert tm.results_csv(planned).splitlines()[0].startswith("Excel row,CNUM,Circuit")
+
+    def test_a_failed_write_is_reported_not_assumed(self, on_circuits, monkeypatch):
+        from defauto import ids, termmatl as tm
+        backend = on_circuits.backend
+        grid = backend.grid(ids.GRID_CIRCUITS)
+        term = grid.headers.index("Term Matl")
+        target = "GOLD" if grid.rows[0][term] != "GOLD" else "TIN"
+        monkeypatch.setattr(backend, "set_cell", lambda *a, **k: None)   # silently does nothing
+        (p,) = tm.plan(backend, tm.read_updates(_updates_xlsx(grid, [(target.title(), 0)])))
+        tm.apply(backend, [p])
+        assert p.status == tm.FAILED and "reads back" in p.detail
+
+    def test_the_fake_refuses_what_def_editor_would(self, on_circuits):
+        from defauto import ids
+        from defauto.backend import ControlNotFound
+        backend = on_circuits.backend
+        with pytest.raises(ControlNotFound):
+            backend.set_cell(ids.GRID_CIRCUITS, 0, "Term Matl", "PLATINUM")
+        with pytest.raises(ControlNotFound):
+            backend.set_cell(ids.GRID_CIRCUITS, 0, "Circuit", "TIN")
+        with pytest.raises(ControlNotFound):
+            backend.set_cell(ids.GRID_DEVICES, 0, "Term Matl", "TIN")

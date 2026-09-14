@@ -1,23 +1,29 @@
-DEF Editor Automation - navigation test
-=======================================
+DEF Editor Automation - Terminal Material updater
+=================================================
 
 What it is
 ----------
-A prototype that answers one question: can DEF EDITOR be driven through
-Windows UI Automation?
+Sets the Term Matl of circuits in DEF EDITOR from an Excel list.
 
-You give it a vehicle, model year, phase and harness - typed freely, matched
-to what DEF Editor offers - and a circuit, and it does one sequence:
+You navigate DEF Editor by hand to Edit Harness > Circuits. Then, in this
+window: Connect (pick the DEF Editor window), Choose Excel, Preview, Apply.
 
-   open that harness  ->  open its Circuits page  ->  filter for the circuit
+The Excel has three columns in its first row - CNUM, Circuit Name, Terminal.
+Terminal is Silver, Gold or Tin (any case) or empty. Each row is matched to
+the circuits grid: CNUM to "Connector No", Circuit Name to "Circuit". The
+matching row's Term Matl cell is opened and the value picked from DEF
+Editor's own list (BERYLLIUM, GOLD, SILVER, SILVER+NICKEL, SILVER+TIN, TIN).
 
-Ten steps, each reported PASS or FAIL with a sentence saying what happened,
-stopping at the first failure. That is the whole app. It is a test harness,
-not a tool.
+Preview first, always. Every row is shown with what would happen and nothing
+is touched: Will change (with the current value) / Already that value /
+Not in the grid / Terminal empty - left as is / Unknown value - left as is.
+Apply sets exactly the rows marked "Will change", one at a time, reads each
+cell back, and reports Applied or Failed per row. "Export results CSV" keeps
+the record. Nothing is guessed: any Terminal other than Silver, Gold or Tin
+is reported and left alone.
 
-You are not asked for the composite. DEF Editor needs one to reach a harness,
-so the run searches the composites the filter returned and tells you which one
-it found the harness in.
+The navigation test from the earlier build is still in the kit
+(python main.py --selftest runs it, and the updater, against the demo).
 
 No customer, user, machine or business data is present anywhere in this kit.
 The programme the demo serves is invented.
@@ -54,22 +60,26 @@ Build the exe (one time, on a Windows 10/11 PC with Python 3.11+)
 
 Use
 ---
-1. Start DEF Editor and sign in as usual.
+1. Start DEF Editor, sign in, and open the harness: Edit Harness > Circuits,
+   so the circuits grid with the Term Matl column is on screen.
 2. Run the exe, press "Connect to DEF Editor". A picker lists EVERY window on
    the desktop; the ones that look like DEF Editor are first and marked.
-   Double-click the right one (or select it and press "Attach to selected").
-   The kit never guesses the window title - if the marked one is wrong, pick
-   another; "Refresh" re-reads the desktop.
-3. Type the vehicle, model year, phase and harness - anything. Under each
-   field the kit shows what DEF Editor offers; what you typed is matched to
-   it exactly, then ignoring case, then as a unique start or part of a name
-   ("2031" reaches "2031ZR", "body" reaches "BODY_LEFT" when it is the only
-   one). An ambiguous entry is refused and the candidates named. The circuit
-   to filter is a field too (B4 by default).
-4. Press "Run test". Watch the ten steps; each says what it matched.
+   Double-click the right one. The kit never guesses the window title.
+3. "Choose Excel..." - the update list. The label says how many rows it read,
+   or what is wrong with the file (a missing column is named).
+4. "Preview". The table fills, one line per Excel row, coloured by what will
+   happen. Read it. Rows marked "Not in the grid" or "Unknown value" are
+   yours to fix in the Excel; nothing will be done to them.
+5. "Apply N change(s)". Rows turn Applied (green) or Failed (red) one by one;
+   a Failed row says what the cell read back. "Export results CSV" saves the
+   table next to the exe.
 
-If it fails, the step that failed says why. Step 1 is the important one: it
-lists any AutomationId this kit expects and the window does not have.
+If Preview reports that the grid has no "Connector No" / "Circuit" / "Term
+Matl" column, DEF Editor is not on the Circuits page, or the columns are
+named differently in your release - the names live in defauto\ids.py
+(TERM_COLUMNS). If Apply fails on every row, the cell editor is not what the
+kit assumed: take a RECORD STRUCTURE snapshot with the grid on screen and
+send the structure folder.
 
 
 Recording the structure (do this first when something fails)

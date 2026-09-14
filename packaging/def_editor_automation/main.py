@@ -1,8 +1,9 @@
 """DEF Editor Automation — entry point.
 
-    python main.py                 open the test window
+    python main.py                 open the Terminal Material updater
     python main.py --demo          open it already attached to the demo
-    python main.py --selftest      run the test headlessly against the demo
+    python main.py --selftest      run the navigation test AND the updater
+                                   headlessly against the demo
 
 The test is one sequence: take a program, model year, phase and harness, open
 that harness in DEF Editor, open its Circuits page, and filter for one
@@ -45,6 +46,46 @@ def selftest(program: str = "2031ZR", year: str = "2031", phase: str = "V1_A",
     return 0
 
 
+def termmatl_selftest() -> int:
+    """The updater against the demo: plan, apply, read back."""
+    import io
+
+    from openpyxl import Workbook
+
+    from defauto import ids, termmatl as tm
+
+    session = application.demo()
+    session.composite.choose_programme("2031ZR", "2031", "V1_A")
+    session.composite.search()
+    session.composite.choose_composite(session.composite.composites()[0])
+    session.composite.choose_harness(session.composite.harnesses()[0])
+    session.circuits.open()
+    grid = session.backend.grid(ids.GRID_CIRCUITS)
+    cnum, ckt = grid.headers.index("Connector No"), grid.headers.index("Circuit")
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["CNUM", "Circuit Name", "Terminal"])
+    ws.append([grid.rows[0][cnum], grid.rows[0][ckt], "Gold"])
+    ws.append([grid.rows[1][cnum], grid.rows[1][ckt], ""])
+    ws.append([grid.rows[2][cnum], grid.rows[2][ckt], "Silver+Nickel"])
+    ws.append(["NOPE", "ZZ", "Tin"])
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    print("\ntermmatl selftest — scripted DEF Editor")
+    planned = tm.plan(session.backend, tm.read_updates(buffer.getvalue(), "demo.xlsx"))
+    for p in planned:
+        print(f"  {tm.STATUS_LABEL[p.status]:28s} {p.update.cnum} {p.update.circuit} "
+              f"{p.update.terminal!r} current={p.current!r} {p.detail}")
+    tm.apply(session.backend, planned)
+    got = [p.status for p in planned]
+    want = [tm.APPLIED, tm.NO_VALUE, tm.UNKNOWN, tm.NOT_FOUND]
+    if got != want:
+        print(f"termmatl selftest FAILED: {got} != {want}")
+        return 1
+    print("termmatl selftest passed.")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--demo", action="store_true",
@@ -60,8 +101,9 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     if args.selftest:
-        return selftest(args.program, args.year, args.phase, args.harness,
-                        args.circuit, args.seed)
+        rc = selftest(args.program, args.year, args.phase, args.harness,
+                      args.circuit, args.seed)
+        return rc or termmatl_selftest()
 
     from defauto.gui import Workbench
 
