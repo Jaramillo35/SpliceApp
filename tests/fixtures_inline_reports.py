@@ -125,6 +125,11 @@ def old_report() -> bytes:
         ("One sided now", wire(8, "Q108", "ZB2")),                      # 8 side dropped
         ("OPEN ISSUE", wire(9, "Q109", "ZA3")),                         # 9 highlighted
         ("Old view", wire(10, "Q110", "ZA1")),                          # 10 new has own
+        # one row in the old report, two rows for the cavity in the new one
+        ("Splice both", wire(12, "Q112", "ZA1")),                       # 11 → new 13, 14
+        # two rows in the old report, one row for the cavity in the new one
+        ("Var A", wire(13, "Q113", "ZC1")),                             # 12 → new 15
+        ("Var B", wire(13, "Q113", "ZC2")),                             # 13 → not carried
     ]
     x902 = [
         ("OK", wire(1, "Q201", "ZD1", inline="X902A", mate="Y902A")),
@@ -149,6 +154,9 @@ def new_report() -> bytes:
         ("", wire(9, "Q109", "ZA3")),                                   # highlighted, identical
         ("New view", wire(10, "Q110", "ZA1")),                          # already commented
         ("", wire(11, "Q111", "ZA1")),                                  # brand new wire
+        ("", wire(12, "Q112", "ZA1")),                                  # cavity 12, row 1
+        ("", wire(12, "Q112", "ZB1", one_sided=True)),                  # cavity 12, row 2
+        ("", wire(13, "Q113", "ZC1")),                                  # cavity 13, one row
     ]
     x902 = [
         ("", wire(1, "Q201", "ZD1", inline="X902A", mate="Y902A")),
@@ -171,7 +179,11 @@ EXPECTED = {
     ("X901A - Y901A", 9): ("changed", "One sided now"),
     ("X901A - Y901A", 10): ("exact", "OPEN ISSUE"),
     ("X901A - Y901A", 11): ("exact", "Old view"),          # new report has its own
+    ("X901A - Y901A", 13): ("exact", "Splice both"),       # one old row → two new rows
+    ("X901A - Y901A", 14): ("changed", "Splice both"),
+    ("X901A - Y901A", 15): ("exact", "Var A"),             # two old rows → one new row
     ("X902A - Y902A", 2): ("exact", "OK"),
     ("X902A - Y902A", 3): ("changed", "Suffix"),
 }
-LOST = {("X901A - Y901A", "Removed wire"), ("X903A - Y903A", "Gone sheet")}
+LOST = {("X901A - Y901A", "Removed wire"), ("X901A - Y901A", "Var B"),
+        ("X903A - Y903A", "Gone sheet")}

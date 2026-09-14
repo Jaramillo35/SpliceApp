@@ -176,6 +176,16 @@ def page() -> None:
         refresh("review", "generate")
         reveal()
 
+    def decide_cavity(pid: str, decision: str) -> None:
+        res = state["result"]
+        ids = [pid] + [m.id for m in res.cavity_mates(pid) if not isinstance(m, co.Lost)]
+        remember(res, ids, pid)
+        n = res.decide_cavity(pid, decision)
+        state.update(writing=None, output=None, selected=next_open(res, pid) or pid)
+        ui.notify(f"{n} row(s) of the cavity {DONE_LABEL[decision].lower()}", type="positive")
+        refresh("review", "generate")
+        reveal()
+
     def acknowledge(lid: str, ack: str) -> None:
         res = state["result"]
         remember(res, [lid], lid)
@@ -527,15 +537,59 @@ def page() -> None:
                     ui.label(d.old or "—").classes("text-sm sx-mono sx-muted")
                     ui.label(d.new or "—").classes("text-sm sx-mono font-semibold")
 
+        def _cavity_block(item) -> None:
+            """The other rows of this cavity, so a one-to-many case is seen
+            and decided together — one comment per row. Functional rendering;
+            the UI/UX design of this block is being done separately."""
+            res = state["result"]
+            mates = res.cavity_mates(item.id)
+            if not mates:
+                return
+            ui.label(f"Same cavity — {len(mates) + 1} rows for pin {item.pin} · "
+                     f"{_circuit(item)}").classes("sx-eyebrow mt-1")
+            with ui.column().classes("w-full gap-1"):
+                for m in mates:
+                    lost = isinstance(m, co.Lost)
+                    with ui.row().classes("items-center gap-2 no-wrap w-full"):
+                        ui.icon("check_circle" if m.decided else "radio_button_unchecked") \
+                            .classes("text-base shrink-0") \
+                            .style(f"color:{theme.STATUS_TEXT['ok'] if m.decided else theme.TEXT_3}")
+                        ui.label("old row, not carried" if lost else
+                                 f"row {m.new_row}" + (" · same old comment" if
+                                                       not lost and m.old_comment == getattr(item, 'old_comment', None) else "")) \
+                            .classes("text-xs sx-muted shrink-0")
+                        ui.label(f"“{_comment(m)}”").classes("text-sm truncate grow")
+                        if m.decided:
+                            ui.label(DONE_LABEL[m.ack if lost else m.decision]) \
+                                .classes("text-xs shrink-0") \
+                                .style(f"color:{theme.STATUS_TEXT['ok']}")
+                        ui.button("Open", on_click=lambda _e, i=m.id: select(i)) \
+                            .props("flat dense no-caps")
+            if not isinstance(item, co.Lost):
+                open_rows = [m for m in mates if not isinstance(m, co.Lost) and not m.decided]
+                if open_rows or not item.decided:
+                    n = len(open_rows) + (0 if item.decided else 1)
+                    with ui.row().classes("gap-2 flex-wrap"):
+                        ui.button(f"Copy old comment to all {n} undecided row(s) of this cavity",
+                                  icon="content_copy",
+                                  on_click=lambda _e: decide_cavity(item.id, co.COPY)) \
+                            .props("outline dense no-caps")
+                        ui.button(f"Leave all {n} blank",
+                                  on_click=lambda _e: decide_cavity(item.id, co.BLANK)) \
+                            .props("outline dense no-caps")
+
         def _row_card(p) -> None:
             with ui.row().classes("items-center gap-2 flex-wrap"):
                 if p.attention == co.RECHECK:
                     c.chip("high", "Re-check")
                 c.chip("info", co.KIND_LABEL[p.kind])
+                if p.shared:
+                    c.chip("review", "One old comment, several rows")
                 if p.decided:
                     c.chip("ok", DONE_LABEL[p.decision])
             ui.label(f"{p.sheet} · pin {p.pin} · {_circuit(p)}") \
                 .classes("text-base font-semibold sx-mono")
+            _cavity_block(p)
             for side in p.sides_gone:
                 c.note("high", f"Side {side} is gone — the wire no longer mates on "
                                "that side.")
@@ -599,6 +653,7 @@ def page() -> None:
                     c.chip("ok", DONE_LABEL[x.ack])
             ui.label(f"{x.sheet} · pin {x.pin} · {_circuit(x)}") \
                 .classes("text-base font-semibold sx-mono")
+            _cavity_block(x)
             _quote(x.comment)
             c.note("info", f"It did not carry: {x.reason}.")
             ui.separator().classes("my-1")

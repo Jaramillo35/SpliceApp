@@ -106,6 +106,7 @@ CARD_SIDE_GONE = "X901A - Y901A · pin 8 · Q108 / —"
 CARD_SUFFIX = "X902A - Y902A · pin 2 · Q202"
 CARD_COLOUR = "X901A - Y901A · pin 3 · Q103"
 CARD_FIRST_LOST = "X901A - Y901A · pin 6 · Q106"
+CARD_CAVITY_12 = "X901A - Y901A · pin 12 · Q112 / —"
 
 
 class TestInputs:
@@ -139,7 +140,7 @@ class TestReview:
                       "Comments to acknowledge"):
             await user.should_see(label)
         await user.should_see("X903A - Y903A: in the old report but not the new one")
-        await user.should_see(f"{co.GROUP_LOST} · 2")
+        await user.should_see(f"{co.GROUP_LOST} · 3")
 
     async def test_the_likeliest_wrong_comment_is_on_the_card_first(self, user: User, files):
         await open_matched(user, files)
@@ -152,20 +153,21 @@ class TestReview:
         await press(user, "Leave blank")
         await wait_for(user, CARD_SIDE_GONE)
         await user.should_see("Side 2 is gone")
-        await user.should_see("a decision on 5 row(s)")
+        await user.should_see("a decision on 6 row(s)")
         await key(user, "u")
         await wait_for(user, CARD_CHECK_SIZE)
-        await wait_for(user, "a decision on 6 row(s)")
+        await wait_for(user, "a decision on 7 row(s)")
 
     async def test_the_keyboard_moves_and_decides(self, user: User, files):
         await open_matched(user, files)
         await key(user, "b")                  # Check size: blank, on to the side-gone row
         await wait_for(user, CARD_SIDE_GONE)
         await key(user, "ArrowDown")          # look at the next one without deciding
+        await wait_for(user, CARD_CAVITY_12)  # the one-old-comment, two-rows cavity
+        await user.should_see("Same cavity — 2 rows for pin 12")
+        await key(user, "c")                  # copy; on to the suffix change
         await wait_for(user, CARD_SUFFIX)
-        await key(user, "c")                  # copy; on to the colour change
-        await wait_for(user, CARD_COLOUR)
-        await wait_for(user, "a decision on 4 row(s)")
+        await wait_for(user, "a decision on 5 row(s)")
 
     async def test_there_is_no_bulk_path_through_a_changed_row(self, user: User, files):
         await open_matched(user, files)
@@ -179,16 +181,16 @@ class TestReview:
             self, user: User, files):
         await open_matched(user, files)
         assert not button(user, "Write the commented report").enabled
-        await user.should_see("a decision on 6 row(s)")
-        await user.should_see("an acknowledgement of 2 comment(s) with no row")
+        await user.should_see("a decision on 7 row(s)")
+        await user.should_see("an acknowledgement of 3 comment(s) with no row")
         await press(user, "Copy the suggested comment on 1 sales-code row(s)")
-        await wait_for(user, "a decision on 5 row(s)")
-        for _ in range(5):
+        await wait_for(user, "a decision on 6 row(s)")
+        for _ in range(6):
             await key(user, "b")
-        await wait_for(user, "Needs: an acknowledgement of 2 comment(s) with no row")
+        await wait_for(user, "Needs: an acknowledgement of 3 comment(s) with no row")
         assert not button(user, "Write the commented report").enabled
-        await press(user, "Mark 2 comment(s) with no row as no longer applying")
-        await wait_for(user, "All 8 decided")
+        await press(user, "Mark 3 comment(s) with no row as no longer applying")
+        await wait_for(user, "All 10 decided")
         assert button(user, "Write the commented report").enabled
 
 
@@ -213,13 +215,15 @@ class TestGenerate:
         await press(user, "Save comment")
         await wait_for(user, CARD_SIDE_GONE)
         await key(user, "b")          # side gone: blank
+        await key(user, "c")          # cavity 12, second row: copy
         await key(user, "c")          # suffix: copy
         await key(user, "c")          # colour: copy
         await key(user, "c")          # twin A, sales code about the variant: copy
         await wait_for(user, CARD_FIRST_LOST)
         await key(user, "x")          # removed wire: no longer applies
+        await key(user, "x")          # Var B, fewer rows for its cavity: no longer applies
         await key(user, "r")          # removed sheet: re-place by hand
-        await wait_for(user, "All 8 decided")
+        await wait_for(user, "All 10 decided")
         await press(user, "Write the commented report")
         await wait_for(user, "NEW_Inline_Report_commented.xlsx")
         await user.should_see("1 comment(s) to re-place by hand")

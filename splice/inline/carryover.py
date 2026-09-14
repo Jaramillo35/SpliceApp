@@ -42,6 +42,7 @@ from __future__ import annotations
 import io
 import re
 from copy import copy
+from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Optional, Tuple
@@ -342,10 +343,17 @@ class Proposal:
     text: str = ""
     #: comments of other old rows that matched this one equally well
     alternatives: List[str] = field(default_factory=list)
+    #: the old row also carries to another new row of the same cavity —
+    #: a one-to-many case, one comment per row
+    shared: bool = False
 
     @property
     def id(self) -> str:
         return f"{self.sheet}!{self.new_row}"
+
+    @property
+    def cavity(self) -> str:
+        return cavity_id(self.sheet, self.pin, self.circuit1, self.circuit2)
 
     @property
     def decided(self) -> bool:
@@ -410,6 +418,10 @@ class Lost:
     @property
     def id(self) -> str:
         return f"{self.sheet}!{self.row}!lost"
+
+    @property
+    def cavity(self) -> str:
+        return cavity_id(self.sheet, self.pin, self.circuit1, self.circuit2)
 
     @property
     def position(self) -> int:
@@ -477,6 +489,29 @@ class Carryover:
     def blocking(self) -> int:
         """Everything standing between the review and the written report."""
         return len(self.undecided) + len(self.unacknowledged)
+
+    def cavity_mates(self, item_id: str) -> list:
+        """The other rows and lost comments of the same cavity, queue order —
+        what the decision card shows beside one row so the one-to-many case
+        is decided as a whole."""
+        item = self.get_lost(item_id) if item_id.endswith("!lost") else self.get(item_id)
+        mates = [x for x in [*self.proposals, *self.lost]
+                 if x.cavity == item.cavity and x.id != item.id]
+        return sorted(mates, key=lambda x: (isinstance(x, Lost), x.position))
+
+    def decide_cavity(self, pid: str, decision: str) -> int:
+        """One decision for every undecided row of this row's cavity, this
+        row included. COPY and BLANK only — a new comment is per row."""
+        if decision not in (COPY, BLANK):
+            raise ValueError("a cavity can be copied or left blank as a whole; "
+                             "a new comment is written row by row")
+        anchor = self.get(pid)
+        n = 0
+        for p in self.proposals:
+            if p.cavity == anchor.cavity and not p.decided:
+                p.decision, p.text = decision, ""
+                n += 1
+        return n
 
     def get_lost(self, lid: str) -> Lost:
         for x in self.lost:
@@ -576,6 +611,20 @@ class Carryover:
         return x
 
 
+def cavity_id(sheet: str, pin: str, circuit1: str, circuit2: str) -> str:
+    """One cavity of one inline pair: the pin and the circuit it carries.
+
+    A report can hold several rows for the same cavity and circuit — one per
+    variant, one side filled and the other side blank on the extra rows — so
+    the cavity, not the row, is the unit an engineer thinks in.
+    """
+    return f"{sheet}|{pin}|{circuit1 or circuit2}"
+
+
+def _cavity(row: Row) -> str:
+    return cavity_id(row.sheet, row.pin, row.circuit1, row.circuit2)
+
+
 def _signature(row: Row, keys: List[str]) -> tuple:
     return tuple(row.values.get(k, "") for k in keys)
 
@@ -648,6 +697,47 @@ def match(old: Report, new: Report) -> Carryover:
             chosen[t_row] = (src, diffs, sorted(set(tied)))
             used.add(s_row)
 
+        # 3 · one old comment, many new rows of the same cavity. The report
+        # lays a cavity's variants out as several rows; when the old report
+        # had one row for it and the new has three, the comment belongs on
+        # each — one comment per row, the engineer confirming each.
+        sources_by_cavity: Dict[str, List[Row]] = {}
+        for src in sources:
+            sources_by_cavity.setdefault(_cavity(src), []).append(src)
+        # only the rows a cavity GAINED. A new row that also existed in the
+        # old report without a comment was uncommented on purpose; offering
+        # its neighbour's comment there would put words in nobody's mouth.
+        old_count = Counter(_cavity(r) for r in old_sheet.rows)
+        new_count = Counter(_cavity(r) for r in new_sheet.rows)
+        silent = {_signature(r, keys) for r in old_sheet.rows if not r.comment}
+        shared_rows: set = set()
+        for target in new_sheet.rows:
+            if target.row in chosen:
+                continue
+            cavity = _cavity(target)
+            if new_count[cavity] <= old_count[cavity] or _signature(target, keys) in silent:
+                continue
+            candidates = sources_by_cavity.get(cavity, [])
+            if not candidates:
+                continue
+            best = min(candidates, key=lambda r: (len(_diffs(r, target, keys)), r.row))
+            chosen[target.row] = (best, _diffs(best, target, keys), [])
+            shared_rows.add(best.row)
+            used.add(best.row)
+
+        # many old rows, fewer new rows of one cavity: the unplaced comments
+        # are offered as alternatives on the cavity's rows, and still listed
+        # as not carried so someone acknowledges them
+        for src in sources:
+            if src.row in used:
+                continue
+            mates = [t for t, (chosen_src, _d, _a) in chosen.items()
+                     if _cavity(chosen_src) == _cavity(src)]
+            for t_row in mates:
+                chosen_src, diffs, alternatives = chosen[t_row]
+                if src.comment != chosen_src.comment and src.comment not in alternatives:
+                    chosen[t_row] = (chosen_src, diffs, sorted([*alternatives, src.comment]))
+
         # proposals, in the new report's row order
         for target in new_sheet.rows:
             if target.row not in chosen:
@@ -676,12 +766,16 @@ def match(old: Report, new: Report) -> Carryover:
                 existing=target.comment, pin=target.pin,
                 circuit1=target.circuit1, circuit2=target.circuit2,
                 suggested=suggested, decision=decision,
-                alternatives=alternatives))
+                alternatives=alternatives, shared=src.row in shared_rows))
 
+        placed_cavities = {_cavity(chosen_src) for chosen_src, _d, _a in chosen.values()}
         for src in sources:
             if src.row not in used:
                 out.lost.append(Lost(name, src.row, src.comment, src.pin,
                                      src.circuit1, src.circuit2,
+                                     "the new report has fewer rows for this cavity — "
+                                     "the comment is offered on its remaining row(s)"
+                                     if _cavity(src) in placed_cavities else
                                      "no row in the new report has this pin "
                                      "and circuit"))
 

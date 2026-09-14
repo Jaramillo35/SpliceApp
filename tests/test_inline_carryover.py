@@ -46,7 +46,7 @@ class TestReadingAReport:
 
     def test_the_lines_under_a_table_are_not_rows(self, old_bytes):
         sheet = co.read_report(old_bytes).sheets["X901A - Y901A"]
-        assert len(sheet.rows) == 11
+        assert len(sheet.rows) == 14
         assert all(r.pin for r in sheet.rows)
 
     def test_the_unsided_duplicate_header_takes_its_side_from_pin(self, old_bytes):
@@ -124,8 +124,8 @@ class TestEveryPlantedCase:
 
     def test_counts(self, result):
         n = result.counts()
-        assert (n[co.EXACT], n[co.SALES_CODE], n[co.CHANGED]) == (5, 2, 4)
-        assert n["undecided"] == 6 and n["lost"] == 2 and n["kept"] == 1
+        assert (n[co.EXACT], n[co.SALES_CODE], n[co.CHANGED]) == (7, 2, 5)
+        assert n["undecided"] == 7 and n["lost"] == 3 and n["kept"] == 1
 
 
 class TestTheReviewGate:
@@ -133,7 +133,7 @@ class TestTheReviewGate:
             self, result, old_bytes, new_bytes):
         with pytest.raises(co.UndecidedRows) as caught:
             co.apply(old_bytes, new_bytes, result)
-        assert caught.value.count == 6
+        assert caught.value.count == 7
 
     def test_accepting_suggestions_touches_only_rows_that_have_one(self, result):
         assert result.accept_suggestions() == 2
@@ -157,7 +157,7 @@ class TestTheReviewGate:
     def test_bulk_decisions_cannot_write_new_text(self, result):
         with pytest.raises(ValueError):
             result.decide_all(co.CHANGED, co.NEW)
-        assert result.decide_all(co.CHANGED, co.BLANK) == 4
+        assert result.decide_all(co.CHANGED, co.BLANK) == 5
 
 
 def _decide_everything_but_lost(result):
@@ -166,6 +166,7 @@ def _decide_everything_but_lost(result):
     result.decide("X901A - Y901A!5", co.NEW, "size re-checked")
     result.decide("X901A - Y901A!9", co.BLANK)
     result.decide("X902A - Y902A!3", co.COPY)
+    result.decide_cavity("X901A - Y901A!13", co.COPY)     # both rows of cavity 12
 
 
 def _decide_everything(result):
@@ -177,9 +178,10 @@ class TestTheOutput:
     def test_comments_are_written_where_decided(self, result, old_bytes, new_bytes):
         _decide_everything(result)
         ws = load_workbook(io.BytesIO(co.apply(old_bytes, new_bytes, result)))["X901A - Y901A"]
-        assert [ws.cell(r, 1).value for r in range(2, 13)] == [
+        assert [ws.cell(r, 1).value for r in range(2, 16)] == [
             "WIRE TYPE OK", "SUFFIX OK", "Varient on IP", "size re-checked",
-            "Variant B", "Variant A", None, None, "OPEN ISSUE", "New view", None]
+            "Variant B", "Variant A", None, None, "OPEN ISSUE", "New view", None,
+            "Splice both", "Splice both", "Var A"]
 
     def test_everything_else_is_the_new_report_unchanged(
             self, result, old_bytes, new_bytes):
@@ -268,14 +270,17 @@ class TestTriage:
 
     def test_the_queue_puts_the_riskiest_first_and_hides_what_needs_no_one(self, result):
         ids = [x.id for x in result.queue()]
-        assert ids == ["X901A - Y901A!5", "X901A - Y901A!9", "X902A - Y902A!3",
+        assert ids == ["X901A - Y901A!5", "X901A - Y901A!9", "X901A - Y901A!14",
+                       "X902A - Y902A!3",
                        "X901A - Y901A!4",
                        "X901A - Y901A!7",
                        "X901A - Y901A!3",
-                       "X901A - Y901A!8!lost", "X903A - Y903A!2!lost"]
+                       "X901A - Y901A!8!lost", "X901A - Y901A!15!lost",
+                       "X903A - Y903A!2!lost"]
         settled = {x.id for x in result.queue(include_settled=True)} - set(ids)
         assert settled == {"X901A - Y901A!2", "X901A - Y901A!6", "X901A - Y901A!10",
-                           "X901A - Y901A!11", "X902A - Y902A!2"}
+                           "X901A - Y901A!11", "X901A - Y901A!13", "X901A - Y901A!15",
+                           "X902A - Y902A!2"}
 
     def test_deciding_a_row_does_not_move_the_list(self, result):
         before = [x.id for x in result.queue()]
@@ -294,15 +299,15 @@ class TestLostCommentsAreAcknowledged:
         assert not result.undecided
         with pytest.raises(co.UndecidedRows) as caught:
             co.apply(old_bytes, new_bytes, result)
-        assert (caught.value.count, caught.value.lost) == (0, 2)
+        assert (caught.value.count, caught.value.lost) == (0, 3)
         assert "did not carry" in str(caught.value)
 
     def test_acknowledging_clears_the_gate_without_overwriting(
             self, result, old_bytes, new_bytes):
         _decide_everything_but_lost(result)
         result.acknowledge("X901A - Y901A!8!lost", co.REPLACE)
-        assert result.blocking == 1
-        assert result.acknowledge_all(co.OBSOLETE) == 1
+        assert result.blocking == 2
+        assert result.acknowledge_all(co.OBSOLETE) == 2
         assert result.blocking == 0
         co.apply(old_bytes, new_bytes, result)
         assert result.get_lost("X901A - Y901A!8!lost").ack == co.REPLACE
@@ -310,7 +315,7 @@ class TestLostCommentsAreAcknowledged:
     def test_an_acknowledgement_can_be_taken_back(self, result):
         result.acknowledge("X903A - Y903A!2!lost", co.OBSOLETE)
         result.unacknowledge("X903A - Y903A!2!lost")
-        assert len(result.unacknowledged) == 2
+        assert len(result.unacknowledged) == 3
 
     def test_only_known_acknowledgements(self, result):
         with pytest.raises(ValueError):
@@ -338,3 +343,43 @@ class TestInlineCoverage:
         report = co.read_report(old_bytes)
         cov = co.match(report, report).coverage
         assert cov.complete and cov.in_both == list(report.sheets)
+
+
+
+class TestOneCavityManyRows:
+    """A cavity's variants are several rows, one side blank on the extras.
+    One old row → many new rows: the comment is offered on each, one per
+    row. Many old rows → one new row: the extra comments are offered as
+    alternatives and still listed as not carried."""
+
+    def test_one_old_comment_reaches_every_new_row_of_the_cavity(self, result):
+        a, b = result.get("X901A - Y901A!13"), result.get("X901A - Y901A!14")
+        assert a.old_comment == b.old_comment == "Splice both"
+        assert a.old_row == b.old_row
+        assert a.kind == co.EXACT and a.decided
+        assert b.kind == co.CHANGED and not b.decided and b.shared and a.shared
+        assert "Side 2 is gone" not in b.changed and "Circuit 2: Q112 → —" in b.changed
+
+    def test_the_cavity_is_seen_together(self, result):
+        mates = result.cavity_mates("X901A - Y901A!14")
+        assert [m.id for m in mates] == ["X901A - Y901A!13"]
+        assert result.cavity_mates("X901A - Y901A!2") == []
+
+    def test_many_old_rows_onto_one_new_row_keeps_one_comment_per_row(self, result):
+        p = result.get("X901A - Y901A!15")
+        assert p.old_comment == "Var A" and p.alternatives == ["Var B"]
+        lost = next(x for x in result.lost if x.comment == "Var B")
+        assert "fewer rows for this cavity" in lost.reason
+        assert [m.id for m in result.cavity_mates(p.id)] == [lost.id]
+
+    def test_a_cavity_can_be_decided_as_a_whole(self, result):
+        assert result.decide_cavity("X901A - Y901A!14", co.COPY) == 1
+        assert result.get("X901A - Y901A!14").result == "Splice both"
+        with pytest.raises(ValueError):
+            result.decide_cavity("X901A - Y901A!14", co.NEW)
+
+    def test_a_single_row_cavity_is_untouched_by_the_rule(self, result):
+        """Pin 5 has two rows on both sides — the one-to-one pass still pairs
+        each twin with its own comment; nothing is shared."""
+        assert not result.get("X901A - Y901A!6").shared
+        assert not result.get("X901A - Y901A!7").shared
