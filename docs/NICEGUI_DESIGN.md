@@ -107,6 +107,27 @@ written for the reader rather than the run:
 - **Customer email** is that list as sendable text, grouped by fix location.
   `report.email_lines` builds it; the page passes the engineer's name.
 
+## Review gates
+
+A gate is a page refusing to produce its output until a person has judged
+what the engine could not. Inline Comment Carryover is the reference:
+
+- **A queue ordered by risk, not by sheet.** `Carryover.queue()` puts the
+  items likeliest to be wrong first — a comment that names what changed, or
+  sits on a wire that lost a side — and never reorders when an item is
+  decided, so the list does not move under the reader.
+- **One card, the evidence and the decisions together.** Old and new values
+  side by side, the attributes the comment talks about marked, the old
+  comment quoted, the decisions as buttons with a key each
+  (`aria-keyshortcuts`, `.sx-kbd`). Deciding moves to the next open item;
+  every decision, a bulk one included, can be undone.
+- **Bulk only where the engine already has an answer.** Suggestions can be
+  accepted together; rows the engine declined to suggest for cannot be
+  cleared in bulk.
+- **Nothing dropped is invisible.** Items that cannot be placed block the
+  output until acknowledged, and the ones marked for manual work are listed
+  beside the download.
+
 ## Accessibility
 
 `tests/test_accessibility.py` is the gate, and it computes rather than eyeballs:

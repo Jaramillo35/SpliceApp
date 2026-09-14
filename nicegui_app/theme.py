@@ -157,6 +157,11 @@ _CSS = f"""
                                      border-color: {BRAND}; }}
   .sx-toggle .q-btn__content {{ text-transform: none; }}
 
+  /* ---- keycaps: the shortcut beside a decision, never the only label ---- */
+  .sx-kbd {{ font-family: {MONO}; font-size: 12px; font-weight: 600; line-height: 1;
+             padding: 2px 6px; border-radius: 4px; border: 1px solid {LINE};
+             border-bottom-width: 2px; color: {TEXT_2}; background: {SURFACE_2}; }}
+
   /* ---- step bar ---- */
   .sx-steps {{ position: sticky; top: 0; z-index: 5; background: {CANVAS};
                padding: 8px 0; border-bottom: 1px solid {LINE}; }}

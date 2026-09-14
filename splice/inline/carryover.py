@@ -65,17 +65,64 @@ KIND_LABEL = {EXACT: "Identical row", SALES_CODE: "Sales code changed",
 DECISION_LABEL = {COPY: "Copy old comment", NEW: "Write new comment",
                   BLANK: "Leave blank", KEEP: "Keep new report's comment"}
 
+#: what happens to a comment no new row can take — someone has to say so
+REPLACE = "replace"
+OBSOLETE = "obsolete"
+ACK_LABEL = {REPLACE: "Re-place it by hand", OBSOLETE: "No longer applies"}
+
+#: why a row needs a look. A comment that names what changed is the one most
+#: likely to have stopped being true; that is where attention goes first.
+RECHECK = "recheck"
+ELSEWHERE = "elsewhere"
+
+GROUP_RECHECK = "Re-check: the change touches what the comment is about"
+GROUP_CHANGED = "Row changed: the comment is about something else"
+GROUP_CODES_RECHECK = "Sales code changed: the comment talks about the variant"
+GROUP_CODES = "Sales code changed: the old comment is suggested"
+GROUP_LOST = "Comments with no row in the new report"
+GROUP_KEPT = "The new report already has its own comment: kept"
+GROUP_IDENTICAL = "Identical rows: copied without asking"
+GROUP_ORDER = (GROUP_RECHECK, GROUP_CHANGED, GROUP_CODES_RECHECK, GROUP_CODES,
+               GROUP_LOST, GROUP_KEPT, GROUP_IDENTICAL)
+#: groups that need no one: shown on request, never blocking
+SETTLED = (GROUP_KEPT, GROUP_IDENTICAL)
+
+#: what engineers call each attribute when they write a comment about it
+ATTRIBUTE_WORDS = {
+    "Sales Code": ("sales code", "salescode", "code", "codes", "variant",
+                   "varient", "option"),
+    "Color": ("color", "colour", "clr"),
+    "Stripe": ("stripe", "tracer"),
+    "Size": ("size", "gauge", "gage", "awg"),
+    "Spec": ("spec", "wire type", "insulation"),
+    "Circuit Suf": ("suffix", "suf"),
+    "Circuit": ("circuit", "ckt"),
+    "Term Matl": ("terminal", "term", "plating", "material"),
+    "Terminal_Supplier": ("terminal", "supplier"),
+    "Twist": ("twist", "twisted"),
+    "End": ("inline", "mate", "mating"),
+    "Pin": ("pin", "cavity", "cav"),
+}
+
 _SIDED = re.compile(r"^(.*\S)\s+([12])$")
 _NUMBER = re.compile(r"^-?\d+(\.\d+)?$")
 
 
 class UndecidedRows(SpliceError):
-    """The review gate: a report is not written while rows await a decision."""
+    """The review gate: a report is not written while rows await a decision,
+    or while a comment that did not carry has not been acknowledged."""
 
-    def __init__(self, count: int) -> None:
-        super().__init__(f"{count} row(s) still need a decision before the "
-                         "report can be written")
+    def __init__(self, count: int, lost: int = 0) -> None:
+        parts = []
+        if count:
+            parts.append(f"{count} row(s) still need a decision")
+        if lost:
+            parts.append(f"{lost} comment(s) that did not carry still need "
+                         "acknowledging")
+        super().__init__(" and ".join(parts or ["nothing is outstanding"])
+                         + " before the report can be written")
         self.count = count
+        self.lost = lost
 
 
 def normalize(value) -> str:
@@ -108,6 +155,34 @@ def label_of(key: str) -> str:
 
 def is_sales_code(key: str) -> bool:
     return key.lower().startswith("sales code|")
+
+
+def _word(needle: str, text: str) -> bool:
+    """``needle`` as a whole word of ``text`` — 'size' is not in 'oversize'."""
+    return bool(needle) and re.search(
+        rf"(?<![a-z0-9]){re.escape(needle.lower())}(?![a-z0-9])", text) is not None
+
+
+def mentions(comment: str, diffs: List["Diff"]) -> List["Diff"]:
+    """The changed attributes a comment talks about, by name or by value.
+
+    'Check size' after the size changed, 'RD per drawing' after the colour
+    left RD: those comments were written about exactly the thing that moved,
+    and are the likeliest to be wrong now. A signal for ordering the review,
+    never a decision.
+    """
+    text = (comment or "").lower()
+    if not text:
+        return []
+    hits = []
+    for diff in diffs:
+        name = diff.key.split("|", 1)[0].split("#", 1)[0].strip()
+        words = ATTRIBUTE_WORDS.get(name, ()) + (name.lower(),)
+        by_word = any(_word(w, text) for w in words)
+        by_value = len(diff.old) >= 2 and _word(diff.old, text)
+        if by_word or by_value:
+            hits.append(diff)
+    return hits
 
 
 # ------------------------------------------------------------------ reading
@@ -286,6 +361,37 @@ class Proposal:
         return {COPY: self.old_comment, NEW: self.text, BLANK: "",
                 KEEP: self.existing}.get(self.decision or "", "")
 
+    @property
+    def position(self) -> int:
+        return self.new_row
+
+    @property
+    def mentioned(self) -> List[Diff]:
+        """The changes this row's old comment talks about."""
+        return mentions(self.old_comment, self.diffs)
+
+    @property
+    def sides_gone(self) -> List[str]:
+        """Sides whose circuit disappeared: the wire no longer mates."""
+        return sorted({d.key.split("|", 1)[1][:1] for d in self.diffs
+                       if d.key.split("|", 1)[0] == "Circuit" and d.old and not d.new})
+
+    @property
+    def attention(self) -> Optional[str]:
+        if not self.diffs:
+            return None
+        return RECHECK if (self.mentioned or self.sides_gone) else ELSEWHERE
+
+    @property
+    def group(self) -> str:
+        if self.existing:
+            return GROUP_KEPT
+        if self.kind == EXACT:
+            return GROUP_IDENTICAL
+        if self.kind == CHANGED:
+            return GROUP_RECHECK if self.attention == RECHECK else GROUP_CHANGED
+        return GROUP_CODES_RECHECK if self.attention == RECHECK else GROUP_CODES
+
 
 @dataclass
 class Lost:
@@ -298,6 +404,24 @@ class Lost:
     circuit1: str
     circuit2: str
     reason: str
+    #: REPLACE or OBSOLETE once someone has seen it; None blocks the report
+    ack: Optional[str] = None
+
+    @property
+    def id(self) -> str:
+        return f"{self.sheet}!{self.row}!lost"
+
+    @property
+    def position(self) -> int:
+        return self.row
+
+    @property
+    def decided(self) -> bool:
+        return self.ack is not None
+
+    @property
+    def group(self) -> str:
+        return GROUP_LOST
 
 
 @dataclass
@@ -320,6 +444,33 @@ class Carryover:
     def undecided(self) -> List[Proposal]:
         return [p for p in self.proposals if not p.decided]
 
+    @property
+    def unacknowledged(self) -> List[Lost]:
+        return [x for x in self.lost if x.ack is None]
+
+    @property
+    def blocking(self) -> int:
+        """Everything standing between the review and the written report."""
+        return len(self.undecided) + len(self.unacknowledged)
+
+    def get_lost(self, lid: str) -> Lost:
+        for x in self.lost:
+            if x.id == lid:
+                return x
+        raise KeyError(lid)
+
+    def queue(self, include_settled: bool = False) -> list:
+        """What the engineer reviews, the likeliest-wrong comments first.
+
+        The order is fixed by group, sheet and row — deciding a row does not
+        move it, so the list never shifts under the reader.
+        """
+        items = [*self.proposals, *self.lost]
+        if not include_settled:
+            items = [x for x in items if x.group not in SETTLED]
+        rank = {g: i for i, g in enumerate(GROUP_ORDER)}
+        return sorted(items, key=lambda x: (rank[x.group], x.sheet, x.position))
+
     def counts(self) -> Dict[str, int]:
         return {
             EXACT: len(self.of_kind(EXACT)),
@@ -329,6 +480,7 @@ class Carryover:
             "decided": sum(1 for p in self.proposals if p.decided),
             "undecided": len(self.undecided),
             "lost": len(self.lost),
+            "unacknowledged": len(self.unacknowledged),
             "written": sum(1 for p in self.proposals
                            if p.decision in (COPY, NEW) and p.result),
         }
@@ -374,6 +526,29 @@ class Carryover:
                 p.decision = decision
                 n += 1
         return n
+
+    def acknowledge(self, lid: str, ack: str) -> Lost:
+        """Record that someone saw a comment that could not carry."""
+        if ack not in ACK_LABEL:
+            raise ValueError(f"unknown acknowledgement {ack!r}")
+        x = self.get_lost(lid)
+        x.ack = ack
+        return x
+
+    def acknowledge_all(self, ack: str) -> int:
+        """One acknowledgement for every comment still open — never overwrites
+        one already given."""
+        if ack not in ACK_LABEL:
+            raise ValueError(f"unknown acknowledgement {ack!r}")
+        open_ = self.unacknowledged
+        for x in open_:
+            x.ack = ack
+        return len(open_)
+
+    def unacknowledge(self, lid: str) -> Lost:
+        x = self.get_lost(lid)
+        x.ack = None
+        return x
 
 
 def _signature(row: Row, keys: List[str]) -> tuple:
@@ -501,8 +676,9 @@ def apply(old_data: bytes, new_data: bytes, carryover: Carryover,
           keep_vba: bool = False) -> bytes:
     """The new report with the decided comments written — and nothing else
     touched. Refuses while any row is undecided: that is the review gate."""
-    if carryover.undecided:
-        raise UndecidedRows(len(carryover.undecided))
+    if carryover.blocking:
+        raise UndecidedRows(len(carryover.undecided),
+                            lost=len(carryover.unacknowledged))
     old_wb = load_workbook(io.BytesIO(old_data))
     new_wb = load_workbook(io.BytesIO(new_data), keep_vba=keep_vba)
     for p in carryover.proposals:

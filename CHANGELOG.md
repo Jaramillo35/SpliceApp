@@ -7,6 +7,18 @@ after an update.
 ## Unreleased
 
 ### Changed
+- **Inline Comment Carryover: a review gate built for attention.** The
+  comments that need your judgement come as a queue, the likeliest to be wrong
+  first: a comment that names what changed ("Check size" after the size
+  moved), or sits on a wire that lost a side, comes before one whose change is
+  elsewhere. The selected row shows what changed as old and new, marks what
+  the comment talks about, and offers each decision as a button with a key —
+  C copy, W write, B blank, K keep, U undo, the arrows to move — and moves on
+  to the next row by itself. Comments that could not carry now have to be
+  acknowledged, as no longer applying or to re-place by hand, before the
+  report is written; the ones to re-place are listed next to the download.
+  The one-click "leave every changed row blank" is gone: a changed row is
+  what the review is for.
 - **One interface schema across the toolkit.** The rail is grouped by how you
   work — Workbenches (judgement, saved, signed off), Converters (files in,
   workbook out), Records, Utilities — with Admin and your name in the footer.

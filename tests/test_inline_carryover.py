@@ -160,12 +160,17 @@ class TestTheReviewGate:
         assert result.decide_all(co.CHANGED, co.BLANK) == 4
 
 
-def _decide_everything(result):
+def _decide_everything_but_lost(result):
     result.accept_suggestions()
     result.decide("X901A - Y901A!4", co.COPY)
     result.decide("X901A - Y901A!5", co.NEW, "size re-checked")
     result.decide("X901A - Y901A!9", co.BLANK)
     result.decide("X902A - Y902A!3", co.COPY)
+
+
+def _decide_everything(result):
+    _decide_everything_but_lost(result)
+    result.acknowledge_all(co.OBSOLETE)
 
 
 class TestTheOutput:
@@ -227,3 +232,88 @@ class TestTheOutput:
     ])
     def test_output_name(self, name, expected):
         assert co.output_name(name) == expected
+
+
+class TestTriage:
+    """A better gate spends the engineer's attention where a comment is most
+    likely to have stopped being true."""
+
+    @pytest.mark.parametrize("comment, key, old, new, expected", [
+        ("Check size", "Size|1", "0.35", "0.5", True),
+        ("WIRE TYPE OK", "Spec|2", "5ABT", "5ABX", True),
+        ("SUFFIX OK", "Sales Code|1", "ZA1", "ZA1/ZB2", False),
+        ("Varient on IP", "Color|2", "RD", "OG", False),
+        ("RD per drawing", "Color|2", "RD", "OG", True),          # by value
+        ("Oversize boot", "Size|1", "0.35", "0.5", False),        # a word, not a fragment
+        ("Variant A", "Sales Code|2", "ZC1", "ZC1&-ZC2", True),
+        ("", "Size|1", "0.35", "0.5", False),
+    ])
+    def test_a_comment_mentions_what_changed(self, comment, key, old, new, expected):
+        assert bool(co.mentions(comment, [co.Diff(key, old, new)])) is expected
+
+    def test_each_planted_row_lands_in_its_group(self, result):
+        groups = {p.id: p.group for p in result.proposals}
+        assert groups["X901A - Y901A!5"] == co.GROUP_RECHECK        # 'Check size', size changed
+        assert groups["X901A - Y901A!9"] == co.GROUP_RECHECK        # side 2 is gone
+        assert groups["X902A - Y902A!3"] == co.GROUP_RECHECK        # 'Suffix', suffix changed
+        assert groups["X901A - Y901A!4"] == co.GROUP_CHANGED        # colour moved, comment is about the variant
+        assert groups["X901A - Y901A!7"] == co.GROUP_CODES_RECHECK  # 'Variant A', codes moved
+        assert groups["X901A - Y901A!3"] == co.GROUP_CODES
+        assert groups["X901A - Y901A!11"] == co.GROUP_KEPT
+        assert groups["X901A - Y901A!2"] == co.GROUP_IDENTICAL
+
+    def test_a_side_that_is_gone_is_named(self, result):
+        assert result.get("X901A - Y901A!9").sides_gone == ["2"]
+        assert result.get("X901A - Y901A!5").sides_gone == []
+
+    def test_the_queue_puts_the_riskiest_first_and_hides_what_needs_no_one(self, result):
+        ids = [x.id for x in result.queue()]
+        assert ids == ["X901A - Y901A!5", "X901A - Y901A!9", "X902A - Y902A!3",
+                       "X901A - Y901A!4",
+                       "X901A - Y901A!7",
+                       "X901A - Y901A!3",
+                       "X901A - Y901A!8!lost", "X903A - Y903A!2!lost"]
+        settled = {x.id for x in result.queue(include_settled=True)} - set(ids)
+        assert settled == {"X901A - Y901A!2", "X901A - Y901A!6", "X901A - Y901A!10",
+                           "X901A - Y901A!11", "X902A - Y902A!2"}
+
+    def test_deciding_a_row_does_not_move_the_list(self, result):
+        before = [x.id for x in result.queue()]
+        result.decide("X901A - Y901A!5", co.BLANK)
+        result.acknowledge("X903A - Y903A!2!lost", co.OBSOLETE)
+        assert [x.id for x in result.queue()] == before
+
+
+class TestLostCommentsAreAcknowledged:
+    """'Nothing is dropped silently' holds only if the gate makes someone look
+    at the comments that could not carry."""
+
+    def test_the_report_waits_for_every_lost_comment_to_be_seen(
+            self, result, old_bytes, new_bytes):
+        _decide_everything_but_lost(result)
+        assert not result.undecided
+        with pytest.raises(co.UndecidedRows) as caught:
+            co.apply(old_bytes, new_bytes, result)
+        assert (caught.value.count, caught.value.lost) == (0, 2)
+        assert "did not carry" in str(caught.value)
+
+    def test_acknowledging_clears_the_gate_without_overwriting(
+            self, result, old_bytes, new_bytes):
+        _decide_everything_but_lost(result)
+        result.acknowledge("X901A - Y901A!8!lost", co.REPLACE)
+        assert result.blocking == 1
+        assert result.acknowledge_all(co.OBSOLETE) == 1
+        assert result.blocking == 0
+        co.apply(old_bytes, new_bytes, result)
+        assert result.get_lost("X901A - Y901A!8!lost").ack == co.REPLACE
+
+    def test_an_acknowledgement_can_be_taken_back(self, result):
+        result.acknowledge("X903A - Y903A!2!lost", co.OBSOLETE)
+        result.unacknowledge("X903A - Y903A!2!lost")
+        assert len(result.unacknowledged) == 2
+
+    def test_only_known_acknowledgements(self, result):
+        with pytest.raises(ValueError):
+            result.acknowledge("X903A - Y903A!2!lost", "whatever")
+        with pytest.raises(ValueError):
+            result.acknowledge_all("whatever")
