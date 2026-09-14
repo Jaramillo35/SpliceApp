@@ -277,6 +277,12 @@ class Workbench(tk.Tk):
             except Exception as exc:  # noqa: BLE001 - reported in the log pane
                 message = f"{type(exc).__name__}: {exc}"
                 self._post(lambda: self.log(message, "bad"))
+                if "ControlNotFound" in type(exc).__name__ or "no column" in str(exc):
+                    self._post(lambda: self.log(
+                        "The grid was not found or has different columns. Take a "
+                        "RECORD STRUCTURE snapshot with the circuits grid on screen "
+                        "and send the structure folder — the snapshot now records "
+                        "deep enough to reach it.", "warn"))
                 return
             if then is not None:
                 self._post(lambda: then(result))
@@ -445,6 +451,10 @@ class Workbench(tk.Tk):
         def then(planned) -> None:
             self.planned = planned
             self._show_plan()
+            for note in getattr(self.session.backend, "notes", []):
+                self.log(f"note: {note}", "warn")
+            if hasattr(self.session.backend, "notes"):
+                self.session.backend.notes.clear()
             n = termmatl.summary(planned)
             self.log(f"Preview: {n[termmatl.CHANGE]} to change · "
                      f"{n[termmatl.ALREADY]} already · {n[termmatl.NO_VALUE]} empty · "

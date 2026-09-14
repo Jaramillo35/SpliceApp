@@ -183,6 +183,10 @@ class UiaBackend:
         self.timeout = timeout
         self._app = None
         self._window = None
+        #: what the lookups had to do to find things — the GUI shows these,
+        #: because "found it by fallback" is worth knowing before Apply
+        self.notes: List[str] = []
+        self._resolved: dict = {}
 
     # ---------------------------------------------------------- attaching
     def connect(self, process: Optional[int] = None,
@@ -256,15 +260,45 @@ class UiaBackend:
                 raise ControlNotFound(scope) from exc
         from defauto import ids
 
-        kwargs = {"auto_id": automation_id}
-        if automation_id in ids.CONTROL_TYPES:
-            kwargs["control_type"] = ids.CONTROL_TYPES[automation_id]
-        try:
-            control = parent.child_window(**kwargs)
-            control.wait("exists", timeout=self.timeout)
-            return control
-        except Exception as exc:  # noqa: BLE001
-            raise ControlNotFound(automation_id, scope) from exc
+        types = ids.CONTROL_TYPES.get(automation_id)
+        if isinstance(types, str):
+            types = (types,)
+        # by id, with each accepted type, then with no type at all
+        for control_type in [*(types or ()), None]:
+            kwargs = {"auto_id": automation_id}
+            if control_type:
+                kwargs["control_type"] = control_type
+            try:
+                control = parent.child_window(**kwargs)
+                control.wait("exists", timeout=2)
+                return control
+            except Exception:  # noqa: BLE001 - try the next way
+                continue
+        # a grid by its owner: the one Table/DataGrid under the page's user control
+        owner = ids.GRID_OWNER.get(automation_id)
+        if owner:
+            try:
+                page = parent.child_window(auto_id=owner)
+                page.wait("exists", timeout=2)
+                grids = [g for t in ids.GRID_TYPES
+                         for g in page.descendants(control_type=t)]
+            except Exception:  # noqa: BLE001
+                grids = []
+            if len(grids) == 1:
+                found = grids[0]
+                real = getattr(found.element_info, "automation_id", "") or "(no id)"
+                if automation_id not in self._resolved:
+                    self._resolved[automation_id] = real
+                    self.notes.append(f"{automation_id!r} not found by id; using the "
+                                      f"only grid under {owner!r} (its id is {real!r} "
+                                      f"— put that in defauto/ids.py)")
+                return found
+            if grids:
+                raise ControlNotFound(
+                    automation_id, f"{owner}: {len(grids)} grids there — "
+                    + ", ".join(repr(getattr(g.element_info, "automation_id", "") or "(no id)")
+                                for g in grids))
+        raise ControlNotFound(automation_id, scope)
 
     # ------------------------------------------------------------- verbs
     def exists(self, automation_id: str, scope: str = "") -> bool:
@@ -338,16 +372,82 @@ class UiaBackend:
     def select(self, automation_id: str, value: str, scope: str = "") -> None:
         self._find(automation_id, scope).select(value)
 
+    # ------------------------------------------------------ grid reading
+    @staticmethod
+    def _text(element) -> str:
+        """A cell's text, from whichever pattern the control exposes."""
+        try:
+            value = element.window_text()
+            if value:
+                return str(value)
+        except Exception:  # noqa: BLE001
+            pass
+        for getter in ("get_value", "legacy_properties"):
+            try:
+                got = getattr(element, getter)()
+                if isinstance(got, dict):
+                    got = got.get("Value") or got.get("Name") or ""
+                if got:
+                    return str(got)
+            except Exception:  # noqa: BLE001
+                continue
+        return ""
+
+    @staticmethod
+    def _ctype(element) -> str:
+        return getattr(element.element_info, "control_type", "") or ""
+
+    def _rows_of(self, control) -> tuple:
+        """``(headers, [row elements])`` of a grid, whatever its make.
+
+        A WinForms DataGridView has a Header of HeaderItems and DataItem rows.
+        A DevExpress grid (what DEF Editor uses; seen as control type Table)
+        has Custom rows, the first of which holds Header elements named for
+        the columns. Both are read the same way: headers are every Header /
+        HeaderItem name in order; rows are the row-like children that are not
+        the header row.
+        """
+        headers: List[str] = []
+        rows = []
+        for child in control.children():
+            ctype = self._ctype(child)
+            kids = child.children()
+            if ctype in ("Header", "HeaderItem"):
+                for h in [child, *kids]:
+                    if self._ctype(h) in ("Header", "HeaderItem") and self._text(h) \
+                            and self._text(h) not in headers:
+                        headers.append(self._text(h))
+                continue
+            if ctype == "Custom" and kids and all(self._ctype(k) in ("Header", "HeaderItem")
+                                                  for k in kids):
+                for h in kids:
+                    if self._text(h) and self._text(h) not in headers:
+                        headers.append(self._text(h))
+                continue
+            if ctype in ("DataItem", "ListItem", "Custom"):
+                rows.append(child)
+        if not headers:
+            try:
+                headers = [str(h) for h in control.column_headers()]
+            except Exception:  # noqa: BLE001
+                headers = []
+        return headers, rows
+
+    def _cells_of(self, row) -> list:
+        kids = row.children()
+        return kids if kids else [row]
+
     def grid(self, automation_id: str, scope: str = "") -> Grid:
         control = self._find(automation_id, scope)
-        headers = [str(h) for h in control.column_headers()] \
-            if hasattr(control, "column_headers") else []
-        rows: List[List[str]] = []
-        for item in control.items():
-            texts = [str(cell.window_text()) for cell in item.descendants()] \
-                if hasattr(item, "descendants") else [str(item.window_text())]
-            rows.append(texts)
-        return Grid(headers=headers, rows=rows)
+        headers, rows = self._rows_of(control)
+        out: List[List[str]] = []
+        for row in rows:
+            out.append([self._text(c) for c in self._cells_of(row)])
+        if out and not headers:
+            self.notes.append(f"{automation_id!r}: {len(out)} rows read but no column "
+                              "headers found — columns are matched by name, so take a "
+                              "structure snapshot of this page")
+        return Grid(headers=headers, rows=out)
 
     def set_cell(self, automation_id: str, row: int, column: str, value: str,
                  scope: str = "") -> None:
@@ -359,9 +459,10 @@ class UiaBackend:
         click whose items are ListItems. Each step is checked and named, so
         a wrong assumption reports which one.
         """
+        import time
+
         control = self._find(automation_id, scope)
-        headers = [str(h) for h in control.column_headers()] \
-            if hasattr(control, "column_headers") else []
+        headers, rows = self._rows_of(control)
         wanted = column.strip().lower().replace(" ", "")
         try:
             col = next(i for i, h in enumerate(headers)
@@ -369,44 +470,61 @@ class UiaBackend:
         except StopIteration:
             raise AutomationError(f"grid {automation_id!r} has no column "
                                   f"{column!r}; headers: {headers}") from None
-        items = control.items()
-        if row >= len(items):
-            raise AutomationError(f"grid {automation_id!r} has {len(items)} rows, "
+        if row >= len(rows):
+            raise AutomationError(f"grid {automation_id!r} has {len(rows)} rows, "
                                   f"row {row + 1} asked for")
-        cells = items[row].children()
+        cells = self._cells_of(rows[row])
         if col >= len(cells):
             raise AutomationError(f"row {row + 1} has {len(cells)} cells, column "
                                   f"{col + 1} asked for")
         cell = cells[col]
+        pid = int(self._root().process_id())
         cell.click_input()
+        time.sleep(0.2)
         cell.click_input()                       # second click opens the editor
-        editor = None
-        for finder in (lambda: cell.descendants(control_type="ComboBox"),
-                       lambda: items[row].descendants(control_type="ComboBox"),
-                       lambda: control.descendants(control_type="ComboBox")):
+        time.sleep(0.4)
+
+        # The editor. A WinForms combo column opens a ComboBox in the cell;
+        # a DevExpress lookup opens a popup — its own top-level window of the
+        # same process — holding the items. Look in the cell, the row, the
+        # grid, then the process's windows, and take the first place whose
+        # items include the value we need.
+        def items_under(element):
             try:
-                found = finder()
+                found = element.descendants(control_type="ListItem")
             except Exception:  # noqa: BLE001
-                found = []
-            if found:
-                editor = found[0]
-                break
-        if editor is None:
-            raise AutomationError(f"no list editor opened on {column!r} of row "
-                                  f"{row + 1} — the cell may not be editable")
+                return []
+            return [(i, self._text(i)) for i in found]
+
+        places = [cell, rows[row], control]
         try:
-            editor.expand()
-        except Exception:  # noqa: BLE001 - some editors are already open
+            from pywinauto import Desktop  # noqa: PLC0415
+
+            places += [w for w in Desktop(backend="uia").windows()
+                       if int(w.process_id()) == pid]
+        except Exception:  # noqa: BLE001
             pass
-        options = [i for i in editor.descendants(control_type="ListItem")]
-        names = [o.window_text() for o in options]
-        pick = next((o for o, n in zip(options, names)
-                     if n.strip().upper() == value.strip().upper()), None)
+        seen_names: List[str] = []
+        pick = None
+        for place in places:
+            for element, name in items_under(place):
+                if name and name not in seen_names:
+                    seen_names.append(name)
+                if name.strip().upper() == value.strip().upper():
+                    pick = element
+                    break
+            if pick is not None:
+                break
         if pick is None:
-            raise AutomationError(f"{value!r} is not in the list: {names}")
+            raise AutomationError(
+                f"no list with {value!r} opened on {column!r} of row {row + 1}"
+                + (f" — items seen: {seen_names}" if seen_names else
+                   " — no list items appeared at all; take a structure snapshot "
+                   "with the cell's list open"))
         pick.click_input()
+        time.sleep(0.2)
         try:
-            editor.type_keys("{ENTER}", set_foreground=False)
+            cell.type_keys("{ENTER}", set_foreground=False)
         except Exception:  # noqa: BLE001 - the click may already have committed
             pass
 

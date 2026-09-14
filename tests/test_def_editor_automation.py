@@ -849,3 +849,50 @@ class TestTerminalMaterial:
             backend.set_cell(ids.GRID_CIRCUITS, 0, "Circuit", "TIN")
         with pytest.raises(ControlNotFound):
             backend.set_cell(ids.GRID_DEVICES, 0, "Term Matl", "TIN")
+
+
+
+class TestTheFirstRealSnapshot:
+    """What the first structure snapshot from DEF Editor taught the kit.
+
+    Its grids are DevExpress controls: UI Automation exposes them as Table,
+    rows as Custom, and the header row as a Custom holding Header elements
+    named for the columns — not the DataGridView / DataItem / HeaderItem
+    shape the kit was written against. And the tree is 15 panes deep to the
+    grid; the recorder's depth cap of 14 cut the snapshot off exactly there.
+    """
+
+    def _devexpress_grid(self):
+        from defauto import observe
+
+        class E(observe.Element):
+            def __init__(self, ct, aid="", name="", kids=()):
+                self.control_type, self.automation_id, self.name = ct, aid, name
+                self.class_name, self._kids = "", list(kids)
+                self.rect, self.enabled, self.visible = [0, 0, 1, 1], True, True
+
+            def children(self):
+                return list(self._kids)
+
+        return E("Table", "GridControlCircuits", kids=[
+            E("Custom", kids=[E("Header", name="Circuit"), E("Header", name="Connector No"),
+                              E("Header", name="Term Matl")]),
+            *[E("Custom", name=f"row {i}",
+                kids=[E("Custom", name="B4"), E("Custom", name="D2001A"),
+                      E("Custom", name="TIN")]) for i in range(5)]])
+
+    def test_the_recorder_reads_a_devexpress_table(self):
+        from defauto import observe
+        node = observe.walk(self._devexpress_grid())
+        assert node.headers == ["Circuit", "Connector No", "Term Matl"]
+        assert node.row_count == 5
+        assert "5 rows" in node.truncated
+
+    def test_the_recorder_reaches_the_grid(self):
+        from defauto import observe
+        assert observe.MAX_DEPTH >= 20, "the circuits grid sits 15 panes deep"
+
+    def test_grids_accept_table_or_datagrid_and_have_an_owner(self):
+        for grid in ids.GRIDS:
+            assert set(ids.CONTROL_TYPES[grid]) == {"Table", "DataGrid"}
+        assert ids.GRID_OWNER[ids.GRID_CIRCUITS] == ids.UC_CIRCUITS

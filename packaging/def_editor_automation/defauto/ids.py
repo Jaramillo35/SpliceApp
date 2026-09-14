@@ -210,7 +210,10 @@ CONTROL_TYPES = {
     BUTTON_FILTER: "Button",
     LIST_HARNESS: "List", LIST_COMPOSITE: "List", LIST_CIRCUIT_FAMILY: "List",
     RICH_RESULTS: "Edit",
-    **{g: "DataGrid" for g in GRIDS},
+    # DEF Editor's grids are DevExpress controls, which UI Automation exposes
+    # as Table (seen in the first structure snapshot); a plain WinForms
+    # DataGridView is a DataGrid. Either is accepted.
+    **{g: ("Table", "DataGrid") for g in GRIDS},
     **{f: "Edit" for f in FILTERS},
     **{c: "CheckBox" for c in CHECKBOXES},
 }
@@ -225,3 +228,14 @@ TERM_MATL_OPTIONS = ("BERYLLIUM", "GOLD", "SILVER", "SILVER+NICKEL",
 #: positions: the grid's column order is the user's to rearrange.
 TERM_COLUMNS = {"cnum": "Connector No", "circuit": "Circuit",
                 "terminal": "Term Matl"}
+
+#: Where to look for a grid whose AutomationId is not found: the user control
+#: that owns it. The circuits page's tree (uc_Harness_Edit_Circuits →
+#: TableLayoutPanel1 → Panel_Grid → the grid) is confirmed by snapshot; the
+#: grid's own id is not, so "the one grid under the circuits page" is the
+#: fallback, and the log says when it was used.
+GRID_OWNER = {GRID_CIRCUITS: UC_CIRCUITS, GRID_DEVICES: UC_DEVICES,
+              GRID_SPLICES: UC_SPLICES, GRID_INLINE_MATCH: UC_CHECKS_INLINE,
+              GRID_CIRCUIT_COMPLEXITY: UC_CIRCUITS_USAGE,
+              GRID_SALES_CODES_EDIT: UC_SALES_CODES}
+GRID_TYPES = ("Table", "DataGrid")

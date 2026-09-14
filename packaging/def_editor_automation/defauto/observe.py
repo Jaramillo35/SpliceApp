@@ -43,8 +43,10 @@ NAMED_TYPES = {
 DATA_TYPES = {"DataItem", "DataGrid", "Edit", "Document", "Text", "ListItem",
               "List", "ComboBox", "Custom", "Image", "TreeItem", "Table"}
 
-MAX_DEPTH = 14
-MAX_NODES = 6000
+#: WinForms nests deep — the circuits grid sits 15 panes below the main
+#: window, and a depth-14 cap cut the first real snapshot off exactly there.
+MAX_DEPTH = 48
+MAX_NODES = 20000
 GRID_ROWS_TO_DESCEND = 2
 
 
@@ -138,14 +140,19 @@ def walk(element: Element, redact: bool = True, max_depth: int = MAX_DEPTH,
             node.truncated = f"children unavailable: {type(exc).__name__}"
             return node
         if node.control_type in ("DataGrid", "Table", "List"):
-            rows = [k for k in kids if (k.control_type or "") in ("DataItem", "ListItem")]
+            rows = [k for k in kids if (k.control_type or "") in ("DataItem", "ListItem")
+                    or ((k.control_type or "") == "Custom"
+                        and not any((h.control_type or "") in ("Header", "HeaderItem")
+                                    for h in _safe_children(k)))]
             others = [k for k in kids if k not in rows]
             node.row_count = len(rows)
             for header in others:
-                if (header.control_type or "") in ("Header", "HeaderItem"):
-                    node.headers.extend(
-                        h.name for h in ([header] + list(_safe_children(header)))
-                        if (h.control_type or "") == "HeaderItem" and h.name)
+                # WinForms: a Header of HeaderItems. DevExpress: a Custom row
+                # of Header elements, each named for its column.
+                for h in [header] + list(_safe_children(header)):
+                    if (h.control_type or "") in ("Header", "HeaderItem") and h.name \
+                            and h.name not in node.headers:
+                        node.headers.append(h.name)
             kids = others + rows[:GRID_ROWS_TO_DESCEND]
             if len(rows) > GRID_ROWS_TO_DESCEND:
                 node.truncated = (f"{len(rows)} rows; first {GRID_ROWS_TO_DESCEND} "
