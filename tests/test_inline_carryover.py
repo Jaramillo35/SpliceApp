@@ -383,3 +383,23 @@ class TestOneCavityManyRows:
         each twin with its own comment; nothing is shared."""
         assert not result.get("X901A - Y901A!6").shared
         assert not result.get("X901A - Y901A!7").shared
+
+
+class TestEveryAttributeIsCarried:
+    """The card shows what stayed the same, not only what moved."""
+
+    def test_a_proposal_carries_both_rows_in_column_order(self, result):
+        p = result.get("X901A - Y901A!5")            # codes and size changed
+        assert p.attributes and p.attributes[0] == "Sales Code|1"
+        assert set(d.key for d in p.diffs) <= set(p.attributes)
+        assert p.old_values["Size|1"] == "0.35" and p.new_values["Size|1"] == "0.5"
+        assert p.old_values["Term Matl|1"] == p.new_values["Term Matl|1"] == "TIN"
+
+    def test_unchanged_lists_what_is_the_same_and_skips_blank_pairs(self, result):
+        p = result.get("X901A - Y901A!5")
+        same = p.unchanged()
+        assert "Term Matl|1" in same and "Circuit|1" in same
+        assert not any(d.key in same for d in p.diffs)
+        assert "Stripe|1" not in same, "blank on both rows is not a fact worth a line"
+        exact = result.get("X901A - Y901A!2")
+        assert exact.diffs == [] and "Circuit|1" in exact.unchanged()

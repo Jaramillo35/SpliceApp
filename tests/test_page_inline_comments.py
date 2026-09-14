@@ -160,6 +160,19 @@ class TestReview:
         await user.should_see("Re-check")
         await user.should_see("It talks about Size 1, Size 2 — which changed.")
 
+    async def test_the_card_shows_old_new_changed_and_unchanged_by_colour_and_word(
+            self, user: User, files):
+        """Colour is the fast read; the word is the reliable one. Both are
+        stated in the legend and used on the card: what changed sits first,
+        what did not follows, old beside new."""
+        await open_matched(user, files)
+        for word in ("Old report", "New report", "Changed", "Unchanged"):
+            await user.should_see(word)
+        await user.should_see("Size 1 · in the comment")
+        await user.should_see("0.35")                # old size, grey
+        await user.should_see("Term Matl 1")         # unchanged, listed anyway
+        await user.should_see("same")
+
     async def test_deciding_moves_on_and_undo_brings_it_back(self, user: User, files):
         await open_matched(user, files)
         await press(user, "Leave blank")

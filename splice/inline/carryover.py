@@ -346,6 +346,17 @@ class Proposal:
     #: the old row also carries to another new row of the same cavity —
     #: a one-to-many case, one comment per row
     shared: bool = False
+    #: every attribute of the pair, in column order, with both rows' values —
+    #: so a reviewer can see what stayed the same, not only what moved
+    attributes: List[str] = field(default_factory=list)
+    old_values: Dict[str, str] = field(default_factory=dict)
+    new_values: Dict[str, str] = field(default_factory=dict)
+
+    def unchanged(self) -> List[str]:
+        """Attributes with the same value on both rows (blank-blank skipped)."""
+        moved = {d.key for d in self.diffs}
+        return [k for k in self.attributes if k not in moved
+                and (self.old_values.get(k, "") or self.new_values.get(k, ""))]
 
     @property
     def id(self) -> str:
@@ -766,7 +777,9 @@ def match(old: Report, new: Report) -> Carryover:
                 existing=target.comment, pin=target.pin,
                 circuit1=target.circuit1, circuit2=target.circuit2,
                 suggested=suggested, decision=decision,
-                alternatives=alternatives, shared=src.row in shared_rows))
+                alternatives=alternatives,
+                attributes=list(keys), old_values=dict(src.values),
+                new_values=dict(target.values), shared=src.row in shared_rows))
 
         placed_cavities = {_cavity(chosen_src) for chosen_src, _d, _a in chosen.values()}
         for src in sources:

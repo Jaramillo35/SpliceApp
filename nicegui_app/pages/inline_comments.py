@@ -45,6 +45,16 @@ KEYS = {"c": co.COPY, "w": co.NEW, "b": co.BLANK, "k": co.KEEP,
         "r": co.REPLACE, "x": co.OBSOLETE}
 FILTERS = (("open", "To decide"), ("done", "Decided"), ("all", "All"))
 
+#: the colour language of the review, stated once in the legend and used on
+#: every card: grey is the OLD report, blue is the NEW report, amber marks
+#: what changed, green what did not. Words always go with the colour.
+COLOUR = {"old": theme.TEXT_2, "new": theme.STATUS_TEXT["info"],
+          "changed": theme.STATUS_TEXT["high"], "same": theme.STATUS_TEXT["ok"]}
+WASH = {"changed": theme.wash(theme.STATUS["high"]),
+        "same": theme.wash(theme.STATUS["ok"])}
+LEGEND = (("old", "Old report"), ("new", "New report"),
+          ("changed", "Changed"), ("same", "Unchanged"))
+
 
 def _circuit(item) -> str:
     one, two = item.circuit1 or "", item.circuit2 or ""
@@ -539,11 +549,24 @@ def page() -> None:
             counts = {"open": sum(1 for x in res.queue() if not x.decided),
                       "done": sum(1 for x in everything if x.decided),
                       "all": len(everything)}
-            with ui.row().classes("items-center gap-2 flex-wrap"):
-                ui.label("Show").classes("sx-eyebrow")
-                for key, label in FILTERS:
-                    c.toggle_chip(label, state["filter"] == key,
-                                  lambda k=key: set_filter(k), counts[key])
+            with ui.row().classes("w-full items-center gap-2 flex-wrap justify-between"):
+                with ui.row().classes("items-center gap-2 flex-wrap"):
+                    ui.label("Show").classes("sx-eyebrow")
+                    for key, label in FILTERS:
+                        c.toggle_chip(label, state["filter"] == key,
+                                      lambda k=key: set_filter(k), counts[key])
+                _legend()
+
+        def _legend() -> None:
+            """The colours of the cards, in words, so no one has to guess."""
+            with ui.row().classes("items-center gap-3 flex-wrap") \
+                    .props('role="note" aria-label="Colour legend"'):
+                ui.label("Colours").classes("sx-eyebrow")
+                for key, word in LEGEND:
+                    with ui.row().classes("items-center gap-1 no-wrap"):
+                        ui.element("div").classes("w-2.5 h-2.5 rounded-sm shrink-0") \
+                            .style(f"background:{COLOUR[key]}")
+                        ui.label(word).classes("text-xs").style(f"color:{COLOUR[key]}")
 
         def _queue(shown) -> None:
             views["row_ids"] = {}
@@ -600,24 +623,42 @@ def page() -> None:
                 _row_card(item)
 
         def _quote(text: str) -> None:
-            ui.label("Old comment").classes("sx-eyebrow mt-1")
+            ui.label("Old comment").classes("sx-eyebrow mt-1").style(f"color:{COLOUR['old']}")
             ui.label(text).classes("text-base px-3 py-2 rounded w-full") \
-                .style(f"background:{theme.SURFACE_2};border-left:3px solid {theme.BRAND}")
+                .style(f"background:{theme.SURFACE_2};border-left:3px solid {COLOUR['old']}")
 
-        def _diff_table(p) -> None:
+        def _attribute_table(p) -> None:
+            """Every attribute of the row, old beside new.
+
+            Changed attributes come first on an amber wash, the ones the
+            comment talks about named as such; the unchanged ones follow in
+            muted text with a green 'same'. Old is always grey, new always
+            blue — the same colours the legend shows.
+            """
             named = {d.key for d in p.mentioned}
-            ui.label("What changed").classes("sx-eyebrow mt-1")
-            with ui.element("div").classes("w-full grid gap-x-4 gap-y-1 items-baseline") \
-                    .style("grid-template-columns: minmax(7rem, max-content) 1fr 1fr"):
-                for heading in ("Attribute", "Old report", "New report"):
-                    ui.label(heading).classes("text-xs sx-faint")
-                for d in p.diffs:
-                    hit = d.key in named
-                    ui.label(d.label + (" · in the comment" if hit else "")) \
-                        .classes("text-sm") \
-                        .style(f"color:{theme.STATUS_TEXT['high']}" if hit else "")
-                    ui.label(d.old or "—").classes("text-sm sx-mono sx-muted")
-                    ui.label(d.new or "—").classes("text-sm sx-mono font-semibold")
+            moved = [d.key for d in p.diffs]
+            same = p.unchanged()
+            ui.label("What changed" if moved else "Nothing changed").classes("sx-eyebrow mt-1")
+            with ui.element("div").classes("w-full grid gap-x-4 gap-y-0.5 items-baseline") \
+                    .style("grid-template-columns: minmax(7rem, max-content) 1fr 1fr max-content"):
+                for heading, key in (("Attribute", None), ("Old report", "old"),
+                                     ("New report", "new"), ("", None)):
+                    ui.label(heading).classes("text-xs") \
+                        .style(f"color:{COLOUR[key]}" if key else f"color:{theme.TEXT_3}")
+                for key in [*moved, *same]:
+                    changed = key in moved
+                    label = co.label_of(key) + (" · in the comment" if key in named else "")
+                    cells = [
+                        (label, f"color:{COLOUR['changed']}" if changed else f"color:{theme.TEXT_2}", "text-sm"),
+                        (p.old_values.get(key, "") or "—", f"color:{COLOUR['old']}", "text-sm sx-mono"),
+                        (p.new_values.get(key, "") or "—",
+                         f"color:{COLOUR['new']};font-weight:{600 if changed else 400}", "text-sm sx-mono"),
+                        ("changed" if changed else "same",
+                         f"color:{COLOUR['changed' if changed else 'same']}", "text-xs"),
+                    ]
+                    for text, style, classes in cells:
+                        ui.label(text).classes(classes + " px-1 rounded") \
+                            .style(style + (f";background:{WASH['changed']}" if changed else ""))
 
         def _cavity_block(item) -> None:
             """The cavity as the card's unit.
@@ -684,12 +725,13 @@ def page() -> None:
                             else f"row {x.new_row} · {_sides(x)}"
                         ui.label(where).classes("text-xs sx-mono font-semibold")
                         if lost:
-                            detail = "no new row for it"
+                            detail, tone = "no new row for it", COLOUR["old"]
                         elif not x.diffs:
-                            detail = "identical to the old row"
+                            detail, tone = "identical to the old row", COLOUR["same"]
                         else:
-                            detail = x.changed
-                        ui.label(detail).classes("text-xs sx-muted truncate w-full text-left")
+                            detail, tone = x.changed, COLOUR["changed"]
+                        ui.label(detail).classes("text-xs truncate w-full text-left") \
+                            .style(f"color:{tone}")
                         same = (not lost and not isinstance(anchor, co.Lost)
                                 and x.old_comment == anchor.old_comment and x.id != anchor.id)
                         ui.label(("same old comment" if same else f"“{_comment(x)}”")) \
@@ -717,8 +759,7 @@ def page() -> None:
             for side in p.sides_gone:
                 c.note("high", f"Side {side} is gone — the wire no longer mates on "
                                "that side.")
-            if p.diffs:
-                _diff_table(p)
+            _attribute_table(p)
             _quote(p.old_comment)
             named = sorted({co.label_of(d.key) for d in p.mentioned})
             if named:
@@ -757,7 +798,7 @@ def page() -> None:
                     ui.label(f"Suggested: {co.DECISION_LABEL[p.suggested].lower()}") \
                         .classes("sx-caption")
             if p.decided and p.result:
-                c.note("ok", f"Will be written as: “{p.result}”")
+                c.note("info", f"Will be written into the new report as: “{p.result}”")
             if state["writing"] == p.id:
                 with ui.row().classes("w-full items-end gap-2 no-wrap"):
                     field = ui.input("New comment", value=p.text or p.old_comment) \
