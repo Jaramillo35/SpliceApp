@@ -7,6 +7,23 @@ after an update.
 ## Unreleased
 
 ### Changed
+- **Inline Comment Carryover: missing inlines are shown, not footnoted.**
+  Matching runs inline sheet by inline sheet, so only an inline present in
+  both reports can carry a comment. The review now opens with the coverage:
+  one quiet line when every inline is in both, and when not, a bar and three
+  columns — the inlines analysed, the ones only in the OLD report (their
+  comments cannot carry; each name is a button that jumps to those comments,
+  which must be acknowledged), and the ones only in the NEW report, which
+  arrive uncommented.
+- **Inline Comment Carryover: a cavity's rows are decided together.** A report
+  lays a cavity's variants out as several rows, and the two reports can hold
+  a different number of them. When a row has mates, the card shows the whole
+  cavity — every row in report order, which side it fills, how it differs
+  from the old row, its comment and its decision — with "copy to all open
+  rows" and "leave all blank" above the stack when two or more rows are open.
+  Each row still keeps its own comment cell. When the old report had more
+  rows than the new one, the card says that one comment stays on each
+  surviving row and the rest need acknowledging.
 - **Inline Comment Carryover: a review gate built for attention.** The
   comments that need your judgement come as a queue, the likeliest to be wrong
   first: a comment that names what changed ("Check size" after the size

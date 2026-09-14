@@ -128,9 +128,21 @@ class TestInstructionsAndCoverage:
 
     async def test_missing_inlines_are_shown_after_the_match(self, user: User, files):
         await open_matched(user, files)
-        await user.should_see("Inlines: 2 in both reports (matched)")
-        await user.should_see("Only in OLD: X903A - Y903A")
-        await user.should_see("Only in NEW: X904A - Y904A")
+        await user.should_see("2 of 4 inlines are in both reports — 2 missing")
+        await user.should_see("In both · 2")
+        await user.should_see("Only in OLD · 1")
+        await user.should_see("X903A - Y903A · 1 comment")
+        await user.should_see("Only in NEW · 1")
+        await user.should_see("X904A - Y904A")
+
+    async def test_an_old_only_inline_jumps_to_its_lost_comments(self, user: User, files):
+        """The missing inline is not a footnote: its name is the way to the
+        comments it lost, which the gate makes someone acknowledge."""
+        await open_matched(user, files)
+        await press(user, "X903A - Y903A · 1 comment")
+        await wait_for(user, "X903A - Y903A · pin 1 · Q301")
+        await user.should_see("Gone sheet")
+        await user.should_see("No row in the new report")
 
 
 class TestReview:
@@ -164,7 +176,10 @@ class TestReview:
         await wait_for(user, CARD_SIDE_GONE)
         await key(user, "ArrowDown")          # look at the next one without deciding
         await wait_for(user, CARD_CAVITY_12)  # the one-old-comment, two-rows cavity
-        await user.should_see("Same cavity — 2 rows for pin 12")
+        await user.should_see("Same cavity · pin 12 · Q112")
+        await user.should_see("1 old comment → 2 rows in the new report")
+        await user.should_see("row 13 · both sides")     # identical: copied already
+        await user.should_see("row 14 · side 1 only")    # the row the cavity gained
         await key(user, "c")                  # copy; on to the suffix change
         await wait_for(user, CARD_SUFFIX)
         await wait_for(user, "a decision on 5 row(s)")
@@ -237,3 +252,37 @@ class TestGenerate:
         assert [ws.cell(r, 1).value for r in range(2, 13)] == [
             "WIRE TYPE OK", "SUFFIX OK", "Varient on IP", "size re-checked",
             "Variant B", "Variant A", None, None, "OPEN ISSUE", "New view", None]
+
+
+class TestCavity:
+    async def test_the_cavity_rows_are_stacked_with_their_states(self, user: User, files):
+        """Cavity 12 is one old comment on two new rows: the identical row is
+        already copied, the row the cavity gained waits. Both are on the card,
+        with their state, so the engineer decides the cavity as a whole. The
+        copy-to-all action is exercised at the engine level (decide_cavity);
+        no fixture cavity has two open rows to click it on."""
+        await open_matched(user, files)
+        await wait_for(user, "a decision on 7 row(s)")
+        await key(user, "b")                  # Check size
+        await key(user, "b")                  # side 2 gone
+        await wait_for(user, CARD_CAVITY_12)
+        await user.should_see("Same cavity · pin 12 · Q112")
+        await user.should_see("Copied")       # row 13, decided without asking
+        await user.should_see("to decide")    # row 14, this card
+        await user.should_see("same old comment")
+        await key(user, "c")
+        await wait_for(user, "a decision on 4 row(s)")
+        await key(user, "u")
+        await wait_for(user, "a decision on 5 row(s)")
+
+    async def test_many_old_comments_one_row_says_the_rest_need_acknowledging(
+            self, user: User, files):
+        await open_matched(user, files)
+        await press(user, "X903A - Y903A · 1 comment")   # a lost card, then walk up
+        await wait_for(user, "Gone sheet")
+        await key(user, "ArrowUp")
+        await wait_for(user, "Var B")
+        await user.should_see("2 old comments → 1 row in the new report")
+        await user.should_see("one comment stays on each surviving row, the rest must "
+                              "be acknowledged")
+        await user.should_see("row 15 · both sides")

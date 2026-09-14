@@ -127,6 +127,13 @@ what the engine could not. Inline Comment Carryover is the reference:
 - **Nothing dropped is invisible.** Items that cannot be placed block the
   output until acknowledged, and the ones marked for manual work are listed
   beside the download.
+- **Scope is stated before the list.** What the engine could not even
+  attempt is shown ahead of what it judged: the review opens with the inline
+  coverage — quiet when complete, a bar and three columns when not, the
+  missing inlines each a button into the items they cost.
+- **The unit the engineer thinks in is the card's unit.** When rows belong
+  together (a cavity laid out as several variant rows), the card stacks them
+  in report order with their state, and bulk applies to that unit only.
 
 ## Accessibility
 

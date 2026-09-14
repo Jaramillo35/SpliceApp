@@ -53,6 +53,21 @@ def _circuit(item) -> str:
     return f"{one or '—'} / {two or '—'}"
 
 
+def _sides(item) -> str:
+    """Which side of the inline this row fills — what tells a cavity's rows
+    apart at a glance."""
+    one, two = bool(item.circuit1), bool(item.circuit2)
+    if one and two:
+        return "both sides"
+    return "side 1 only" if one else "side 2 only" if two else "no side"
+
+
+def _shape(rows: int, comments: int) -> str:
+    """'1 old comment → 2 rows in the new report'."""
+    return (f"{comments} old comment{'s' if comments != 1 else ''} → "
+            f"{rows} row{'s' if rows != 1 else ''} in the new report")
+
+
 def _comment(item) -> str:
     return item.comment if isinstance(item, co.Lost) else item.old_comment
 
@@ -228,6 +243,19 @@ def page() -> None:
         state.update(selected=item_id, writing=None)
         refresh("review")
 
+    def go_to_lost(sheet: str) -> None:
+        """Put a sheet's not-carried comments on the card — the open ones if
+        any are left, otherwise all of them so the acknowledgement shows."""
+        res = state["result"]
+        lost = [x for x in res.lost if x.sheet == sheet]
+        if not lost:
+            return
+        open_ = [x for x in lost if not x.decided]
+        state.update(filter="open" if open_ else "all",
+                     selected=(open_ or lost)[0].id, writing=None)
+        refresh("review")
+        reveal()
+
     def set_filter(key: str) -> None:
         state["filter"] = key
         refresh("review")
@@ -382,26 +410,80 @@ def page() -> None:
                             _card(res)
 
         def _coverage(res) -> None:
-            """Which inlines the two reports share. Functional rendering; the
-            UI/UX design of this block is being done separately."""
+            """Which inlines the two reports share.
+
+            Quiet when every inline is in both; a bar and three columns when
+            not, because a missing inline is where comments are lost and an
+            engineer must not learn that from a footnote.
+            """
             cov = res.coverage
+            shared, old_only, new_only = cov.in_both, cov.old_only, cov.new_only
             if cov.complete:
-                c.note("ok", f"Inlines: all {len(cov.in_both)} inline sheet(s) are in "
-                             "both reports — every one is matched.")
+                c.note("ok", f"Inlines: all {len(shared)} are in both reports — "
+                             "every one is analysed.")
                 return
-            c.note("high",
-                   f"Inlines: {len(cov.in_both)} in both reports (matched)"
-                   + (f" · {len(cov.old_only)} only in OLD — their comments cannot "
-                      "carry" if cov.old_only else "")
-                   + (f" · {len(cov.new_only)} only in NEW — nothing to carry into "
-                      "them" if cov.new_only else "")
-                   + ". Ideally every inline is in both; the analysis runs on the "
-                     "shared ones.")
-            with ui.row().classes("gap-6 flex-wrap"):
-                if cov.old_only:
-                    ui.label("Only in OLD: " + ", ".join(cov.old_only)).classes("sx-mono text-sm")
-                if cov.new_only:
-                    ui.label("Only in NEW: " + ", ".join(cov.new_only)).classes("sx-mono text-sm")
+            lost_by_sheet: dict = {}
+            for x in res.lost:
+                lost_by_sheet[x.sheet] = lost_by_sheet.get(x.sheet, 0) + 1
+            total = len(shared) + len(old_only) + len(new_only)
+            with ui.column().classes("w-full gap-2 rounded p-3") \
+                    .style(f"background:{theme.SURFACE_2};border:1px solid {theme.LINE}"):
+                with ui.row().classes("items-baseline gap-3 flex-wrap"):
+                    ui.label("Inline coverage").classes("sx-eyebrow")
+                    ui.label(f"{len(shared)} of {total} inlines are in both reports "
+                             f"— {cov.missing} missing").classes("text-sm font-semibold") \
+                        .style(f"color:{theme.STATUS_TEXT['high']}")
+                # the bar: one segment per group, width by count, label by word
+                with ui.row().classes("w-full gap-0.5 no-wrap") \
+                        .props('role="img" aria-label="'
+                               f"{len(shared)} inlines in both reports, "
+                               f"{len(old_only)} only in the old report, "
+                               f'{len(new_only)} only in the new report"'):
+                    for count, kind in ((len(shared), "ok"), (len(old_only), "high"),
+                                        (len(new_only), "review")):
+                        if count:
+                            ui.element("div").classes("h-2 rounded-sm") \
+                                .style(f"flex:{count} 1 0;background:{theme.STATUS[kind]}")
+                with ui.element("div").classes(
+                        "w-full grid gap-4 grid-cols-1 md:grid-cols-3 items-start"):
+                    _coverage_column(
+                        "ok", f"In both · {len(shared)}",
+                        "Analysed — comments carry here.", shared)
+                    _coverage_column(
+                        "high", f"Only in OLD · {len(old_only)}",
+                        "Their comments cannot carry — each must be acknowledged.",
+                        old_only, jump=True, counts=lost_by_sheet)
+                    _coverage_column(
+                        "review", f"Only in NEW · {len(new_only)}",
+                        "Nothing to carry into them — they arrive uncommented.",
+                        new_only)
+                ui.label("Ideally every inline is in both reports. The analysis ran on "
+                         "the shared ones; the missing ones are listed so nothing is "
+                         "lost quietly.").classes("sx-caption")
+
+        def _coverage_column(kind: str, title: str, meaning: str, names: list,
+                             jump: bool = False, counts: dict | None = None) -> None:
+            ink = theme.STATUS_TEXT[kind]
+            with ui.column().classes("gap-1 min-w-0"):
+                ui.label(title).classes("text-sm font-semibold").style(f"color:{ink}")
+                ui.label(meaning).classes("sx-caption")
+                if not names:
+                    ui.label("none").classes("text-xs sx-faint")
+                    return
+                with ui.row().classes("gap-1 flex-wrap"):
+                    for name in names:
+                        n = (counts or {}).get(name, 0)
+                        label = f"{name} · {n} comment{'s' if n != 1 else ''}" \
+                            if jump else name
+                        if jump:
+                            ui.button(label, on_click=lambda _e, sheet=name: go_to_lost(sheet)) \
+                                .props("outline dense no-caps") \
+                                .classes("sx-mono text-xs") \
+                                .style(f"color:{ink};border-color:{theme.STATUS[kind]}55") \
+                                .tooltip("Show its comments in the review")
+                        else:
+                            ui.label(label).classes("sx-mono text-xs px-2 py-0.5 rounded") \
+                                .style(f"background:{theme.wash(theme.STATUS[kind])};color:{ink}")
 
         def _gate(res) -> None:
             items = res.queue()
@@ -538,45 +620,87 @@ def page() -> None:
                     ui.label(d.new or "—").classes("text-sm sx-mono font-semibold")
 
         def _cavity_block(item) -> None:
-            """The other rows of this cavity, so a one-to-many case is seen
-            and decided together — one comment per row. Functional rendering;
-            the UI/UX design of this block is being done separately."""
+            """The cavity as the card's unit.
+
+            A report lays a cavity's variants out as several rows. When this
+            row has mates, every row of the cavity is stacked here in report
+            order — which side it fills, how it differs from the old row, its
+            comment, its decision — so the engineer sees the whole cavity and
+            decides it as one, while each row keeps its own comment cell.
+            """
             res = state["result"]
             mates = res.cavity_mates(item.id)
             if not mates:
                 return
-            ui.label(f"Same cavity — {len(mates) + 1} rows for pin {item.pin} · "
-                     f"{_circuit(item)}").classes("sx-eyebrow mt-1")
-            with ui.column().classes("w-full gap-1"):
-                for m in mates:
-                    lost = isinstance(m, co.Lost)
-                    with ui.row().classes("items-center gap-2 no-wrap w-full"):
-                        ui.icon("check_circle" if m.decided else "radio_button_unchecked") \
-                            .classes("text-base shrink-0") \
-                            .style(f"color:{theme.STATUS_TEXT['ok'] if m.decided else theme.TEXT_3}")
-                        ui.label("old row, not carried" if lost else
-                                 f"row {m.new_row}" + (" · same old comment" if
-                                                       not lost and m.old_comment == getattr(item, 'old_comment', None) else "")) \
-                            .classes("text-xs sx-muted shrink-0")
-                        ui.label(f"“{_comment(m)}”").classes("text-sm truncate grow")
-                        if m.decided:
-                            ui.label(DONE_LABEL[m.ack if lost else m.decision]) \
-                                .classes("text-xs shrink-0") \
-                                .style(f"color:{theme.STATUS_TEXT['ok']}")
-                        ui.button("Open", on_click=lambda _e, i=m.id: select(i)) \
-                            .props("flat dense no-caps")
-            if not isinstance(item, co.Lost):
-                open_rows = [m for m in mates if not isinstance(m, co.Lost) and not m.decided]
-                if open_rows or not item.decided:
-                    n = len(open_rows) + (0 if item.decided else 1)
+            rows = sorted([item, *mates],
+                          key=lambda x: (isinstance(x, co.Lost), x.position))
+            new_rows = [x for x in rows if not isinstance(x, co.Lost)]
+            lost_rows = [x for x in rows if isinstance(x, co.Lost)]
+            old_comments = len({x.old_row for x in new_rows}) + len(lost_rows)
+            open_rows = [x for x in new_rows if not x.decided]
+
+            with ui.column().classes("w-full gap-2 rounded p-3 mt-1") \
+                    .style(f"background:{theme.SURFACE_2};border:1px solid {theme.LINE}"):
+                with ui.row().classes("items-baseline gap-3 flex-wrap"):
+                    ui.label(f"Same cavity · pin {item.pin} · {_circuit(item)}") \
+                        .classes("sx-eyebrow")
+                    ui.label(_shape(len(new_rows), old_comments)) \
+                        .classes("text-sm font-semibold")
+                if lost_rows and new_rows:
+                    c.note("high", f"{len(lost_rows)} old comment(s) have no row of their "
+                                   f"own here: one comment stays on each surviving "
+                                   "row, the rest must be acknowledged — they are "
+                                   "offered on the surviving row as alternatives.")
+                elif len(new_rows) > 1:
+                    c.note("info", "One comment per row: copy the old comment where it "
+                                   "still applies, decide the rest one by one.")
+                if len(open_rows) >= 2 and not isinstance(item, co.Lost):
                     with ui.row().classes("gap-2 flex-wrap"):
-                        ui.button(f"Copy old comment to all {n} undecided row(s) of this cavity",
+                        ui.button(f"Copy old comment to all {len(open_rows)} open rows",
                                   icon="content_copy",
                                   on_click=lambda _e: decide_cavity(item.id, co.COPY)) \
                             .props("outline dense no-caps")
-                        ui.button(f"Leave all {n} blank",
+                        ui.button(f"Leave all {len(open_rows)} blank",
                                   on_click=lambda _e: decide_cavity(item.id, co.BLANK)) \
                             .props("outline dense no-caps")
+                with ui.column().classes("w-full gap-1"):
+                    for x in rows:
+                        _cavity_row(x, current=(x.id == item.id), anchor=item)
+
+        def _cavity_row(x, current: bool, anchor) -> None:
+            lost = isinstance(x, co.Lost)
+            row = ui.button(on_click=lambda _e, i=x.id: select(i)) \
+                .props(f'flat no-caps align=left aria-pressed="{"true" if current else "false"}"') \
+                .classes("rounded px-2 py-1 w-full normal-case") \
+                .style(f"background:{theme.wash(theme.BRAND)}" if current
+                       else f"background:{theme.SURFACE}")
+            with row:
+                with ui.row().classes("items-center gap-2 no-wrap w-full"):
+                    ui.icon("check_circle" if x.decided else "radio_button_unchecked") \
+                        .classes("text-base shrink-0") \
+                        .style(f"color:{theme.STATUS_TEXT['ok'] if x.decided else theme.TEXT_3}")
+                    with ui.column().classes("gap-0 min-w-0 grow items-start"):
+                        where = ("old row " + str(x.row) + " · not carried") if lost \
+                            else f"row {x.new_row} · {_sides(x)}"
+                        ui.label(where).classes("text-xs sx-mono font-semibold")
+                        if lost:
+                            detail = "no new row for it"
+                        elif not x.diffs:
+                            detail = "identical to the old row"
+                        else:
+                            detail = x.changed
+                        ui.label(detail).classes("text-xs sx-muted truncate w-full text-left")
+                        same = (not lost and not isinstance(anchor, co.Lost)
+                                and x.old_comment == anchor.old_comment and x.id != anchor.id)
+                        ui.label(("same old comment" if same else f"“{_comment(x)}”")) \
+                            .classes("text-sm truncate w-full text-left"
+                                     + (" sx-faint" if same else ""))
+                    if x.decided:
+                        ui.label(DONE_LABEL[x.ack if lost else x.decision]) \
+                            .classes("text-xs shrink-0") \
+                            .style(f"color:{theme.STATUS_TEXT['ok']}")
+                    else:
+                        ui.label("to decide").classes("text-xs shrink-0 sx-faint")
 
         def _row_card(p) -> None:
             with ui.row().classes("items-center gap-2 flex-wrap"):
@@ -584,7 +708,7 @@ def page() -> None:
                     c.chip("high", "Re-check")
                 c.chip("info", co.KIND_LABEL[p.kind])
                 if p.shared:
-                    c.chip("review", "One old comment, several rows")
+                    c.chip("review", "Same cavity, several rows")
                 if p.decided:
                     c.chip("ok", DONE_LABEL[p.decision])
             ui.label(f"{p.sheet} · pin {p.pin} · {_circuit(p)}") \
