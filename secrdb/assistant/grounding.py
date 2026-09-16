@@ -154,10 +154,11 @@ def _expand(value: str) -> Iterable[str]:
         piece = _normalise(piece)
         if piece:
             forms.add(piece)
-    if re.fullmatch(r"\d{4}", token):  # model year
-        forms.add(token[-2:])
+    if re.fullmatch(r"\d{4}(?:\.\d)?", token):  # model year, 2028 or 2027.5
+        short = token[2:]
+        forms.add(short)
         forms.add("MY" + token)
-        forms.add("MY" + token[-2:])
+        forms.add("MY" + short)
     return forms
 
 

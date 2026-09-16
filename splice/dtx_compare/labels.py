@@ -32,7 +32,7 @@ UNKNOWN = "unknown"
 #: space: "28 RU X1 DetailedDTx…" would otherwise read the D of "Detailed" as
 #: the suffix. The trailing guard stops a phase running into the next word.
 _FROM_NAME = re.compile(
-    r"(?:20)?(?P<year>\d{2})[\s_\-()]*"
+    r"(?:20)?(?P<year>\d{2}(?:\.\d)?)[\s_\-()]*"
     r"(?P<program>[A-Z]{2})[\s_\-()]*"
     r"(?P<phase>[XV]\d(?:_?[A-Z])?)(?![A-Za-z])",
     re.I)
@@ -57,8 +57,7 @@ class ReportLabel:
     @property
     def slug(self) -> str:
         """Filename-safe form: ``2028RU_X2_A``."""
-        return re.sub(r"[^A-Za-z0-9]+", "_",
-                      "_".join(p for p in (self.program, self.phase) if p)).strip("_")
+        return slugify("_".join(p for p in (self.program, self.phase) if p))
 
     @property
     def known(self) -> bool:
@@ -95,6 +94,14 @@ class ReportLabel:
         head = self.text_with_date
         return f"{head}  ({self.source}: {self.file_name})" if self.file_name \
             else head
+
+
+def slugify(text: str) -> str:
+    """Filename-safe, keeping a decimal point between digits so a half model
+    year survives — ``2027.5RU`` stays ``2027.5RU``, not ``2027_5RU``, which
+    the SECR Database's DTCR library would not read as a year."""
+    text = re.sub(r"(?<!\d)\.|\.(?!\d)", "_", str(text or ""))
+    return re.sub(r"[^A-Za-z0-9.]+", "_", text).strip("_")
 
 
 def from_file_name(filename: str) -> ReportLabel:
@@ -146,8 +153,7 @@ def comparison_slug(old: ReportLabel, new: ReportLabel) -> str:
             if left == right and old.date_slug and new.date_slug \
                     and old.date_slug != new.date_slug:
                 left, right = f"{left}_{old.date_slug}", f"{right}_{new.date_slug}"
-            return re.sub(r"[^A-Za-z0-9]+", "_",
-                          f"{old.program}_{left}_vs_{right}").strip("_")
+            return slugify(f"{old.program}_{left}_vs_{right}")
         return f"{old.slug}_vs_{new.slug}".strip("_")
     return ""
 

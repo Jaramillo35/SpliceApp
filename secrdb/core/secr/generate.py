@@ -311,7 +311,9 @@ def _build_secr_code(
     program_for_code = str(secr_program).strip() or c11_value
     phase_for_code = str(secr_phase).strip() or f"{code1}{code2}"
 
-    my_two = my_for_code[-2:] if len(my_for_code) >= 2 else my_for_code
+    from secrdb.core.secr.identity import short_model_year  # noqa: PLC0415
+
+    my_two = short_model_year(my_for_code) or my_for_code
     type_prefix = "D" if str(secr_change_type).strip().lower().startswith("design") else "M"
     phase = phase_for_code.replace("_", "").replace(" ", "").upper()
     program_clean = program_for_code.replace(" ", "").upper()

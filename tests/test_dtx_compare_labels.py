@@ -161,3 +161,13 @@ class TestOutputFilename:
     def test_without_a_comparison_the_file_names_are_used_as_before(self):
         name = build_output_filename("old_report.xls", "new_report.xls")
         assert "old_report_vs_new_report" in name
+
+
+def test_a_half_model_year_survives_the_file_name_and_the_slug():
+    from splice.dtx_compare import labels
+    label = labels.from_file_name("2027.5_RU_X3_A_DetailedDTxCircuitsReport.xls")
+    assert (label.program, label.phase) == ("2027.5RU", "X3_A")
+    assert label.slug == "2027.5RU_X3_A"
+    old = labels.ReportLabel(program="2027.5RU", phase="X1")
+    assert labels.comparison_slug(old, label) == "2027.5RU_X1_vs_X3_A"
+    assert labels.slugify("a.b 2027.5RU. x") == "a_b_2027.5RU_x"

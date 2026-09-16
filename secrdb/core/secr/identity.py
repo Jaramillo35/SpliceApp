@@ -51,8 +51,13 @@ PROVENANCE_GENERATED = "GENERATED"
 #: update normally means a new SECR is required.
 SCOPE_FIELDS = ("harness_family", "model_year", "phase", "program")
 
+#: A model year is four digits, or four digits and a half — ``2027.5`` is a
+#: real model year (seen 2026-09-16: "2027.5 RU X3_A … Body_Left"), and it is
+#: not MY2027: the two are separate programmes with separate SECR sequences.
+MODEL_YEAR_RE = r"\d{4}(?:\.\d)?"
+
 _IDENTIFIER_RE = re.compile(
-    r"(?P<my>\d{4})\s+(?P<program>[A-Za-z0-9]+)\s+(?P<phase>[A-Za-z0-9]+(?:_[A-Za-z0-9]+)?)"
+    rf"(?P<my>{MODEL_YEAR_RE})\s+(?P<program>[A-Za-z0-9]+)\s+(?P<phase>[A-Za-z0-9]+(?:_[A-Za-z0-9]+)?)"
     r"(?:\s+[\d_]+)?\s*(?P<harness>[A-Za-z0-9 _\-]*?)\s*(?:ID\s*:|$)"
 )
 
@@ -74,9 +79,10 @@ class SecrMetadata:
 
     @property
     def model_year_2(self) -> str:
-        """Last two digits of the model year, as used in the SECR number."""
-        digits = re.sub(r"\D", "", self.model_year)
-        return digits[-2:] if len(digits) >= 2 else digits
+        """The short model year used in the SECR number: ``2028`` → ``28``,
+        ``2027.5`` → ``27.5`` (the half is kept — dropping it would file a
+        MY27.5 SECR under MY27)."""
+        return short_model_year(self.model_year)
 
     def as_dict(self) -> Dict[str, str]:
         return {
@@ -116,6 +122,22 @@ class ExtractedMetadata:
 
 def _clean(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def short_model_year(value: Any) -> str:
+    """``2028``/``28`` → ``28``; ``2027.5``/``27.5`` → ``27.5``; else the digits.
+
+    One rule for the SECR number, the numbering scope, the DTCR library and
+    the assistant, so ``MY27.5`` is the same scope everywhere and never
+    collapses into ``MY27``.
+    """
+    text = str(value or "").strip()
+    match = re.fullmatch(r"\D*(\d{2,4})(?:\.(\d))?\D*", text)
+    if not match:
+        digits = re.sub(r"\D", "", text)
+        return digits[-2:] if len(digits) >= 2 else digits
+    year, half = match.group(1)[-2:], match.group(2)
+    return f"{year}.{half}" if half else year
 
 
 def _normalize_phase(value: str) -> str:
@@ -305,9 +327,11 @@ def validate_metadata(
         for name, label in labels.items()
         if not getattr(metadata, name)
     ]
-    if metadata.model_year and not re.fullmatch(r"\d{2}|\d{4}", metadata.model_year):
+    if metadata.model_year and not re.fullmatch(r"(?:\d{2}|\d{4})(?:\.\d)?",
+                                                metadata.model_year):
         problems.append(
-            f"Model Year '{metadata.model_year}' is not a 2- or 4-digit year."
+            f"Model Year '{metadata.model_year}' is not a 2- or 4-digit year "
+            "(a half year such as 2027.5 is accepted)."
         )
     if change_type and change_type not in CHANGE_TYPE_CODES:
         problems.append(
@@ -463,6 +487,6 @@ def identity_from_metadata(
 
 
 def scope_key(model_year: str, phase: str) -> Tuple[str, str]:
-    """Normalize a numbering scope so ``2028``/``28`` and ``x1``/``X1`` agree."""
-    digits = re.sub(r"\D", "", str(model_year or ""))
-    return (digits[-2:] if len(digits) >= 2 else digits, _normalize_phase(phase))
+    """Normalize a numbering scope so ``2028``/``28`` and ``x1``/``X1`` agree
+    — and ``2027.5`` stays ``27.5``, its own scope."""
+    return (short_model_year(model_year), _normalize_phase(phase))

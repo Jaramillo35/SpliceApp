@@ -296,3 +296,15 @@ def test_statistics_for_a_missing_report_are_empty(db_path: Path) -> None:
     stats = library.report_statistics(999, db_path=db_path)
     assert stats.total == 0 and stats.by_harness_family == []
     assert stats.match_rate == 0.0          # no division by zero
+
+
+def test_a_half_model_year_is_its_own_scope():
+    """MY27.5 is not MY27: the library must neither drop the half nor split
+    '2027.5' and '27.5' into two scopes."""
+    scope = library.normalize_scope("ru", "2027.5", "x3")
+    assert (scope.program, scope.model_year, scope.phase) == ("RU", "27.5", "X3")
+    assert library.normalize_scope("RU", "27.5", "X3") == scope
+    assert library.normalize_scope("RU", "2027", "X3").model_year == "27"
+    parsed = library.parse_scope_from_filename(
+        "DTCR_Matching_Report_2027.5RU_X1_vs_X3_A_20260916_101500.xlsx")
+    assert (parsed.program, parsed.model_year, parsed.phase) == ("RU", "27.5", "X3")

@@ -765,3 +765,50 @@ def test_import_does_not_rename_or_renumber_a_historical_secr(db_path: Path) -> 
     assert stored["filename"] == "SECR_28RU_X1_IP_D50319A_V1_05072026.xlsx"
     assert stored["secr_sequence_number"] is None
     assert stored["import_origin"] == secr_db.ORIGIN_IMPORTED
+
+
+# ---------------------------------------------------------------------------
+# Half model years — 2027.5 is a model year, and not MY2027
+# ---------------------------------------------------------------------------
+
+def test_a_half_model_year_is_read_from_the_identifier() -> None:
+    """Field report 2026-09-16: '2027.5 RU X3_A 09_16_26_14_10_52 Body_Left
+    ID: 11769' — creation was blocked with Model Year, Phase and Program
+    'could not be determined', because the parser wanted four digits."""
+    from secrdb.core.secr.identity import validate_metadata
+    payload = build_def_compare(harness="Body_Left", model_year="2027.5",
+                                program="RU", new_phase="X3_A", old_phase="V1",
+                                old_model_year="2027")
+    extracted = extract_metadata_from_def(
+        payload, "8.- 2027.5_RU_X3_A_vs_2027_RU_V1_BODY LEFT_DEF_DEF_Compare_20260916.xlsx")
+    assert extracted.metadata == SecrMetadata("BODY_LEFT", "2027.5", "X3", "RU")
+    assert validate_metadata(extracted.metadata, CHANGE_TYPE_DESIGN) == []
+    # the two DEFs are different model years; that is a warning, not a block
+    assert any("Model year differs" in w for w in extracted.warnings)
+
+
+def test_a_half_model_year_keeps_its_half_in_the_number_and_the_scope() -> None:
+    from secrdb.core.secr.identity import scope_key, short_model_year
+    half = SecrMetadata("BODY_LEFT", "2027.5", "X3", "RU")
+    assert half.model_year_2 == "27.5"
+    assert build_secr_number(half, CHANGE_TYPE_DESIGN, 1000) == "D27.5X3RU_1000"
+    assert build_filename(half, CHANGE_TYPE_DESIGN, 1000, 1, date(2026, 9, 16)) \
+        == "SECR_BODY_LEFT_D27.5X3RU_1000_V1_09162026.xlsx"
+    assert scope_key("2027.5", "X3") == ("27.5", "X3") != scope_key("2027", "X3")
+    assert [short_model_year(v) for v in ("2028", "28", "2027.5", "27.5", "MY2028", "")] \
+        == ["28", "28", "27.5", "27.5", "28", ""]
+
+
+def test_my27_and_my27_5_issue_their_own_numbers(db_path: Path) -> None:
+    assert secr_db.reserve_next_secr_number("2027", "X3", db_path=db_path) == 1000
+    assert secr_db.reserve_next_secr_number("2027.5", "X3", db_path=db_path) == 1000
+    assert secr_db.reserve_next_secr_number("27.5", "X3", db_path=db_path) == 1001
+    assert secr_db.reserve_next_secr_number("2027", "X3", db_path=db_path) == 1001
+
+
+def test_the_number_preview_and_the_def_inputs_take_a_half_year() -> None:
+    from secrdb.core.secr.numbering import (build_secr_number_preview,
+                                           extract_secr_number_inputs_from_def)
+    assert build_secr_number_preview("2027.5", "RU", "X3A", "Design Change") == "D27.5RUX3A_1000"
+    payload = build_def_compare(model_year="2027.5", program="RU", new_phase="X3_A")
+    assert extract_secr_number_inputs_from_def(payload) == ("2027.5", "RU", "X3A")

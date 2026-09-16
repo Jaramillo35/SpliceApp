@@ -430,13 +430,13 @@ def dtcr_matching_file_name(old_file_bytes: bytes, new_file_bytes: bytes,
     that states neither falls back to the file names, as the change report
     does, and the library then asks for the scope.
     """
-    from splice.dtx_compare.labels import comparison_slug, resolve  # noqa: PLC0415
+    from splice.dtx_compare.labels import comparison_slug, resolve, slugify  # noqa: PLC0415
 
     comparison = comparison_slug(resolve(old_file_bytes, old_file_name),
                                  resolve(new_file_bytes, new_file_name))
     if not comparison:
         comparison = f"{Path(old_file_name).stem}_vs_{Path(new_file_name).stem}"
-    comparison = re.sub(r"[^A-Za-z0-9]+", "_", comparison).strip("_")
+    comparison = slugify(comparison)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"DTCR_Matching_Report_{comparison}_{timestamp}.xlsx"
 

@@ -49,6 +49,8 @@ def build_secr_number_preview(
     for a Design Change and ``M`` otherwise, and ``MY2`` is the last two digits
     of the model year. Returns ``""`` if the model year is too short to be valid.
     """
+    from secrdb.core.secr.identity import short_model_year  # noqa: PLC0415
+
     my_clean = str(model_year or "").strip()
     program_clean = str(program or "").strip().upper().replace(" ", "")
     phase_clean = str(phase or "").strip().upper().replace(" ", "")
@@ -57,7 +59,7 @@ def build_secr_number_preview(
         return ""
 
     type_prefix = "D" if secr_type_label == "Design Change" else "M"
-    my_two = my_clean[-2:]
+    my_two = short_model_year(my_clean)
     return f"{type_prefix}{my_two}{program_clean}{phase_clean}_{sequence}"
 
 
@@ -100,8 +102,9 @@ def extract_secr_number_inputs_from_def(def_bytes: bytes) -> tuple[str, str, str
         if not identifier_text:
             return "", "", ""
 
-        # Match: 2028 RU X1_A
-        match = re.search(r"(\d{4})\s+([A-Za-z0-9]+)\s+([A-Za-z0-9]+_[A-Za-z0-9]+)", identifier_text)
+        # Match: 2028 RU X1_A — or 2027.5 RU X3_A (a half model year)
+        match = re.search(r"(\d{4}(?:\.\d)?)\s+([A-Za-z0-9]+)\s+([A-Za-z0-9]+_[A-Za-z0-9]+)",
+                          identifier_text)
         if not match:
             return "", "", ""
 

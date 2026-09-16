@@ -56,8 +56,9 @@ _COLUMNS = {
 #: Match methods that mean the DTCR was never tied to a harness family.
 UNMATCHED_METHODS = {"NO MATCH", "NOMATCH", ""}
 
+#: ``28RU_X1`` — or ``27.5RU_X3`` for a half model year, its own scope.
 _SCOPE_RE = re.compile(
-    r"(?P<my>\d{2})(?P<program>[A-Z]{2,4})[_\- ]+(?P<phase>X\d[A-Z]?)",
+    r"(?P<my>\d{2}(?:\.\d)?)(?P<program>[A-Z]{2,4})[_\- ]+(?P<phase>X\d[A-Z]?)",
     re.IGNORECASE,
 )
 _VS_RE = re.compile(r"X\d[A-Z]?", re.IGNORECASE)
@@ -119,11 +120,12 @@ def normalize_scope(
     """Upper-case, trimmed, and the model year reduced to two digits.
 
     ``2028`` and ``28`` name the same year; storing both would split one scope
-    into two and make a report unfindable from the other spelling.
+    into two and make a report unfindable from the other spelling. A half
+    year keeps its half: ``2027.5`` → ``27.5``, which is not ``27``.
     """
-    year = re.sub(r"\D", "", str(model_year or ""))
-    if len(year) == 4:
-        year = year[2:]
+    from secrdb.core.secr.identity import short_model_year  # noqa: PLC0415
+
+    year = short_model_year(model_year)
     return ReportScope(
         program=str(program or "").strip().upper(),
         model_year=year,
