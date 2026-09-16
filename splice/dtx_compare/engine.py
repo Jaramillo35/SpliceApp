@@ -403,11 +403,42 @@ def generate_dtcr_matching_report(
         new_rows = _read_dtx_report_rows(new_file_bytes, new_file_name)
     combined = _build_combined_dtx_frame(old_rows, new_rows)
     mapping_df = match_dtcr_to_harness_family(dtcr_df, combined)
+    workbook = export_dtcr_matching_report(mapping_df)
+    file_name = dtcr_matching_file_name(old_file_bytes, new_file_bytes,
+                                        old_file_name, new_file_name)
     return {
         "dtcr_matching_df": mapping_df,
-        "dtcr_matching_bytes": export_dtcr_matching_report(mapping_df),
-        "dtcr_matching_file_name": "DTCR_Matching_Report.xlsx",
+        "dtcr_matching_bytes": workbook,
+        "dtcr_matching_file_name": file_name,
+        # the same file under the names every downloadable result carries, so
+        # a page or a script treats "matching only" like any other output
+        "output_excel_bytes": workbook,
+        "output_file_name": file_name,
     }
+
+
+def dtcr_matching_file_name(old_file_bytes: bytes, new_file_bytes: bytes,
+                            old_file_name: str, new_file_name: str) -> str:
+    """``DTCR_Matching_Report_2028RU_X1_vs_X2_A_<timestamp>.xlsx``.
+
+    The name is the SECR Database's input contract as much as the sheet is:
+    its DTCR library files a report under a program, model year and phase
+    that it reads off the file name (``secrdb.core.dtcr.library
+    .parse_scope_from_filename`` — two-digit year, programme, phases, the
+    later phase taken). So the name states the programme and both phases the
+    way the change report does, from the exports' own title blocks; a file
+    that states neither falls back to the file names, as the change report
+    does, and the library then asks for the scope.
+    """
+    from splice.dtx_compare.labels import comparison_slug, resolve  # noqa: PLC0415
+
+    comparison = comparison_slug(resolve(old_file_bytes, old_file_name),
+                                 resolve(new_file_bytes, new_file_name))
+    if not comparison:
+        comparison = f"{Path(old_file_name).stem}_vs_{Path(new_file_name).stem}"
+    comparison = re.sub(r"[^A-Za-z0-9]+", "_", comparison).strip("_")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"DTCR_Matching_Report_{comparison}_{timestamp}.xlsx"
 
 
 def _all_changes_record(row: pd.Series, change_type: str) -> dict[str, object]:

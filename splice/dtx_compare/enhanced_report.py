@@ -14,7 +14,13 @@ Builds on the V1 change comparison but produces a richer, self-updating workbook
 No macros: charts reference formula cells and conditional formatting reacts to the Status
 column, so everything updates in a plain ``.xlsx`` with no "enable content" prompt.
 
-A DTCR report is **required** — the coverage panel and DTCR annotation depend on it.
+A DTCR report is **optional**. With one, every change is tagged with its DTCR, the
+DTCR Matching sheet is written into the workbook, the dashboard gets its coverage
+panel, and the same matching table is also returned as a standalone workbook
+(``dtcr_matching_bytes`` / ``dtcr_matching_file_name``) named the way the SECR
+Database's DTCR library expects. Without one the compare still runs: the DTCR#
+column stays empty, there is no DTCR Matching sheet and no coverage panel, and the
+result says so (``dtcr_matching_df`` is None).
 """
 
 from __future__ import annotations
@@ -51,7 +57,8 @@ _INVALID_MARK = "invalid"          # the DTX 'Invalid_Contact_Connector_Enginner
 
 
 class DTCRRequiredError(ValueError):
-    """Raised when a compare is requested without the (now required) DTCR report."""
+    """Kept for callers that still catch it. The compare no longer requires a DTCR
+    report, so nothing raises this any more."""
 
 
 # --------------------------------------------------------------------------- data
@@ -74,11 +81,17 @@ def generate_enhanced_dtx_report(
     new_file_bytes: bytes,
     old_file_name: str,
     new_file_name: str,
-    dtcr_df: pd.DataFrame | None,
+    dtcr_df: pd.DataFrame | None = None,
 ) -> dict[str, object]:
-    """Return {'output_excel_bytes', 'output_file_name', ...}. DTCR report is required."""
-    if dtcr_df is None or (isinstance(dtcr_df, pd.DataFrame) and dtcr_df.empty):
-        raise DTCRRequiredError("A DTCR report is required to generate the compare.")
+    """Return {'output_excel_bytes', 'output_file_name', ...}.
+
+    ``dtcr_df`` is optional. When given, the result also carries the DTCR
+    Matching table on its own (``dtcr_matching_bytes``,
+    ``dtcr_matching_file_name``), so a caller with all three files can offer
+    the change workbook — which keeps its DTCR Matching sheet — and the
+    matching report as two downloads.
+    """
+    has_dtcr = isinstance(dtcr_df, pd.DataFrame) and not dtcr_df.empty
 
     # Programme and build phase come from each export's own title block, so
     # the report is labelled by what the files say rather than what they were
@@ -103,14 +116,23 @@ def generate_enhanced_dtx_report(
     old_df = load_dtx_report_from_rows(old_rows)
     new_df = load_dtx_report_from_rows(new_rows)
 
+    # Without a DTCR report the DTCR# column is still there, empty: the All
+    # Changes layout (Status, DTCR#, Harness Family, …) is what the dashboard's
+    # formulas address by column letter, so it must not shift.
     results = _annotate_results_with_dtcr(
         compare_reports(old_df, new_df),
-        _build_dtcr_lookup_by_cnum(old_df, new_df, dtcr_df),
+        _build_dtcr_lookup_by_cnum(old_df, new_df, dtcr_df) if has_dtcr else {},
     )
-    results.update(generate_dtcr_matching_report(
-        old_file_bytes=old_file_bytes, new_file_bytes=new_file_bytes,
-        old_file_name=old_file_name, new_file_name=new_file_name, dtcr_df=dtcr_df,
-        old_rows=old_rows, new_rows=new_rows))
+    if has_dtcr:
+        matching = generate_dtcr_matching_report(
+            old_file_bytes=old_file_bytes, new_file_bytes=new_file_bytes,
+            old_file_name=old_file_name, new_file_name=new_file_name, dtcr_df=dtcr_df,
+            old_rows=old_rows, new_rows=new_rows)
+        results.update({k: v for k, v in matching.items()
+                        if k not in ("output_excel_bytes", "output_file_name")})
+    else:
+        results.update({"dtcr_matching_df": None, "dtcr_matching_bytes": None,
+                        "dtcr_matching_file_name": None})
 
     all_changes_df = build_all_changes_df(results)
     results["all_changes_df"] = all_changes_df
@@ -161,7 +183,8 @@ def _write_workbook(old_name: str, new_name: str, results: dict) -> bytes:
         # Sheet order (cross-sheet formulas resolve by name, so this is purely presentation):
         # Dashboard, DTCR Matching, Yellow Connectors, All Changes, then the detail tables.
         _write_dashboard(writer, wb, fmt, results, families, old_name, new_name)
-        write_table(writer, "DTCR Matching", results["dtcr_matching_df"], wb, fmt)
+        if isinstance(dtcr_matching_df, pd.DataFrame):
+            write_table(writer, "DTCR Matching", dtcr_matching_df, wb, fmt)
         write_table(writer, "Yellow Connectors", results["yellow_connectors_df"], wb, fmt)
         _write_all_changes(writer, wb, fmt, all_changes, dtcr_row_count)
         write_table(writer, "PreOrder List", results["preorder_summary_df"], wb, fmt)
@@ -377,14 +400,20 @@ def _write_dashboard(writer, wb, fmt, results, families, old_name, new_name) -> 
         ws.insert_chart(tbl_hdr, 7, bar, {"x_scale": 1.6, "y_scale": y_scale})
 
     # ---- Panel 3: DTCR coverage (static — fixed at generation) ----
-    dtcr = results["dtcr_matching_df"]
+    dtcr = results.get("dtcr_matching_df")
+    base = fam_last + 3
+    if not isinstance(dtcr, pd.DataFrame):
+        ws.merge_range(base, 0, base, 5, "DTCR COVERAGE", fmt["section"])
+        ws.write(base + 1, 0, "No DTCR report was provided — changes are not tagged "
+                              "with DTCRs and there is no DTCR Matching sheet. Run the "
+                              "compare again with the DTCR report to add them.", fmt["meta"])
+        return
     method = dtcr["Match Method"].astype(str) if "Match Method" in dtcr.columns else pd.Series([], dtype=str)
     cov = [
         ("Matched — Device Control #", int((method == "Device Control Number").sum())),
         ("Matched — Device Name", int((method == "Device Name").sum())),
         ("Unmatched", int((method == "No Match").sum())),
     ]
-    base = fam_last + 3
     ws.merge_range(base, 0, base, 5, "DTCR COVERAGE", fmt["section"])
     ws.write(base + 1, 0, "Match method", fmt["subheader"]); ws.write(base + 1, 1, "DTCRs", fmt["subheader"])
     for i, (label, value) in enumerate(cov):

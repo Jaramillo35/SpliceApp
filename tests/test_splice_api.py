@@ -40,13 +40,23 @@ def test_health():
 
 def test_missing_required_file_is_422():
     # Dummy bytes on purpose: FastAPI rejects the request for the missing
-    # required DTCR field before any file content is read, so this runs in
+    # required NEW field before any file content is read, so this runs in
     # CI where the real samples are absent.
+    r = client.post("/dtx/compare", files={
+        "old": ("old.xls", b"x", "application/vnd.ms-excel"),
+    })
+    assert r.status_code == 422
+
+
+def test_the_dtcr_report_is_optional_at_the_boundary():
+    # Without a DTCR upload the request is accepted and reaches the engine —
+    # which then fails on these dummy bytes with a 500, not a 422 for a
+    # missing field.
     r = client.post("/dtx/compare", files={
         "old": ("old.xls", b"x", "application/vnd.ms-excel"),
         "new": ("new.xls", b"x", "application/vnd.ms-excel"),
     })
-    assert r.status_code == 422
+    assert r.status_code == 500 and "DTx compare failed" in r.json()["detail"]
 
 
 @needs_files

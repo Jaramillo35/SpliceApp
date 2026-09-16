@@ -78,17 +78,26 @@ def health() -> HealthResponse:
     return HealthResponse(version=__version__)
 
 
+async def _dtcr_frame(dtcr: UploadFile | None):
+    """The DTCR report as a frame, or None when the upload was left out."""
+    if dtcr is None or not dtcr.filename:
+        return None
+    db, dn = await _read(dtcr)
+    return load_dtcr_report(db, dn)
+
+
 @app.post("/dtx/compare", tags=["dtx"], summary="Enhanced DTx compare workbook (.xlsx)")
 async def dtx_compare(
     old: UploadFile = File(..., description="OLD DTx report"),
     new: UploadFile = File(..., description="NEW DTx report"),
-    dtcr: UploadFile = File(..., description="DTCR report (required)"),
+    dtcr: UploadFile | None = File(None, description="DTCR report (optional: tags "
+                                                     "changes and adds the DTCR "
+                                                     "Matching sheet)"),
 ) -> StreamingResponse:
     ob, on = await _read(old)
     nb, nn = await _read(new)
-    db, dn = await _read(dtcr)
     try:
-        dtcr_df = load_dtcr_report(db, dn)
+        dtcr_df = await _dtcr_frame(dtcr)
         result = generate_enhanced_dtx_report(
             old_file_bytes=ob, new_file_bytes=nb,
             old_file_name=on, new_file_name=nn, dtcr_df=dtcr_df,
@@ -103,13 +112,13 @@ async def dtx_compare(
 @app.post("/dtx/compare/summary", response_model=CompareSummary, tags=["dtx"],
           summary="DTx compare — typed JSON summary")
 async def dtx_compare_summary(
-    old: UploadFile = File(...), new: UploadFile = File(...), dtcr: UploadFile = File(...),
+    old: UploadFile = File(...), new: UploadFile = File(...),
+    dtcr: UploadFile | None = File(None),
 ) -> CompareSummary:
     ob, on = await _read(old)
     nb, nn = await _read(new)
-    db, dn = await _read(dtcr)
     try:
-        dtcr_df = load_dtcr_report(db, dn)
+        dtcr_df = await _dtcr_frame(dtcr)
         r = generate_enhanced_dtx_report(
             old_file_bytes=ob, new_file_bytes=nb,
             old_file_name=on, new_file_name=nn, dtcr_df=dtcr_df,

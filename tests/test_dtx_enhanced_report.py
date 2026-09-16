@@ -27,11 +27,93 @@ def test_yellow_connectors_from_invalid_connector_pn():
     assert "Connector PN" in df.columns and df.iloc[0]["Harness Family"] == "DASH"
 
 
-def test_dtcr_report_is_required():
-    with pytest.raises(DTCRRequiredError):
-        generate_enhanced_dtx_report(b"x", b"y", "o.xls", "n.xls", None)
-    with pytest.raises(DTCRRequiredError):
-        generate_enhanced_dtx_report(b"x", b"y", "o.xls", "n.xls", pd.DataFrame())
+@pytest.fixture(scope="module")
+def showcase_files():
+    """The invented showcase exports: OLD, NEW and a DTCR report (no customer data)."""
+    import tempfile
+    from pathlib import Path
+    from demo import showcase
+    with tempfile.TemporaryDirectory(prefix="showcase_dtx_") as td:
+        out = Path(td)
+        showcase.build(out)
+        folder = out / "4_dtx_compare"
+        old, new, dtcr = (next(folder.glob("*_OLD.xlsx")), next(folder.glob("*_NEW.xlsx")),
+                          next(folder.glob("DTCR_Report_*.xlsx")))
+        yield {"old": (old.read_bytes(), old.name), "new": (new.read_bytes(), new.name),
+               "dtcr": (dtcr.read_bytes(), dtcr.name)}
+
+
+def test_the_compare_runs_without_a_dtcr_report(showcase_files):
+    """The DTCR report is optional: the change workbook is built without it,
+    the DTCR# column stays (empty) so the dashboard's column letters hold, and
+    nothing DTCR-shaped is written or returned."""
+    f = showcase_files
+    r = generate_enhanced_dtx_report(f["old"][0], f["new"][0], f["old"][1], f["new"][1])
+    assert r["dtcr_matching_df"] is None and r["dtcr_matching_bytes"] is None
+    wb = load_workbook(io.BytesIO(r["output_excel_bytes"]))
+    assert "DTCR Matching" not in wb.sheetnames
+    for sheet in ("Dashboard", "All Changes", "Yellow Connectors", "PreOrder List"):
+        assert sheet in wb.sheetnames
+    ac = wb["All Changes"]
+    assert ac.cell(1, 1).value == "Status" and ac.cell(1, 2).value == "DTCR#"
+    assert all(ac.cell(row, 2).value in (None, "") for row in range(2, ac.max_row + 1))
+    db = wb["Dashboard"]
+    assert len(db._charts) == 2, "no DTCR coverage pie without a DTCR report"
+    texts = [str(c.value) for row in db.iter_rows() for c in row if c.value]
+    assert any("No DTCR report was provided" in t for t in texts)
+    assert r["added_circuit_count"] == 2                      # the planted QK106 / QK702
+    assert DTCRRequiredError.__doc__ and "no longer" in DTCRRequiredError.__doc__
+
+
+def test_with_a_dtcr_report_the_matching_comes_in_the_workbook_and_on_its_own(showcase_files):
+    """Three files: the change workbook keeps its DTCR Matching sheet AND the
+    same table is returned as a separate file the SECR Database can take."""
+    from splice.dtx_compare.engine import load_dtcr_report
+    from secrdb.core.dtcr.library import _COLUMNS, read_report
+    f = showcase_files
+    dtcr = load_dtcr_report(f["dtcr"][0], f["dtcr"][1])
+    r = generate_enhanced_dtx_report(f["old"][0], f["new"][0], f["old"][1], f["new"][1], dtcr)
+    wb = load_workbook(io.BytesIO(r["output_excel_bytes"]))
+    assert "DTCR Matching" in wb.sheetnames
+    assert r["output_file_name"].startswith("DTx_Change_Report_")
+    # the standalone file is the SECR Database's input: same columns, first sheet
+    frame = read_report(r["dtcr_matching_bytes"])
+    assert set(_COLUMNS) <= set(frame.columns)
+    assert len(frame) == len(r["dtcr_matching_df"]) > 0
+    assert r["dtcr_matching_file_name"].startswith("DTCR_Matching_Report_") \
+        and r["dtcr_matching_file_name"].endswith(".xlsx")
+    assert r["dtcr_matching_file_name"] != r["output_file_name"]
+
+
+def test_matching_only_is_the_same_file_under_the_download_names(showcase_files):
+    from splice.dtx_compare.engine import generate_dtcr_matching_report, load_dtcr_report
+    f = showcase_files
+    dtcr = load_dtcr_report(f["dtcr"][0], f["dtcr"][1])
+    r = generate_dtcr_matching_report(f["old"][0], f["new"][0], f["old"][1], f["new"][1], dtcr)
+    assert r["output_excel_bytes"] == r["dtcr_matching_bytes"]
+    assert r["output_file_name"] == r["dtcr_matching_file_name"]
+    assert "Match Method" in r["dtcr_matching_df"].columns
+
+
+def test_the_matching_file_name_states_the_scope_the_secr_library_reads():
+    """The SECR Database files a DTCR Matching Report under program / model
+    year / phase parsed from its name; the name must carry them the way the
+    change report does (programme once, both phases, the later one wins)."""
+    from unittest import mock
+    from secrdb.core.dtcr.library import parse_scope_from_filename
+    from splice.dtx_compare import engine, labels
+    old = labels.ReportLabel(program="2028RU", phase="X1", source="title block")
+    new = labels.ReportLabel(program="2028RU", phase="X2_A", source="title block")
+    with mock.patch.object(labels, "resolve", side_effect=[old, new]):
+        name = engine.dtcr_matching_file_name(b"o", b"n", "old.xls", "new.xls")
+    assert name.startswith("DTCR_Matching_Report_2028RU_X1_vs_X2_A_")
+    scope = parse_scope_from_filename(name)
+    assert scope.is_complete and (scope.program, scope.model_year, scope.phase) == ("RU", "28", "X2")
+    # files that state no programme fall back to their names, and the library asks
+    with mock.patch.object(labels, "resolve", side_effect=[labels.ReportLabel(), labels.ReportLabel()]):
+        name = engine.dtcr_matching_file_name(b"o", b"n", "left (1).xls", "right.xls")
+    assert name.startswith("DTCR_Matching_Report_left_1_vs_right_")
+    assert not parse_scope_from_filename(name).is_complete
 
 
 @pytest.fixture(scope="module")

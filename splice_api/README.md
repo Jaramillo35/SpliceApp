@@ -20,9 +20,9 @@ Interactive OpenAPI docs: **http://localhost:8000/docs**
 | Method | Path | Body (multipart) | Returns |
 |---|---|---|---|
 | GET  | `/health` | — | liveness + version (JSON) |
-| POST | `/dtx/compare` | `old`, `new`, `dtcr` | enhanced DTx compare workbook (`.xlsx`) |
-| POST | `/dtx/compare/summary` | `old`, `new`, `dtcr` | `CompareSummary` (JSON) |
-| POST | `/dtcr/match` | `old`, `new`, `dtcr` | DTCR matching workbook (`.xlsx`) |
+| POST | `/dtx/compare` | `old`, `new`, `dtcr` (optional) | enhanced DTx compare workbook (`.xlsx`); with `dtcr` the changes are DTCR-tagged and the DTCR Matching sheet is included |
+| POST | `/dtx/compare/summary` | `old`, `new`, `dtcr` (optional) | `CompareSummary` (JSON) |
+| POST | `/dtcr/match` | `old`, `new`, `dtcr` | DTCR Matching Report (`.xlsx`) on its own — the SECR Database's DTCR-library input, named `DTCR_Matching_Report_<programme>_<phase>_vs_<phase>_<stamp>.xlsx` so the library reads its scope from the name |
 | POST | `/preorder` | `old`, `new` | PreOrder generation workbook (`.xlsx`) |
 
 Example:
