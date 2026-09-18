@@ -145,7 +145,7 @@ def engine_tools(workspace: Optional[Path] = None) -> List[Tool]:
              "What one DTx export contains: its vehicle program and build phase (from its own "
              "title block), how many circuit rows, circuits and connectors, and its harness "
              "families. Use it to tell which export is OLD and which is NEW.",
-             _schema({"file": dtx}, required=["file"]), describe_dtx),
+             _schema({"file": dtx}, required=["file"]), describe_dtx, rows_key="harness_families"),
         Tool("find_circuit",
              "Where a circuit appears in a DTx export: every connector (CNUM) and pin it lands "
              "on, the harness family, and the sales-code condition. A944 also matches A944B.",
@@ -164,7 +164,7 @@ def engine_tools(workspace: Optional[Path] = None) -> List[Tool]:
                       "new_file": _text("The later export's file name."),
                       "harness_family": _text("Only this harness family, e.g. BODY_LEFT."),
                       "limit": _LIMIT}, required=["old_file", "new_file"]),
-             compare_dtx_exports),
+             compare_dtx_exports, rows_key="changes"),
         Tool("match_dtcrs",
              "Match a DTCR report's change requests to connectors and harness families using "
              "an OLD and a NEW DTx export. Says how many DTCRs matched and lists each DTCR "
@@ -173,5 +173,5 @@ def engine_tools(workspace: Optional[Path] = None) -> List[Tool]:
                       "new_file": _text("The later export's file name."),
                       "dtcr_file": _text("The DTCR report's file name."),
                       "limit": _LIMIT}, required=["old_file", "new_file", "dtcr_file"]),
-             match_dtcrs),
+             match_dtcrs, rows_key="rows"),
     ]

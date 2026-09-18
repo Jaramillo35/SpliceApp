@@ -45,6 +45,9 @@ class Tool:
     description: str
     parameters: Dict[str, Any]
     handler: Callable[..., Any]
+    #: for a tool that answers with a mapping: the key holding its primary
+    #: rows, so ``row_count`` means "rows found" and not "things in the dict"
+    rows_key: str = ""
 
     def spec(self) -> Dict[str, Any]:
         return {
@@ -659,6 +662,14 @@ def call_tool(
             data = data[:MAX_ROWS]
             row_count = MAX_ROWS
             truncated = True
+    elif isinstance(data, dict) and tool.rows_key and isinstance(data.get(tool.rows_key), list):
+        # "12" for a compare that found 2 changes was the dict's contents
+        # counted, not rows (seen on the Ask page, 2026-09-18). The tool names
+        # its primary list; its length is what was found.
+        row_count = len(data[tool.rows_key])
+        if row_count > MAX_ROWS:
+            data[tool.rows_key] = data[tool.rows_key][:MAX_ROWS]
+            row_count, truncated = MAX_ROWS, True
     elif isinstance(data, dict):
         # Some tools answer with a mapping rather than rows (list_known_values,
         # the summaries). Reporting 0 for those made a tool that worked look

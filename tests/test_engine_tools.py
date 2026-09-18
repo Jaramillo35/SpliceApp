@@ -124,3 +124,14 @@ def test_an_assistant_given_engine_tools_runs_them(tools, workspace, tmp_path, m
     assert "QK106" in answer.answer and answer.grounded
     prompt, offered = client.seen[0]
     assert prompt == ENGINE_PROMPT and "compare_dtx_exports" in offered
+
+
+def test_row_count_is_the_rows_found_not_the_size_of_the_mapping(tools, workspace):
+    old, new, dtcr = _names(workspace)
+    r = call_tool("compare_dtx_exports", {"old_file": old, "new_file": new}, registry=tools)
+    assert r.row_count == len(r.data["changes"]) == 2
+    m = call_tool("match_dtcrs", {"old_file": old, "new_file": new, "dtcr_file": dtcr},
+                  registry=tools)
+    assert m.row_count == len(m.data["rows"]) == m.data["dtcrs"]
+    d = call_tool("describe_dtx", {"file": old}, registry=tools)
+    assert d.row_count == len(d.data["harness_families"])
