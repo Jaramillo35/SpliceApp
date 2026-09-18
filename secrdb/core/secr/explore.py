@@ -65,6 +65,14 @@ _CHANGE_LABELS = {
 }
 
 
+#: what a search row carries: enough to list and scope a SECR. The preview
+#: holds the rest; shipping all ~40 ``secr`` columns per row was payload the
+#: list never read (asked for by the UI/UX session, 2026-09-18).
+LIST_COLUMNS = ("id", "secr_number", "version", "subject", "model_year", "program",
+                "phase", "harness_family", "change_type", "import_origin", "filename",
+                "dtcr_numbers", "bulletin_numbers", "created_at", "change_count")
+
+
 def _split(value: Any) -> List[str]:
     """``"50315, 50317"`` → ``["50315", "50317"]`` — order kept, blanks dropped."""
     out: List[str] = []
@@ -307,7 +315,9 @@ def search_documents(text: str, *, limit: int = 200, hits_per_document: int = 8,
             row["hits"] = hits[:hits_per_document]
             row["more_hits"] = max(0, len(hits) - hits_per_document)
             row["harness_families"] = [f.upper() for f in _split(row.get("harness_family"))]
-    return rows
+    keep = set(LIST_COLUMNS) | {"hit_count", "hits_by_place", "hits", "more_hits",
+                                "harness_families"}
+    return [{k: v for k, v in row.items() if k in keep} for row in rows]
 
 
 # ------------------------------------------------------------------- facets

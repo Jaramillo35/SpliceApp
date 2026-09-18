@@ -110,3 +110,11 @@ def test_facets_count_the_scope_and_never_filter_themselves(corpus):
     assert [r["selected"] for r in picked["model_year"]] == [True, False]
     assert [r["name"] for r in picked["harness_family"]] == ["BODY_LEFT"]
     assert all(r["changes"] > 0 for r in f["program"])
+
+
+def test_a_search_row_carries_the_list_columns_and_no_more(corpus):
+    from secrdb.core.secr.explore import LIST_COLUMNS
+    (row,) = api.search_documents("aguilar", db_path=corpus, model_year="2027")
+    assert set(row) == set(LIST_COLUMNS) | {"hit_count", "hits_by_place", "hits",
+                                           "more_hits", "harness_families"}
+    assert row["hits"][0]["label"] == "SECR author", "hits still see the full header"
