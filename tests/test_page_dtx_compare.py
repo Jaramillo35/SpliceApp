@@ -51,9 +51,29 @@ def _button(user: User, text: str):
     return next(b for b in user.find(ui.button).elements if b.text == text)
 
 
+async def press(user: User, text: str) -> None:
+    """Click the button whose label is exactly ``text``.
+
+    ``user.find(text).click()`` matches every element *containing* the text,
+    so a caption that mentions a button swallows the click. A button is
+    pressed by its own label.
+    """
+    import inspect
+    btn = _button(user, text)
+    assert btn.enabled, f"{text!r} is disabled"
+    for listener in btn._event_listeners.values():
+        if listener.type == "click":
+            out = listener.handler(None)
+            if inspect.isawaitable(out):
+                await out
+    await asyncio.sleep(0.2)
+
+
 async def test_the_gate_names_what_is_missing_then_opens(user: User, files):
     await user.open("/dtx-compare")
     await user.should_see("Needs: OLD DTx, NEW DTx")
+    for group in ("Required", "Optional", "Other outputs"):
+        await user.should_see(group)
     assert not _button(user, "Run compare").enabled
     assert not _button(user, "DTCR Matching only").enabled
     old, new, dtcr = in_order(user.find(ui.upload).elements)
@@ -75,9 +95,11 @@ async def test_without_the_dtcr_report_the_compare_says_so(user: User, files):
     await old.handle_uploads([StubFile(files["old"])])
     await new.handle_uploads([StubFile(files["new"])])
     await wait_for(user, f"✓ {files['new'].name}")
-    user.find("Run compare").click()
+    await press(user, "Run compare")
     await wait_for(user, "Built without a DTCR report")
     await user.should_see("DTx_Change_Report_")
+    await user.should_see("Change compare — no DTCR report")
+    await user.should_see("Change workbook")
     assert not any("DTCR_Matching_Report_" in (lbl.text or "")
                    for lbl in user.find(ui.label).elements)
 
@@ -89,9 +111,14 @@ async def test_matching_only_gives_the_secr_database_its_input(user: User, files
     await new.handle_uploads([StubFile(files["new"])])
     await dtcr.handle_uploads([StubFile(files["dtcr"])])
     await wait_for(user, f"✓ {files['dtcr'].name}")
-    user.find("DTCR Matching only").click()
+    await press(user, "DTCR Matching only")
     await wait_for(user, "Matched to a harness family")
     await user.should_see("DTCR_Matching_Report_")
+    # its own result, not a compare that lost its numbers
+    await user.should_see("DTCR matching report")
+    await user.should_see("For the SECR Database")
+    await user.should_not_see("Added circuits")
+    await user.should_not_see("Change workbook")
 
 
 async def test_the_compare_finds_the_planted_added_circuits(user: User, files):
@@ -101,7 +128,7 @@ async def test_the_compare_finds_the_planted_added_circuits(user: User, files):
     await new.handle_uploads([StubFile(files["new"])])
     await dtcr.handle_uploads([StubFile(files["dtcr"])])
     await wait_for(user, f"✓ {files['dtcr'].name}")
-    user.find("Run compare").click()
+    await press(user, "Run compare")
     await wait_for(user, "Added circuits")
     # the OLD export is missing QK106 and QK702 (demo/README.md)
     labels = {lbl.text for lbl in user.find(ui.label).elements}
@@ -110,3 +137,31 @@ async def test_the_compare_finds_the_planted_added_circuits(user: User, files):
     # DTCR Matching Report as a separate download
     await user.should_see("DTx_Change_Report_")
     await user.should_see("DTCR_Matching_Report_")
+    # two deliverables, each saying what it is and who it is for
+    await user.should_see("Change compare — tagged by DTCR")
+    await user.should_see("Change workbook")
+    await user.should_see("DTCR Matching Report")
+    await user.should_see("For the SECR Database")
+
+
+async def test_the_matching_report_is_handed_over_undressed(user: User, files, monkeypatch):
+    """It is the SECR Database's input. The workbook dresser adds a Read Me
+    sheet and restyles headers for the toolkit's own reports; another tool's
+    input goes out exactly as the engine wrote it."""
+    from nicegui_app import components
+    handed: list = []
+    monkeypatch.setattr(components, "deliver",
+                        lambda data, filename, *, dress=True: handed.append((filename, dress)))
+    await user.open("/dtx-compare")
+    old, new, dtcr = in_order(user.find(ui.upload).elements)
+    await old.handle_uploads([StubFile(files["old"])])
+    await new.handle_uploads([StubFile(files["new"])])
+    await dtcr.handle_uploads([StubFile(files["dtcr"])])
+    await wait_for(user, f"✓ {files['dtcr'].name}")
+    await press(user, "Run compare")
+    await wait_for(user, "Change workbook")
+    for btn in list(user.find(ui.button).elements):
+        if btn.text.startswith(("DTx_Change_Report_", "DTCR_Matching_Report_")):
+            await press(user, btn.text)
+    by_prefix = {name.split("_Report_")[0]: dress for name, dress in handed}
+    assert by_prefix == {"DTx_Change": True, "DTCR_Matching": False}

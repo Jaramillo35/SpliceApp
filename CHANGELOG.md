@@ -7,6 +7,15 @@ after an update.
 ## Unreleased
 
 ### Changed
+- **DTx Compare: what is required, what is optional, and what each file is
+  for.** The two DTx exports sit under *Required* and the DTCR report under
+  *Optional*, with one line saying what it adds. *Run compare* is the one
+  main action; the DTCR Matching Report on its own and the PreOrder list are
+  under *Other outputs*. Every result opens by naming what ran, and its files
+  are listed as deliverables — the change workbook, and the DTCR Matching
+  Report "for the SECR Database" — instead of two look-alike file names side
+  by side. The matching report is handed over exactly as built, with no Read
+  Me sheet added, because it is another tool's input.
 - **Inline Comment Carryover: missing inlines are shown, not footnoted.**
   Matching runs inline sheet by inline sheet, so only an inline present in
   both reports can carry a comment. The review now opens with the coverage:
