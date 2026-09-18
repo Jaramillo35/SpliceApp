@@ -277,7 +277,11 @@ def write_dtx(path: Path, *, families: Sequence[str] | None = None,
             if c.circuit in skip:
                 continue
             def_id = DEF_IDS.get(family, "70999")
-            ws.append(["D" + def_id, f"{family}_MODULE", "A", c.cnum, 8,
+            # The Device Control Number is the bare number, as in a real DTx:
+            # the DTCR matcher takes the leading digits of a Device
+            # Transmittal ("70103 - BODY_LEFT MODULE") and looks them up here
+            # exactly. A "D" prefix left every showcase DTCR unmatched.
+            ws.append([def_id, f"{family}_MODULE", "A", c.cnum, 8,
                        "8" + def_id[1:] + "0", family, c.pin, c.circuit, "",
                        c.function, c.color, "T-1", "FCA" + def_id, c.gauge,
                        "TXL", c.condition or None])

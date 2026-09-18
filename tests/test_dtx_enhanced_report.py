@@ -196,3 +196,16 @@ def test_normalize_frame_matches_the_per_cell_form():
     expected = frame.map(normalize_cell)
     got = _normalize_frame(frame)
     pd.testing.assert_frame_equal(got, expected, check_dtype=False)
+
+
+def test_the_showcase_dtcrs_match_their_families(showcase_files):
+    """The demo must show matching working: every showcase DTCR names a DEF id
+    that the showcase DTx carries as its Device Control Number (found by the
+    UI/UX session, 2026-09-18: 0 of 8 matched because of a 'D' prefix)."""
+    from splice.dtx_compare.engine import generate_dtcr_matching_report, load_dtcr_report
+    f = showcase_files
+    dtcr = load_dtcr_report(f["dtcr"][0], f["dtcr"][1])
+    df = generate_dtcr_matching_report(f["old"][0], f["new"][0], f["old"][1], f["new"][1],
+                                       dtcr)["dtcr_matching_df"]
+    assert len(df) > 0 and (df["Match Method"] == "Device Control Number").all()
+    assert (df["Harness Family"] != "").all() and (df["CNUM"] != "").all()
