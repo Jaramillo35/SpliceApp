@@ -1,4 +1,4 @@
-"""SECR Database and Ask the Database, driven as a user would — no browser.
+"""SECR Database and Ask the Assistant, driven as a user would — no browser.
 
 Records are searched: the Browse tab opens on the search row, every tab is
 reachable by URL, the Import gate names what it needs, and the Ask page
@@ -84,9 +84,9 @@ class TestAsk:
     async def test_the_page_renders_its_card(self, user: User, db_path):
         from secrdb.config import ASSISTANT_ENABLED
         await user.open("/ask")
-        await user.should_see("Ask the Database")
+        await user.should_see("Ask the Assistant")
         if ASSISTANT_ENABLED:
             await user.should_see("Clear thread")
-            await user.should_see("Ask about SECRs, circuits, connectors or harnesses")
+            await user.should_see("Ask about your files or the SECR history")
         else:
             await user.should_see("disabled by configuration")

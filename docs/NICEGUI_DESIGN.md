@@ -19,7 +19,7 @@ grid and the feedback dialog read the same list.
   CONVERTERS               files in, workbook out
     DTx Compare · Splice Generation · HRN Chart Builder
   RECORDS                  search the history
-    SECR Database · Ask the Database
+    SECR Database · Ask the Assistant
   UTILITIES
     Meeting Transcripts · Downloads
   ---------------------------------------------------------------
@@ -60,7 +60,7 @@ contributes to the Overview.
 |---|---|---|
 | **A · Converter** | DTx Compare, Splice Generation, HRN Chart Builder | `components.converter()`: a narrow sticky inputs panel ending in one gated `action`, beside a `result_panel` that exists from the first paint and teaches until there is a result. Page-specific editors (Splice sales codes, HRN supplier list) sit below the grid at full width. |
 | **B · Workbench** | Circuit Applicability, Circuit Health, Harness Complexity, VBOM Risk Matrix | `step_bar(...)` (sticky, states derived from state after every refresh) → `kpi_strip` → `section(step=...)` cards → sign-off. Judgement persists in a store that carries `saved_by`, `saved`, `revision`; the header `envelope` says who saved last; a stale write is refused, never merged. |
-| **C · Records** | SECR Database, Ask the Database | Search first; named columns; tabs deep-linkable by query parameter. |
+| **C · Records** | SECR Database, Ask the Assistant | Search first; named columns; tabs deep-linkable by query parameter. |
 | **D · Utility** | Overview, Meeting Transcripts, Downloads, Admin | Overview reads the activity feed and the workbench stores; Transcripts is per machine; Admin holds the one confirm-dialog (restore). |
 
 ## Interaction canon, second edition (every page obeys)
@@ -127,6 +127,28 @@ which CNUM, for which family" is an explorer. SECR Browse
 - **Reads are quiet.** Queries run off the event loop through a page-local
   runner; `run_engine` toasts and writes an activity line per call, which
   is right for a run and wrong for a keystroke.
+
+## The assistant
+
+`/ask` is one chat over the SECR history **and** the engineer's workbooks.
+
+* **Workspace, always in view.** A sticky panel says what the assistant can
+  read — only the files listed, and they stay on this machine. The file
+  `kind` is shown as "looks like", a guess; nothing depends on it. A
+  `WorkspaceError` is shown as written.
+* **What it did, under every answer.** One block per tool call: the tool in
+  the engineer's words (`TOOL_WORDS`), its arguments, the backend's row
+  count, truncation, and a tool error verbatim. Evidence is per call — rows
+  from different tools share no columns. `pack_call` only restructures:
+  whole numbers → figures, text → a facts line, record lists → tables
+  (capped at 50, announced). The page computes nothing.
+* **No deliverables from chat.** File tools are read-only; a compare or a
+  DTCR match links to DTx Compare, where a person presses the button.
+* **Honest about the model.** Status is checked quietly at load and gates
+  Ask with the reason; the wait (10–30 s) is said before the first
+  question; a grounding fallback and a timed-out answer each say so.
+* Starters teach the range in two groups; file questions are disabled
+  until the workspace holds a file. Identifiers in them are invented.
 
 ## Review gates
 
@@ -230,7 +252,7 @@ nicegui_app/
 1. **Shell + daily drivers** (this commit): frame/theme/components, Home,
    Circuit Health, HRN Chart Builder, DTx Compare, VBOM, Splice Generation
    (core flow), Meeting Transcripts, SECR Browse/Import/Dashboard,
-   Ask the Database, global feedback.
+   Ask the Assistant, global feedback.
 2. **SECR parity**: Create/Update SECR forms, DTCR reports library,
    batch tooling, supplier-ticket admin panel on HRN page.
 3. **Cutover**: Docker image serves NiceGUI on :8501, Streamlit retires;

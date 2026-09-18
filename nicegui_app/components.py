@@ -96,9 +96,9 @@ PAGES: tuple[Page, ...] = (
     Page("SECR Database", "storage", "/secr", "Records",
          "A searchable history of engineering changes; import workbooks and "
          "browse every change."),
-    Page("Ask the Database", "forum", "/ask", "Records",
-         "Plain-language questions over the SECR history, answered with "
-         "evidence by the local model."),
+    Page("Ask the Assistant", "forum", "/ask", "Records",
+         "Plain-language questions over the SECR history and the workbooks in "
+         "your workspace, answered by the local model with what it looked at."),
     Page("Meeting Transcripts", "graphic_eq", "/transcripts", "Utilities",
          "Anonymized Teams caption recording — Speaker 1..N, LLM-ready minutes."),
     Page("Downloads", "download", "/downloads", "Utilities",

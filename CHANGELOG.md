@@ -7,6 +7,7 @@ after an update.
 ## Unreleased
 
 ### Changed
+- **Ask the Assistant** (was Ask the Database): the chat is now general — it reads the SECR history and the workbooks you put in its workspace (describe a DTx export, find a circuit or connector, compare two exports, match a DTCR report). A workspace panel lists what it can read; files stay on this machine. Under every answer, *what it did*: one block per tool call with its arguments, figures, rows and any tool error. Ask is gated with the reason when the local model is not ready.
 - **SECR Database: Browse is now a data explorer.** One search box finds
   your text anywhere in a SECR — header, every change, DTCR matching,
   affected items, file names — and each result says *why* it matched, with
