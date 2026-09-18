@@ -575,13 +575,19 @@ _TOOL_LIST: List[Tool] = [
 TOOLS: Dict[str, Tool] = {tool.name: tool for tool in _TOOL_LIST}
 
 
-def tool_specs() -> List[Dict[str, Any]]:
-    """Every tool in the format Ollama's ``/api/chat`` expects."""
-    return [tool.spec() for tool in _TOOL_LIST]
+def tool_specs(registry: Optional[List[Tool]] = None) -> List[Dict[str, Any]]:
+    """Every tool in the format Ollama's ``/api/chat`` expects.
+
+    ``registry`` is the tool list an assistant was given; the default is the
+    SECR database tools. Engine tools (:mod:`secrdb.assistant.engine_tools`)
+    are a separate list on purpose: adding them to every prompt would change
+    what the SECR assistant is measured on.
+    """
+    return [tool.spec() for tool in (registry if registry is not None else _TOOL_LIST)]
 
 
-def tool_names() -> List[str]:
-    return [tool.name for tool in _TOOL_LIST]
+def tool_names(registry: Optional[List[Tool]] = None) -> List[str]:
+    return [tool.name for tool in (registry if registry is not None else _TOOL_LIST)]
 
 
 # ---------------------------------------------------------------------------
@@ -593,6 +599,7 @@ def call_tool(
     arguments: Optional[Dict[str, Any]] = None,
     *,
     db_path: Optional[Path] = None,
+    registry: Optional[List[Tool]] = None,
 ) -> ToolResult:
     """Run one tool call from the model. Never raises.
 
@@ -602,14 +609,15 @@ def call_tool(
     conversation where a correction would rescue it.
     """
     arguments = dict(arguments or {})
-    tool = TOOLS.get(name)
+    tools = TOOLS if registry is None else {tool.name: tool for tool in registry}
+    tool = tools.get(name)
     if tool is None:
         return ToolResult(
             name=name,
             arguments=arguments,
             error=(
                 f"There is no tool called {name!r}. Available tools: "
-                + ", ".join(tool_names())
+                + ", ".join(tools)
             ),
         )
 

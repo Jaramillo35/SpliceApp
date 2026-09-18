@@ -133,10 +133,16 @@ class Assistant:
         client: Optional[OllamaClient] = None,
         db_path: Optional[Path] = None,
         max_rounds: int = MAX_ROUNDS,
+        tools: Optional[List[Any]] = None,
+        system_prompt: str = "",
     ) -> None:
         self.client = client or OllamaClient()
         self.db_path = db_path
         self.max_rounds = max_rounds
+        #: ``None`` = the SECR database tools. Pass a list to give this
+        #: assistant other tools (the engine tools), alone or alongside.
+        self.tools = tools
+        self.system_prompt = system_prompt or SYSTEM_PROMPT
 
     def ask(self, question: str, *, session_id: str = "") -> AssistantAnswer:
         """Answer one question. Never raises — failures come back on the answer."""
@@ -147,10 +153,10 @@ class Assistant:
             return result
 
         messages = [
-            ChatMessage(role="system", content=SYSTEM_PROMPT),
+            ChatMessage(role="system", content=self.system_prompt),
             ChatMessage(role="user", content=result.question),
         ]
-        specs = tool_specs()
+        specs = tool_specs(self.tools)
 
         try:
             self._run(messages, specs, result)
@@ -196,7 +202,8 @@ class Assistant:
             )
             for call in response.tool_calls:
                 name, arguments = parse_tool_call(call)
-                tool_result = call_tool(name, arguments, db_path=self.db_path)
+                tool_result = call_tool(name, arguments, db_path=self.db_path,
+                                        registry=self.tools)
                 result.evidence.append(tool_result)
                 messages.append(
                     ChatMessage(

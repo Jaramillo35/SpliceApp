@@ -55,3 +55,6 @@ assets/downloads/teams-transcript-recorder.zip
 # runtime state written by the UI
 data/activity.jsonl
 data/vbom/
+
+# assistant evaluation reports (model runs; regenerate locally)
+reports/
