@@ -37,6 +37,9 @@ class TestSecrDatabase:
         assert "clearable" in boxes[0]._props
 
     async def test_results_carry_engineer_words_not_column_names(self, user: User, db_path):
+        """The explorer's results are rows a person reads — a number, its
+        scope in words, its change count — not database columns."""
+        import asyncio
         from secrdb.core.secr.importer import import_secr_files
         from tests.secr_fixtures import build_secr_workbook
         import_secr_files([("ip.xlsx", build_secr_workbook(secr_number="D50319A",
@@ -44,12 +47,16 @@ class TestSecrDatabase:
                           db_path=db_path)
         await user.open("/secr")
         await user.should_see("Browse")
-        # the simulated user reads labels, not table cells — inspect the table
-        table = min(user.find(ui.table).elements, key=lambda e: e.id)
-        assert [r["secr_number"] for r in table.rows] == ["D50319A"]
-        labels = [col["label"] for col in table.columns]
-        assert labels[:2] == ["SECR #", "Version"]
-        assert "Matched on" in labels and "match_reason" not in labels
+        for _ in range(60):                       # the list loads off the event loop
+            try:
+                await user.should_see("1 SECR · 9 changes", retries=1)
+                break
+            except AssertionError:
+                await asyncio.sleep(0.2)
+        await user.should_see("D50319A")
+        await user.should_see("MY2028 · RU · X1 · IP")
+        texts = {lbl.text for lbl in user.find(ui.label).elements}
+        assert not {"secr_number", "match_reason", "change_count"} & texts
 
     async def test_the_library_tab_is_deep_linkable(self, user: User, db_path):
         await user.open("/secr?tab=library")

@@ -1,7 +1,7 @@
 """SECR Database — NiceGUI page (Archetype C, Records).
 
-A record page is searched: the Browse tab opens on the search row and the
-results sit under it, capped and saying so. The DTCR report library has its
+A record page is searched: the Browse tab is a data explorer
+(``secr_explore``) — search and facets, results beside a preview. The DTCR report library has its
 own tab; the Dashboard keeps the chart and the counts the same query already
 knows. Every tab is deep-linkable — ``/secr?tab=library``.
 """
@@ -16,23 +16,6 @@ from secrdb.core.secr.importer import import_secr_files
 
 TABS = ("browse", "create", "update", "import", "dashboard", "library")
 
-#: the columns the browser's query returns, in the order the table shows them
-BROWSE_COLUMNS = ["secr_number", "version", "program", "model_year", "phase",
-                  "harness_family", "change_type", "change_count", "match_reason"]
-BROWSE_LABELS = {
-    "secr_number": "SECR #",
-    "version": "Version",
-    "program": "Program",
-    "model_year": "Model year",
-    "phase": "Phase",
-    "harness_family": "Harness family",
-    "change_type": "Change type",
-    "change_count": "Changes",
-    "match_reason": "Matched on",
-}
-#: rows shown; the query fetches more so the table can say what it cut
-SHOW_CAP = 200
-FETCH_LIMIT = 1000
 #: the Dashboard's one query — a header per SECR version, not the change rows
 DASHBOARD_LIMIT = 5000
 MAX_ERROR_LINES = 10
@@ -70,39 +53,9 @@ def page(tab: str = "browse") -> None:
 
 # ---------------------------------------------------------------- browse
 def _browse() -> None:
-    with c.card("Browse", "A SECR number, subject, DTCR or bulletin — or any "
-                          "CNUM, circuit or connector part number a change "
-                          "touched. A prefix matches too: A937 also finds A937F."):
-        results = None   # bound below; the search row is built first
-
-        def refresh() -> None:
-            results.clear()
-            with results:
-                try:
-                    rows = api.search_secrs(query.value or "", limit=FETCH_LIMIT)
-                except Exception as exc:  # noqa: BLE001 — the DB may be absent or locked; the tab says so
-                    c.note("blocker", f"Search failed: {exc}")
-                    return
-                if not rows:
-                    c.empty("No SECRs match — clear the search, or import "
-                            "SECR files in the Import tab.", icon="search_off")
-                    return
-                view = [{k: str(r.get(k, "") or "") for k in BROWSE_COLUMNS}
-                        for r in rows]
-                c.frame_table(view, columns=BROWSE_COLUMNS, labels=BROWSE_LABELS,
-                              cap=SHOW_CAP, mono=("secr_number", "match_reason"))
-
-        with ui.row().classes("w-full items-end gap-2 no-wrap"):
-            query = ui.input("Search",
-                             placeholder="SECR #, DTCR, CNUM, circuit, connector "
-                                         "PN, program or harness family") \
-                .classes("flex-1").props("clearable dense")
-            ui.button("Search", icon="search", on_click=lambda: refresh()) \
-                .props("unelevated dense no-caps")
-        query.on("keydown.enter", lambda: refresh())
-        query.on("clear", lambda: refresh())
-        results = ui.column().classes("w-full")
-        refresh()
+    """The data explorer — its own module; see ``secr_explore``."""
+    from nicegui_app.pages import secr_explore
+    secr_explore.build()
 
 
 # ---------------------------------------------------------------- import

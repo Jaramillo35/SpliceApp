@@ -7,6 +7,19 @@ after an update.
 ## Unreleased
 
 ### Changed
+- **SECR Database: Browse is now a data explorer.** One search box finds
+  your text anywhere in a SECR — header, every change, DTCR matching,
+  affected items, file names — and each result says *why* it matched, with
+  the snippets and your term marked. Chips for model year, program, phase,
+  harness family, change type and origin show how many SECRs each holds and
+  combine; choosing one narrows the others without hiding its own
+  alternatives. A result opens beside the list into the same changes seen
+  three ways: **by type** (old value beside new, with DTCRs and CNUMs),
+  **by DTCR** (what each one changed and why) and **by CNUM** (everything
+  landing on a connector). Opening from a match lands on the object that
+  matched; "Find in this SECR" filters every view; any DTCR or CNUM is a
+  button that searches all SECRs for it; the stored workbook downloads from
+  the preview.
 - **DTx Compare: what is required, what is optional, and what each file is
   for.** The two DTx exports sit under *Required* and the DTCR report under
   *Optional*, with one line saying what it adds. *Run compare* is the one

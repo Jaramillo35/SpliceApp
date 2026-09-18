@@ -107,6 +107,27 @@ written for the reader rather than the run:
 - **Customer email** is that list as sendable text, grouped by fix location.
   `report.email_lines` builds it; the page passes the engineer's name.
 
+## Explorers
+
+A Records page that must answer "what changed, under which DTCR, landing on
+which CNUM, for which family" is an explorer. SECR Browse
+(`pages/secr_explore.py`) is the reference:
+
+- **Scope before list.** A contains-search and one row of `toggle_chip`s per
+  facet, each with its count. Facets combine; each is counted under every
+  filter but its own, so a choice never hides its alternatives. The scope is
+  stated in words ("2 SECRs · 18 changes in this scope").
+- **A result says why it matched**: place counts and snippets with the term
+  marked (`marked()` escapes stored text before adding the one `<mark>`).
+  A snippet is a button that opens the preview on the object that matched.
+- **One set of changes, several lenses.** Tables where rows are many (by
+  type, paginated, old grey beside new blue), row lists where they are few
+  (by DTCR, by CNUM). One "Find" filters every lens; any identifier is a
+  button that becomes a search across all records.
+- **Reads are quiet.** Queries run off the event loop through a page-local
+  runner; `run_engine` toasts and writes an activity line per call, which
+  is right for a run and wrong for a keystroke.
+
 ## Review gates
 
 A gate is a page refusing to produce its output until a person has judged
