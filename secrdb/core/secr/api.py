@@ -335,6 +335,25 @@ def get_database_summary(db_path: Optional[Path] = None) -> Dict[str, Any]:
     return secr_db.database_summary(db_path=db_path)
 
 
+def preview_secr(secr_id: int, db_path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """One SECR opened up: changes by type, and rolled up by DTCR, CNUM and family."""
+    from secrdb.core.secr.explore import secr_preview  # noqa: PLC0415
+    return secr_preview(secr_id, db_path=db_path)
+
+
+def search_documents(text: str = "", *, limit: int = 200, db_path: Optional[Path] = None,
+                     **filters: str) -> List[Dict[str, Any]]:
+    """Every SECR containing ``text`` anywhere, with where it hit and a snippet."""
+    from secrdb.core.secr import explore  # noqa: PLC0415
+    return explore.search_documents(text, limit=limit, db_path=db_path, **filters)
+
+
+def scope_facets(db_path: Optional[Path] = None, **filters: str) -> Dict[str, Any]:
+    """Model years, programs, phases, families, change types — counted, cross-filtered."""
+    from secrdb.core.secr import explore  # noqa: PLC0415
+    return explore.scope_facets(db_path=db_path, **filters)
+
+
 def get_revision_chain(
     secr_number: str, db_path: Optional[Path] = None
 ) -> List[Dict[str, Any]]:
