@@ -40,31 +40,13 @@ Rules:
    the full table is shown beneath your answer.
 """
 
-_KINDS = (("dtcr", "DTCR report"), ("dtx", "DTx export"))
-
-
-def default_workspace() -> Path:
-    from secrdb.config import DATA_DIR  # noqa: PLC0415
-    return Path(DATA_DIR) / "assistant_workspace"
+from secrdb.assistant import workspace as ws
+from secrdb.assistant.workspace import default_workspace  # noqa: F401 - re-exported
 
 
 def _file(workspace: Path, name: str) -> Path:
     """A workspace file by name — never a path: nothing outside the folder."""
-    name = str(name or "").strip()
-    if not name or Path(name).name != name:
-        raise ValueError(f"{name!r} is not a file name. Use a name from list_workspace_files.")
-    path = workspace / name
-    if not path.is_file():
-        have = sorted(p.name for p in workspace.glob("*") if p.is_file())
-        raise ValueError(f"No file {name!r} in the workspace. Files: {', '.join(have) or 'none'}")
-    return path
-
-
-def _kind(path: Path) -> str:
-    lowered = path.name.lower()
-    if path.suffix.lower() not in (".xls", ".xlsx", ".xlsm"):
-        return "other"
-    return next((label for key, label in _KINDS if key in lowered), "workbook")
+    return ws.resolve(name, workspace)
 
 
 def _dtx_rows(path: Path):
@@ -85,9 +67,7 @@ def engine_tools(workspace: Optional[Path] = None) -> List[Tool]:
     workspace = Path(workspace) if workspace is not None else default_workspace()
 
     def list_workspace_files(*, db_path=None) -> List[Dict[str, Any]]:
-        workspace.mkdir(parents=True, exist_ok=True)
-        return [{"file": p.name, "kind": _kind(p), "size_kb": round(p.stat().st_size / 1024, 1)}
-                for p in sorted(workspace.glob("*")) if p.is_file() and not p.name.startswith(".")]
+        return [{k: f[k] for k in ("file", "kind", "size_kb")} for f in ws.list_files(workspace)]
 
     def describe_dtx(file: str, *, db_path=None) -> Dict[str, Any]:
         rows, meta = _dtx_rows(_file(workspace, file))

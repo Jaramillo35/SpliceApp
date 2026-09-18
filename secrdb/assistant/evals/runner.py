@@ -13,8 +13,8 @@ from secrdb.assistant.evals.scoring import CaseScore, score
 
 
 def run_cases(cases: Iterable[Case], *, db_path: Path, client=None, model: str = "",
-              progress: Optional[Callable[[int, int, CaseScore], None]] = None
-              ) -> List[CaseScore]:
+              progress: Optional[Callable[[int, int, CaseScore], None]] = None,
+              all_tools: bool = False) -> List[CaseScore]:
     """``client`` is anything with ``chat(messages, tools=...)``; by default an
     ``OllamaClient`` for ``model``. Unanswered-question diagnostics are sent
     to a scratch folder, so an evaluation never pollutes the field log."""
@@ -27,7 +27,15 @@ def run_cases(cases: Iterable[Case], *, db_path: Path, client=None, model: str =
     with tempfile.TemporaryDirectory(prefix="secr_evals_diag_") as scratch:
         diagnostics.DATA_DIR = Path(scratch)
         try:
-            assistant = Assistant(client=client, db_path=db_path)
+            if all_tools:
+                # the app's general assistant: SECR + engine tools, its own
+                # prompt, an empty workspace — does the wider tool set cost
+                # accuracy on the same SECR questions?
+                from secrdb.assistant.general import general_assistant  # noqa: PLC0415
+                assistant = general_assistant(client=client, db_path=db_path,
+                                              workspace=Path(scratch) / "workspace")
+            else:
+                assistant = Assistant(client=client, db_path=db_path)
             for n, case in enumerate(cases, start=1):
                 result = score(case, assistant.ask(case.question, session_id="evals"))
                 scores.append(result)

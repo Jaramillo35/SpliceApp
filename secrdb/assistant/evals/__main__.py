@@ -20,6 +20,8 @@ def main(argv=None) -> int:
     parser.add_argument("--seed", type=int, default=2031)
     parser.add_argument("--limit", type=int, default=0, help="first N cases per category mix")
     parser.add_argument("--category", default="", help="only this category")
+    parser.add_argument("--tools", choices=("secr", "all"), default="secr",
+                        help="secr = the SECR assistant; all = the general assistant")
     parser.add_argument("--out", default="reports/assistant_evals")
     args = parser.parse_args(argv)
 
@@ -45,8 +47,9 @@ def main(argv=None) -> int:
                 mark = "ok " if s.passed else "FAIL"
                 print(f"  {n:3d}/{total} {mark} {s.seconds:6.1f}s  {s.case_id}  {s.error[:60]}")
 
-            scores = run_cases(cases, db_path=db_path, model=model, progress=progress)
-            summaries.append(aggregate(scores, model=model))
+            scores = run_cases(cases, db_path=db_path, model=model, progress=progress,
+                               all_tools=args.tools == "all")
+            summaries.append(aggregate(scores, model=f"{model} [{args.tools} tools]"))
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

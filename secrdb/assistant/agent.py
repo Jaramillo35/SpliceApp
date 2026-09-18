@@ -112,10 +112,16 @@ class AssistantAnswer:
         """Every row retrieved, flattened — the evidence table."""
         collected: List[Dict[str, Any]] = []
         for result in self.evidence:
-            if result.ok and isinstance(result.data, list):
-                collected.extend(
-                    row for row in result.data if isinstance(row, dict)
-                )
+            if not result.ok:
+                continue
+            if isinstance(result.data, list):
+                collected.extend(row for row in result.data if isinstance(row, dict))
+            elif isinstance(result.data, dict):
+                # Engine tools answer with a mapping that *holds* the rows
+                # ({"counts": …, "changes": [...]}); those rows are evidence too.
+                for value in result.data.values():
+                    if isinstance(value, list):
+                        collected.extend(row for row in value if isinstance(row, dict))
         return collected
 
     @property
