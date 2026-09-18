@@ -71,11 +71,16 @@ def build_cases(corpus: Corpus) -> List[Case]:
             ("get_connector_changes",) + _LOOKUP,
             facts=[s.secr_number, s.connectors[0].cnum], say=[s.connectors[0].cnum])
         for d in s.dtcrs:
-            add("dtcr", _phrasings((
-                "What did DTCR {d} change?",
-                "Which SECR implements DTCR {d}?",
-            ), d=d), ("get_changes_by_dtcr", {"dtcr_number": d}),
-                ("get_changes_by_dtcr",) + _LOOKUP,
+            reference = ("get_changes_by_dtcr", {"dtcr_number": d})
+            accept = ("get_changes_by_dtcr",) + _LOOKUP
+            # "what did it change" is answered by the objects, not the SECR
+            # number — the first model run named the connector and circuits
+            # and was marked wrong for leaving the SECR out.
+            touched = [k.cnum for k in s.connectors if k.dtcr == d] \
+                + [c.circuit for c in s.circuits if c.dtcr == d]
+            add("dtcr", [f"What did DTCR {d} change?"], reference, accept,
+                facts=[s.secr_number, d] + touched, say=touched[:1])
+            add("dtcr", [f"Which SECR implements DTCR {d}?"], reference, accept,
                 facts=[s.secr_number, d], say=[s.secr_number])
         add("secr", _phrasings((
             "Summarise SECR {n}.",
